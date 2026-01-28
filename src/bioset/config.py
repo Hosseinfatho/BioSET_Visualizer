@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Sequence, Optional
+from typing import Literal, Sequence, Optional, Tuple
 
 @dataclass(frozen=True)
 class VolumeConfig:
@@ -21,6 +21,9 @@ class VolumeConfig:
 
     # Which channels to load
     channels: Sequence[int] = (0,)  
+    
+    # Channel colors
+    channel_colors: Sequence[str] = ("Cyan", "Magenta", "Yellow", "Red", "Green", "Blue")
 
     # Volume spacing and zarr comp
     level: int = 5
@@ -29,7 +32,7 @@ class VolumeConfig:
     base_sz: float = 0.28
 
     # Rendering Defaults
-    background: str = "White"
+    background: str = "Black"
     shade: bool = True
     linear_interpolation: bool = True
 
@@ -48,14 +51,15 @@ def default_config() -> VolumeConfig:
     project_root = Path(__file__).resolve().parents[2]
     data_dir = project_root / "data"
     return VolumeConfig(
-        source="zarr_s3",
-        zarr_url="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
+        source="tiff",
+        # source="zarr_s3",
+        # zarr_url="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
         zarr_component=5,
         project_root=project_root,
         data_dir=data_dir,
         channels=(0,),
         level=5,
-        base_sx=0.14,
-        base_sy=0.14,
-        base_sz=0.28,
+        base_sx=1.0,
+        base_sy=1.0,
+        base_sz=1.0,
     )

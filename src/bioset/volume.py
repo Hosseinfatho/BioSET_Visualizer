@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 import numpy as np
 
 from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
@@ -16,6 +17,15 @@ from vtkmodules.util.numpy_support import numpy_to_vtk
 import dask.array as da
 from ome_zarr.io import parse_url
 
+# Default tint if none provided
+DEFAULT_TINT_RGB = (0.2, 0.8, 1.0)
+
+def color_name_to_rgb(color_name: str) -> tuple[float, float, float]:
+    """Convert a named color (e.g., 'Cyan') to an RGB tuple (0-1 range)."""
+    colors = vtkNamedColors()
+    rgb = colors.GetColor3d(color_name)
+    return (rgb.GetRed(), rgb.GetGreen(), rgb.GetBlue())
+
 @dataclass(frozen=True)
 class SpacingConfig:
     sx: float
@@ -25,27 +35,17 @@ class SpacingConfig:
 def _make_volume_from_vtk_image(
     image: vtkImageData,
     *,
+    tint_rgb: tuple[float, float, float] = DEFAULT_TINT_RGB,
     shade: bool = True,
     linear_interpolation: bool = True,
 ) -> vtkVolume:
-    r0, r1 = image.GetScalarRange()
-    rmid = 0.5 * (r0 + r1)
-
-    opacity_tf = vtkPiecewiseFunction()
-    opacity_tf.AddPoint(r0, 0.0)
-    opacity_tf.AddPoint(rmid, 0.2)
-    opacity_tf.AddPoint(r1, 0.2)
-
-    color_tf = vtkColorTransferFunction()
-    color_tf.AddRGBPoint(r0, 0.0, 0.0, 1.0)
-    color_tf.AddRGBPoint(rmid, 1.0, 1.0, 1.0)
-    color_tf.AddRGBPoint(r1, 1.0, 0.0, 0.0)
+    color_tf, opacity_tf = build_histogram_tf(image, tint_rgb=tint_rgb)
 
     prop = vtkVolumeProperty()
     prop.SetColor(color_tf)
     prop.SetScalarOpacity(opacity_tf)
     prop.SetInterpolationTypeToLinear() if linear_interpolation else prop.SetInterpolationTypeToNearest()
-    prop.ShadeOn() if shade else prop.ShadeOff()
+    apply_volume_properties(prop, image, shade=shade)
 
     mapper = vtkFixedPointVolumeRayCastMapper()
     mapper.SetInputData(image)
@@ -59,6 +59,7 @@ def make_volume_from_tiff(
     tiff_path: Path,
     spacing: SpacingConfig,
     *,
+    tint_rgb: tuple[float, float, float] = DEFAULT_TINT_RGB,
     shade: bool = True,
     linear_interpolation: bool = True,
 ) -> vtkVolume:
@@ -80,6 +81,7 @@ def make_volume_from_tiff(
 
     return _make_volume_from_vtk_image(
         change.GetOutput(),
+        tint_rgb=tint_rgb,
         shade=shade,
         linear_interpolation=linear_interpolation,
     )
@@ -91,52 +93,110 @@ def make_volume_from_zarr_s3(
     channel: int,
     t_index: int,
     spacing: SpacingConfig,
+    tint_rgb: tuple[float, float, float] = DEFAULT_TINT_RGB,
     shade: bool = True,
     linear_interpolation: bool = True,
-    max_bytes: int = 2_000_000_000,  # ~2GB cap
+    max_bytes: int = 2_000_000_000,
 ) -> vtkVolume:
-    """
-    Loads a volume from OME-Zarr on S3 via Dask, then converts to vtkImageData.
-
-    Assumes array is either:
-      - (t, c, z, y, x)
-      - (c, z, y, x)
-      - (z, y, x)
-    We pick [t_index, channel] when possible.
-    """
-
-    root = parse_url(zarr_url, mode="r")
+    root = parse_url(zarr_url, mode="r")  
     store = root.store
-    darr = da.from_zarr(store, component=f"{component}")
 
-    vol = darr
-    if vol.ndim == 5: # (t,c,z,y,x)
-        vol = vol[t_index, channel]
-    elif vol.ndim == 4: # (c,z,y,x)
-        vol = vol[channel]
-    elif vol.ndim == 3:
-        pass
-    else:
-        raise ValueError(f"Unsupported zarr array ndim={vol.ndim}, shape={vol.shape}")
+    darr = da.from_zarr(store, component=str(component)) 
+    vol = darr[t_index, channel, :, :, :]
 
     est_bytes = int(np.prod(vol.shape)) * np.dtype(vol.dtype).itemsize
     if est_bytes > max_bytes:
-        raise MemoryError(
-            f"Requested volume would be ~{est_bytes/1e9:.2f} GB in RAM. "
-            f"Use a lower-res zarr_url (e.g. .../1, .../2), crop, or downsample."
-        )
+        raise MemoryError(f"Volume ~{est_bytes/1e9:.2f} GB, too big.")
 
-    np_vol = vol.compute()  
-    np_vol = np.ascontiguousarray(np_vol)
+    np_vol = vol.compute()
+    np_vol = np_vol.astype(np.uint16, copy=False)
+    np_vol = np.ascontiguousarray(np_vol)  
+    if np_vol.ndim != 3:
+        raise ValueError(f"Expected (z,y,x), got {np_vol.shape}")
 
     z, y, x = np_vol.shape
 
-    vtk_arr = numpy_to_vtk(num_array=np_vol.ravel(order="C"), deep=True)
+    vtk_arr = numpy_to_vtk(np_vol.ravel(order="C"), deep=True)
     vtk_arr.SetName("scalars")
 
     img = vtkImageData()
     img.SetDimensions(x, y, z)
+    img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1) 
+    img.SetOrigin(0.0, 0.0, 0.0)
     img.SetSpacing(spacing.sx, spacing.sy, spacing.sz)
     img.GetPointData().SetScalars(vtk_arr)
+    img.Modified()
 
-    return _make_volume_from_vtk_image(img, shade=shade, linear_interpolation=linear_interpolation)
+    return _make_volume_from_vtk_image(img, tint_rgb=tint_rgb, shade=shade, linear_interpolation=linear_interpolation)
+
+
+# transfer function and property helpers
+def _percentiles_from_vtk_image(image, sample_max=2_000_000):
+    
+    from vtkmodules.util.numpy_support import vtk_to_numpy
+
+    scalars = image.GetPointData().GetScalars()
+    if scalars is None:
+        r0, r1 = image.GetScalarRange()
+        return r0, r1, r0, r1, r0, r1
+
+    arr = vtk_to_numpy(scalars)
+    if arr.size == 0:
+        r0, r1 = image.GetScalarRange()
+        return r0, r1, r0, r1, r0, r1
+
+    if arr.size > sample_max:
+        idx = np.random.choice(arr.size, size=sample_max, replace=False)
+        arr = arr[idx]
+
+    arr = arr.astype(np.float32, copy=False)
+
+    p01, p10, p50, p90, p99, p995 = np.percentile(arr, [1, 10, 50, 90, 99, 99.5])
+    r0, r1 = float(np.min(arr)), float(np.max(arr))
+    return r0, r1, float(p01), float(p10), float(p99), float(p995)
+
+def build_histogram_tf(image, *, tint_rgb=(0.2, 0.8, 1.0)):
+    r0, r1, p01, p10, p99, p995 = _percentiles_from_vtk_image(image)
+
+    if r1 <= r0 + 1e-6:
+        opacity = vtkPiecewiseFunction()
+        opacity.AddPoint(r0, 0.0)
+        opacity.AddPoint(r1, 0.0)
+        color = vtkColorTransferFunction()
+        color.AddRGBPoint(r0, *tint_rgb)
+        color.AddRGBPoint(r1, *tint_rgb)
+        return color, opacity
+
+    lo = max(p10, r0)
+    hi = max(p99, lo + 1.0)
+
+    opacity = vtkPiecewiseFunction()
+    opacity.AddPoint(r0, 0.0)
+    opacity.AddPoint(lo, 0.0)
+    opacity.AddPoint(lo + 0.25 * (hi - lo), 0.03)
+    opacity.AddPoint(lo + 0.60 * (hi - lo), 0.12)
+    opacity.AddPoint(hi, 0.25)
+    opacity.AddPoint(max(p995, hi), 0.25)
+
+    color = vtkColorTransferFunction()
+    color.AddRGBPoint(r0, 0.0, 0.0, 0.0)
+    color.AddRGBPoint(lo, 0.0, 0.0, 0.0)
+    color.AddRGBPoint(hi, *tint_rgb)
+    color.AddRGBPoint(r1, *tint_rgb)
+
+    return color, opacity
+
+def apply_volume_properties(prop: vtkVolumeProperty, image, *, shade=True):
+    if shade:
+        prop.ShadeOn()
+        prop.SetAmbient(0.5)
+        prop.SetDiffuse(0.8)
+        prop.SetSpecular(0.1)
+        prop.SetSpecularPower(8.0)
+    else:
+        prop.ShadeOff()
+
+    prop.SetInterpolationTypeToLinear()
+
+    sx, sy, sz = image.GetSpacing()
+    prop.SetScalarOpacityUnitDistance(max(1e-6, 1.0 * min(sx, sy, sz)))

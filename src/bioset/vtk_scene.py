@@ -11,7 +11,7 @@ import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
 import vtkmodules.vtkRenderingVolumeOpenGL2 # noqa: F401
 
 from .config import VolumeConfig
-from .volume import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3
+from .volume import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
 
 
 @dataclass
@@ -39,12 +39,17 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         sy=cfg.base_sy * cfg.xy_scale,
         sz=cfg.base_sz,  #
     )
-
-    for ch in cfg.channels:
+    
+    for i, ch in enumerate(cfg.channels):
+        # Get color for this channel (cycle through channel_colors if more channels than colors)
+        color_name = cfg.channel_colors[i % len(cfg.channel_colors)]
+        tint_rgb = color_name_to_rgb(color_name)
+        
         if cfg.source == "tiff":
             vol = make_volume_from_tiff(
                 cfg.tiff_path_for_channel(int(ch)),
                 spacing,
+                tint_rgb=tint_rgb,
                 shade=cfg.shade,
                 linear_interpolation=cfg.linear_interpolation,
             )
@@ -57,10 +62,12 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                 channel=int(ch),
                 t_index=cfg.zarr_time_index,
                 spacing=spacing,
+                tint_rgb=tint_rgb,
                 shade=cfg.shade,
                 linear_interpolation=cfg.linear_interpolation,
             )
         renderer.AddVolume(vol)
+        print(f"Added volume for channel {ch} with color {color_name}")
 
     renderer.SetBackground(colors.GetColor3d(cfg.background))
     renderer.ResetCameraClippingRange()
