@@ -19,7 +19,6 @@ def camera_distance_to_focal(camera) -> float:
     return math.sqrt(dx*dx + dy*dy + dz*dz)
 
 def choose_component(distance: float, rules, *, min_component: int, max_component: int) -> int:
-    # rules: list of (threshold, component); sorted descending threshold is ideal
     chosen = max_component
     for thresh, comp in rules:
         if distance >= float(thresh):
@@ -38,7 +37,7 @@ def _display_to_world(renderer, x: float, y: float, z_norm: float):
 def compute_visible_xy_roi_vox(
     renderer,
     *,
-    bounds_world: Tuple[float, float, float, float, float, float],  # xmin,xmax,ymin,ymax,zmin,zmax
+    bounds_world: Tuple[float, float, float, float, float, float],  
     sx: float,
     sy: float,
     x_dim: int,
@@ -69,14 +68,12 @@ def compute_visible_xy_roi_vox(
 
         for z_plane in (zmin, zmax):
             t = (z_plane - nz) / (fz - nz)
-            # allow slightly outside [0,1] for safety
             if t < -0.25 or t > 1.25:
                 continue
             xw = near[0] + t * (far[0] - near[0])
             yw = near[1] + t * (far[1] - near[1])
             pts.append((xw, yw))
 
-    # If we failed to get intersections, fall back to full volume XY
     if not pts:
         return ROI(0, x_dim, 0, y_dim)
 
@@ -85,7 +82,6 @@ def compute_visible_xy_roi_vox(
     yw0 = max(ymin, min(p[1] for p in pts))
     yw1 = min(ymax, max(p[1] for p in pts))
 
-    # world -> voxel (component level)
     x0 = int(math.floor(xw0 / sx))
     x1 = int(math.ceil (xw1 / sx))
     y0 = int(math.floor(yw0 / sy))

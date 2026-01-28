@@ -10,6 +10,7 @@ from ome_zarr.io import parse_url
 
 from .cache import wrap_store_with_cache
 
+
 @dataclass
 class ZarrMultiscaleSource:
     url: str
@@ -34,7 +35,8 @@ class ZarrMultiscaleSource:
 
     def array(self, component: int) -> da.Array:
         if component not in self._arrays:
-            self._arrays[component] = da.from_zarr(self.store, component=str(component))
+            self._arrays[component] = da.from_zarr(
+                self.store, component=str(component))
         return self._arrays[component]
 
     def shape_tczyx(self, component: int) -> Tuple[int, ...]:

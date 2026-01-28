@@ -44,7 +44,6 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
 
     streamer: Optional[VolumeStreamer] = None
 
-    # --- NEW: streaming mode for zarr_s3 ---
     if cfg.source == "zarr_s3":
         if not cfg.zarr_url:
             raise ValueError("cfg.zarr_url must be set for source='zarr_s3'")
@@ -54,11 +53,9 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         def _on_end_interaction(obj, evt):
             streamer.on_interaction_end()
 
-        # Only update after user finishes interaction (pan/zoom/rotate)
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
 
     else:
-        # --- Old behavior (TIFF) ---
         spacing = SpacingConfig(
             sx=cfg.base_sx * cfg.xy_scale,
             sy=cfg.base_sy * cfg.xy_scale,

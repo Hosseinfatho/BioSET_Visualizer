@@ -15,7 +15,7 @@ class VolumeConfig:
     tiff_pattern: str = "ch{ch}_comp5.tiff"
     
     # S3/Zarr settings
-    zarr_url: Optional[str] = None  # e.g. ".../Dataset.../0"
+    zarr_url: Optional[str] = None  
     zarr_component: int = 5
     zarr_time_index: int = 0
 
@@ -34,7 +34,7 @@ class VolumeConfig:
     # Zarr multiresolution settings
     # starting default component and range of componets to pick from
     start_component: int = 6
-    min_component: int = 3
+    min_component: int = 0
     max_component: int = 6
 
     # LOD zoom thresholds in world units (camera dist from vol)
@@ -42,9 +42,9 @@ class VolumeConfig:
         (2500.0, 6),
         (1000.0, 5),
         (400.0,  4),
-        (50.0,  3),
-        (25.0,  2),
-        (5.0,  1),
+        (200.0,  3),
+        (50.0,  2),
+        (10.0,  1),
         (0.0,  0),
     )
 
@@ -76,9 +76,9 @@ def default_config() -> VolumeConfig:
     project_root = Path(__file__).resolve().parents[2]
     data_dir = project_root / "data"
     return VolumeConfig(
-        source="tiff",
-        # source="zarr_s3",
-        # zarr_url="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
+        # source="tiff",
+        source="zarr_s3",
+        zarr_url="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
         zarr_component=5,
         project_root=project_root,
         data_dir=data_dir,
