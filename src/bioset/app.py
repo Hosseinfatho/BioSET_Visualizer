@@ -23,51 +23,7 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 
 from .config import default_config
 from .vtk_scene import build_scene
-
-
-def build_ui(server, render_window, streamer=None):
-    ctrl = server.controller
-    state = server.state
-
-    server.enable_module({"serve": {"assets": str(ASSETS_DIR)}})
-
-    with SinglePageLayout(server) as layout:
-        layout.title.hide()  
-        layout.footer.hide()
-
-        with layout.toolbar:
-            vuetify.VImg(src="assets/icon.png", max_height=40, max_width=40, contain=True, classes="mr-2")
-            vuetify.VToolbarTitle("BioSET")
-
-        with layout.content:
-            with vuetify.VContainer(fluid=True, classes="pa-0 fill-height"):
-                view = vtk.VtkRemoteView(render_window, interactive_ratio=1.0)
-
-                def _on_ready(**_):
-                    render_window.Render()
-                    view.update()
-
-                ctrl.on_server_ready.add(_on_ready)
-
-    if streamer is not None:
-        import asyncio
-
-        async def _check_loaded_data_loop():
-            """Periodically check if background loading has finished and apply to VTK"""
-            while True:
-                await asyncio.sleep(0.1)
-                try:
-                    if streamer.check_and_apply_loaded_data():
-                        view.update()
-                except Exception as e:
-                    print(f"[error] check_loaded_data: {e}")
-
-        @ctrl.add("on_server_ready")
-        def _start_check_loop(**_):
-            asyncio.create_task(_check_loaded_data_loop())
-
-    return ctrl, view
-
+from .gui import build_ui
 
 def main():
     cfg = default_config()
@@ -83,7 +39,25 @@ def main():
     scene = build_scene(cfg)
 
     server = get_server(client_type="vue2")
+    server.enable_module({"serve": {"assets": str(ASSETS_DIR)}})
     ctrl, view = build_ui(server, scene.render_window, streamer=scene.streamer)
+
+    if scene.streamer is not None:
+        import asyncio
+
+        async def _check_loaded_data_loop():
+            """Periodically check if background loading has finished and apply to VTK"""
+            while True:
+                await asyncio.sleep(0.1)
+                try:
+                    if scene.streamer.check_and_apply_loaded_data():
+                        view.update()
+                except Exception as e:
+                    print(f"[error] check_loaded_data: {e}")
+
+        @ctrl.add("on_server_ready")
+        def _start_check_loop(**_):
+            asyncio.create_task(_check_loaded_data_loop())
 
     if scene.streamer is not None:
         scene.streamer.set_render_callback(view.update)
