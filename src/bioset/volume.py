@@ -31,6 +31,63 @@ class SpacingConfig:
     sx: float
     sy: float
     sz: float
+    
+def vtk_image_from_numpy_zyx_u16(
+    np_vol_zyx: np.ndarray,
+    *,
+    spacing: SpacingConfig,
+    origin_xyz: tuple[float, float, float],
+) -> vtkImageData:
+    np_vol_zyx = np.ascontiguousarray(np_vol_zyx).astype(np.uint16, copy=False)
+    z, y, x = np_vol_zyx.shape
+
+    vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)
+    vtk_arr.SetName("scalars")
+
+    img = vtkImageData()
+    img.SetDimensions(x, y, z)
+    img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1)
+    img.SetOrigin(*origin_xyz)
+    img.SetSpacing(spacing.sx, spacing.sy, spacing.sz)
+    img.GetPointData().SetScalars(vtk_arr)
+    img.Modified()
+    return img
+
+def _make_volume_from_vtk_image(
+    image: vtkImageData,
+    *,
+    tint_rgb: tuple[float, float, float] = DEFAULT_TINT_RGB,
+    shade: bool = True,
+    linear_interpolation: bool = True,
+) -> vtkVolume:
+    color_tf, opacity_tf = build_histogram_tf(image, tint_rgb=tint_rgb)
+
+    prop = vtkVolumeProperty()
+    prop.SetColor(color_tf)
+    prop.SetScalarOpacity(opacity_tf)
+    prop.SetInterpolationTypeToLinear() if linear_interpolation else prop.SetInterpolationTypeToNearest()
+    apply_volume_properties(prop, image, shade=shade)
+
+    mapper = vtkGPUVolumeRayCastMapper()
+    mapper.SetInputData(image)
+
+    vol = vtkVolume()
+    vol.SetMapper(mapper)
+    vol.SetProperty(prop)
+    return vol
+
+def make_volume_from_dask_zyx(
+    vol_zyx: da.Array,
+    *,
+    spacing: SpacingConfig,
+    origin_xyz: tuple[float, float, float],
+    tint_rgb: tuple[float, float, float] = DEFAULT_TINT_RGB,
+    shade: bool = True,
+    linear_interpolation: bool = True,
+) -> vtkVolume:
+    np_vol = vol_zyx.compute()
+    img = vtk_image_from_numpy_zyx_u16(np_vol, spacing=spacing, origin_xyz=origin_xyz)
+    return _make_volume_from_vtk_image(img, tint_rgb=tint_rgb, shade=shade, linear_interpolation=linear_interpolation)
 
 def _make_volume_from_vtk_image(
     image: vtkImageData,

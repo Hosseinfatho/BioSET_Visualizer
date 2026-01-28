@@ -1,6 +1,7 @@
 .vs
 *.tiff
 .git
+.vscode
 
 *.egg-info/
 build/

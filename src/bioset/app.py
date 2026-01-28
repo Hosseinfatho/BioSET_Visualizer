@@ -16,12 +16,19 @@ def build_ui(server, render_window):
 
         with layout.content:
             with vuetify.VContainer(fluid=True, classes="pa-0 fill-height"):
-                view = vtk.VtkLocalView(render_window)
-                # view = vtk.VtkRemoteView(render_window)
-                ctrl.on_server_ready.add(view.update)
+                #view = vtk.VtkLocalView(render_window,render_window,
+                #     interactor_events=("events", ["EndInteraction"]),
+                #     EndInteraction=(server.controller.on_end_interaction, "[$event]")
+                # )
+                view = vtk.VtkRemoteView(render_window)
+                
+                def _on_ready(**_):
+                    render_window.Render()
+                    view.update()
 
-    return ctrl
+                ctrl.on_server_ready.add(_on_ready)
 
+    return ctrl, view
 
 def main():
     cfg = default_config()
@@ -29,7 +36,6 @@ def main():
         "source": "zarr_s3",
         "zarr_url": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
         # "source": "tiff",
-        "zarr_component": 4,
         "channels": (13,0,1,3),
         "base_sx": 0.14,
         "base_sy": 0.14,
@@ -39,7 +45,10 @@ def main():
     scene = build_scene(cfg)
 
     server = get_server(client_type="vue2")
-    build_ui(server, scene.render_window)
+    ctrl, view = build_ui(server, scene.render_window)
+    
+    if scene.streamer is not None:
+        scene.streamer.set_render_callback(view.update)
 
     server.start()
 

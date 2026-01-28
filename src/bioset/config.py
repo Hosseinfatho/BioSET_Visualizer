@@ -30,6 +30,31 @@ class VolumeConfig:
     base_sx: float = 0.14
     base_sy: float = 0.14
     base_sz: float = 0.28
+    
+    # Zarr multiresolution settings
+    # starting default component and range of componets to pick from
+    start_component: int = 6
+    min_component: int = 3
+    max_component: int = 6
+
+    # LOD zoom thresholds in world units (camera dist from vol)
+    distance_rules: Sequence[Tuple[float, int]] = (
+        (2500.0, 6),
+        (1000.0, 5),
+        (400.0,  4),
+        (50.0,  3),
+        (25.0,  2),
+        (5.0,  1),
+        (0.0,  0),
+    )
+
+    # ROI padding (voxels at the chosen component)
+    roi_margin_vox: int = 16
+
+    # caching 
+    cache_enabled: bool = True
+    cache_dir: Path = Path.home() / ".cache" / "bioset_zarr_cache"
+    cache_size_gb: float = 8.0
 
     # Rendering Defaults
     background: str = "Black"
