@@ -15,3 +15,10 @@ pip install -e .
 ```bash
 bioset
 ```
+
+## Config
+
+Most relevant settings such as link to the zarr, chanel indices and voxel spacing can be changed in app.py main() function.
+
+Refer to config.py for a full list of possible settings and their meanings.
+
