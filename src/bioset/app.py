@@ -1,6 +1,8 @@
 # app.py
 from __future__ import annotations
 
+from pathlib import Path
+
 from trame.app import get_server
 from trame.ui.vuetify import SinglePageLayout
 from trame.widgets import vtk, vuetify
@@ -15,7 +17,10 @@ if sys.version_info >= (3, 10):
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
+# Path to assets directory
+ASSETS_DIR = Path(__file__).parent / "assets"
+
 from .config import default_config
 from .vtk_scene import build_scene
 
@@ -24,12 +29,19 @@ def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
     state = server.state
 
+    server.enable_module({"serve": {"assets": str(ASSETS_DIR)}})
+
     with SinglePageLayout(server) as layout:
-        layout.title.set_text("BioSET")
+        layout.title.hide()  
+        layout.footer.hide()
+
+        with layout.toolbar:
+            vuetify.VImg(src="assets/icon.png", max_height=40, max_width=40, contain=True, classes="mr-2")
+            vuetify.VToolbarTitle("BioSET")
 
         with layout.content:
             with vuetify.VContainer(fluid=True, classes="pa-0 fill-height"):
-                view = vtk.VtkRemoteView(render_window)
+                view = vtk.VtkRemoteView(render_window, interactive_ratio=1.0)
 
                 def _on_ready(**_):
                     render_window.Render()
