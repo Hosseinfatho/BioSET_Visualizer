@@ -25,6 +25,13 @@ def build_ui(server, render_window):
 
 def main():
     cfg = default_config()
+    cfg = cfg.__class__(**{**cfg.__dict__,
+        "source": "zarr_s3",
+        "zarr_url": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
+        "zarr_component": 5,
+        "channels": (0,),
+    })
+    
     scene = build_scene(cfg)
 
     server = get_server(client_type="vue2")

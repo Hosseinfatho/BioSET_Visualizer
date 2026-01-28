@@ -12,6 +12,14 @@ dependencies = [
   "trame-vuetify",
   "trame-vtk",
   "vtk",
+  "ome-zarr",
+  "dask[array]",
+  "zarr",
+  "fsspec",
+  "s3fs",
+  "numcodecs",
+  "numpy",
+  "tifffile",
 ]
 
 [project.scripts]

@@ -8,10 +8,10 @@ from vtkmodules.vtkRenderingCore import vtkRenderer, vtkRenderWindow, vtkRenderW
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa
 
 import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
-import vtkmodules.vtkRenderingVolumeOpenGL2
+import vtkmodules.vtkRenderingVolumeOpenGL2 # noqa: F401
 
 from .config import VolumeConfig
-from .volume import SpacingConfig, make_volume_from_tiff
+from .volume import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3
 
 
 @dataclass
@@ -34,7 +34,6 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     style.SetCurrentStyleToTrackballCamera()
     interactor.SetInteractorStyle(style)
 
-
     spacing = SpacingConfig(
         sx=cfg.base_sx * cfg.xy_scale,
         sy=cfg.base_sy * cfg.xy_scale,
@@ -42,13 +41,25 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     )
 
     for ch in cfg.channels:
-        path = cfg.tiff_path_for_channel(int(ch))
-        vol = make_volume_from_tiff(
-            path,
-            spacing,
-            shade=cfg.shade,
-            linear_interpolation=cfg.linear_interpolation,
-        )
+        if cfg.source == "tiff":
+            vol = make_volume_from_tiff(
+                cfg.tiff_path_for_channel(int(ch)),
+                spacing,
+                shade=cfg.shade,
+                linear_interpolation=cfg.linear_interpolation,
+            )
+        else:
+            if not cfg.zarr_url:
+                raise ValueError("cfg.zarr_url must be set for source='zarr_s3'")
+            vol = make_volume_from_zarr_s3(
+                cfg.zarr_url,
+                component=cfg.zarr_component,
+                channel=int(ch),
+                t_index=cfg.zarr_time_index,
+                spacing=spacing,
+                shade=cfg.shade,
+                linear_interpolation=cfg.linear_interpolation,
+            )
         renderer.AddVolume(vol)
 
     renderer.SetBackground(colors.GetColor3d(cfg.background))
