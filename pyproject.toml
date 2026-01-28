@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bioset-trame"
+version = "0.1.0"
+description = "BioSET Visualizer"
+requires-python = ">=3.9"
+dependencies = [
+  "trame",
+  "trame-vuetify",
+  "trame-vtk",
+  "vtk",
+]
+
+[project.scripts]
+bioset = "bioset.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
