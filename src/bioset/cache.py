@@ -4,12 +4,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+
 def wrap_store_with_cache(source_store: Any, *, cache_dir: Path, max_size_bytes: int):
     """
     Wrap an existing zarr Store with an on-disk CacheStore.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
-    
+
     from zarr.storage import LocalStore
     from zarr.experimental.cache_store import CacheStore
 

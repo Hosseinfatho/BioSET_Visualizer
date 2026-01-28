@@ -20,18 +20,21 @@ from ome_zarr.io import parse_url
 # Default tint if none provided
 DEFAULT_TINT_RGB = (0.2, 0.8, 1.0)
 
+
 def color_name_to_rgb(color_name: str) -> tuple[float, float, float]:
     """Convert a named color (e.g., 'Cyan') to an RGB tuple (0-1 range)."""
     colors = vtkNamedColors()
     rgb = colors.GetColor3d(color_name)
     return (rgb.GetRed(), rgb.GetGreen(), rgb.GetBlue())
 
+
 @dataclass(frozen=True)
 class SpacingConfig:
     sx: float
     sy: float
     sz: float
-    
+
+
 def vtk_image_from_numpy_zyx_u16(
     np_vol_zyx: np.ndarray,
     *,
@@ -53,6 +56,7 @@ def vtk_image_from_numpy_zyx_u16(
     img.Modified()
     return img
 
+
 def _make_volume_from_vtk_image(
     image: vtkImageData,
     *,
@@ -65,7 +69,8 @@ def _make_volume_from_vtk_image(
     prop = vtkVolumeProperty()
     prop.SetColor(color_tf)
     prop.SetScalarOpacity(opacity_tf)
-    prop.SetInterpolationTypeToLinear() if linear_interpolation else prop.SetInterpolationTypeToNearest()
+    prop.SetInterpolationTypeToLinear(
+    ) if linear_interpolation else prop.SetInterpolationTypeToNearest()
     apply_volume_properties(prop, image, shade=shade)
 
     mapper = vtkGPUVolumeRayCastMapper()
@@ -75,6 +80,7 @@ def _make_volume_from_vtk_image(
     vol.SetMapper(mapper)
     vol.SetProperty(prop)
     return vol
+
 
 def make_volume_from_dask_zyx(
     vol_zyx: da.Array,
@@ -86,8 +92,10 @@ def make_volume_from_dask_zyx(
     linear_interpolation: bool = True,
 ) -> vtkVolume:
     np_vol = vol_zyx.compute()
-    img = vtk_image_from_numpy_zyx_u16(np_vol, spacing=spacing, origin_xyz=origin_xyz)
+    img = vtk_image_from_numpy_zyx_u16(
+        np_vol, spacing=spacing, origin_xyz=origin_xyz)
     return _make_volume_from_vtk_image(img, tint_rgb=tint_rgb, shade=shade, linear_interpolation=linear_interpolation)
+
 
 def _make_volume_from_vtk_image(
     image: vtkImageData,
@@ -101,7 +109,8 @@ def _make_volume_from_vtk_image(
     prop = vtkVolumeProperty()
     prop.SetColor(color_tf)
     prop.SetScalarOpacity(opacity_tf)
-    prop.SetInterpolationTypeToLinear() if linear_interpolation else prop.SetInterpolationTypeToNearest()
+    prop.SetInterpolationTypeToLinear(
+    ) if linear_interpolation else prop.SetInterpolationTypeToNearest()
     apply_volume_properties(prop, image, shade=shade)
 
     # mapper = vtkFixedPointVolumeRayCastMapper()
@@ -112,6 +121,7 @@ def _make_volume_from_vtk_image(
     vol.SetMapper(mapper)
     vol.SetProperty(prop)
     return vol
+
 
 def make_volume_from_tiff(
     tiff_path: Path,
@@ -143,7 +153,8 @@ def make_volume_from_tiff(
         shade=shade,
         linear_interpolation=linear_interpolation,
     )
-    
+
+
 def make_volume_from_zarr_s3(
     zarr_url: str,
     *,
@@ -156,10 +167,10 @@ def make_volume_from_zarr_s3(
     linear_interpolation: bool = True,
     max_bytes: int = 2_000_000_000,
 ) -> vtkVolume:
-    root = parse_url(zarr_url, mode="r")  
+    root = parse_url(zarr_url, mode="r")
     store = root.store
 
-    darr = da.from_zarr(store, component=str(component)) 
+    darr = da.from_zarr(store, component=str(component))
     vol = darr[t_index, channel, :, :, :]
 
     est_bytes = int(np.prod(vol.shape)) * np.dtype(vol.dtype).itemsize
@@ -168,7 +179,7 @@ def make_volume_from_zarr_s3(
 
     np_vol = vol.compute()
     np_vol = np_vol.astype(np.uint16, copy=False)
-    np_vol = np.ascontiguousarray(np_vol)  
+    np_vol = np.ascontiguousarray(np_vol)
     if np_vol.ndim != 3:
         raise ValueError(f"Expected (z,y,x), got {np_vol.shape}")
 
@@ -179,7 +190,7 @@ def make_volume_from_zarr_s3(
 
     img = vtkImageData()
     img.SetDimensions(x, y, z)
-    img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1) 
+    img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1)
     img.SetOrigin(0.0, 0.0, 0.0)
     img.SetSpacing(spacing.sx, spacing.sy, spacing.sz)
     img.GetPointData().SetScalars(vtk_arr)
@@ -190,7 +201,7 @@ def make_volume_from_zarr_s3(
 
 # transfer function and property helpers
 def _percentiles_from_vtk_image(image, sample_max=2_000_000):
-    
+
     from vtkmodules.util.numpy_support import vtk_to_numpy
 
     scalars = image.GetPointData().GetScalars()
@@ -209,9 +220,11 @@ def _percentiles_from_vtk_image(image, sample_max=2_000_000):
 
     arr = arr.astype(np.float32, copy=False)
 
-    p01, p10, p50, p90, p99, p995 = np.percentile(arr, [1, 10, 50, 90, 99, 99.5])
+    p01, p10, p50, p90, p99, p995 = np.percentile(
+        arr, [1, 10, 50, 90, 99, 99.5])
     r0, r1 = float(np.min(arr)), float(np.max(arr))
     return r0, r1, float(p01), float(p10), float(p99), float(p995)
+
 
 def build_histogram_tf(image, *, tint_rgb=(0.2, 0.8, 1.0)):
     r0, r1, p01, p10, p99, p995 = _percentiles_from_vtk_image(image)
@@ -243,6 +256,7 @@ def build_histogram_tf(image, *, tint_rgb=(0.2, 0.8, 1.0)):
     color.AddRGBPoint(r1, *tint_rgb)
 
     return color, opacity
+
 
 def apply_volume_properties(prop: vtkVolumeProperty, image, *, shade=True):
     if shade:

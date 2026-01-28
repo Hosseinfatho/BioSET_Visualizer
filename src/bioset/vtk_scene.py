@@ -48,7 +48,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         if not cfg.zarr_url:
             raise ValueError("cfg.zarr_url must be set for source='zarr_s3'")
 
-        streamer = VolumeStreamer(cfg=cfg, renderer=renderer, render_window=render_window)
+        streamer = VolumeStreamer(
+            cfg=cfg, renderer=renderer, render_window=render_window)
 
         def _on_end_interaction(obj, evt):
             streamer.on_interaction_end()

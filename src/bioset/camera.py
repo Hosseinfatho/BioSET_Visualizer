@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import Tuple
 
+
 @dataclass(frozen=True)
 class ROI:
     x0: int
@@ -12,11 +13,13 @@ class ROI:
     y0: int
     y1: int
 
+
 def camera_distance_to_focal(camera) -> float:
     px, py, pz = camera.GetPosition()
     fx, fy, fz = camera.GetFocalPoint()
     dx, dy, dz = (px - fx), (py - fy), (pz - fz)
     return math.sqrt(dx*dx + dy*dy + dz*dz)
+
 
 def choose_component(distance: float, rules, *, min_component: int, max_component: int) -> int:
     chosen = max_component
@@ -26,6 +29,7 @@ def choose_component(distance: float, rules, *, min_component: int, max_componen
             break
     return max(min_component, min(max_component, chosen))
 
+
 def _display_to_world(renderer, x: float, y: float, z_norm: float):
     renderer.SetDisplayPoint(x, y, z_norm)
     renderer.DisplayToWorld()
@@ -34,10 +38,11 @@ def _display_to_world(renderer, x: float, y: float, z_norm: float):
         return (wx / w, wy / w, wz / w)
     return (wx, wy, wz)
 
+
 def compute_visible_xy_roi_vox(
     renderer,
     *,
-    bounds_world: Tuple[float, float, float, float, float, float],  
+    bounds_world: Tuple[float, float, float, float, float, float],
     sx: float,
     sy: float,
     x_dim: int,
@@ -59,7 +64,7 @@ def compute_visible_xy_roi_vox(
     pts = []
     for (dx, dy) in corners:
         near = _display_to_world(renderer, dx, dy, 0.0)
-        far  = _display_to_world(renderer, dx, dy, 1.0)
+        far = _display_to_world(renderer, dx, dy, 1.0)
 
         nz = near[2]
         fz = far[2]
@@ -83,9 +88,9 @@ def compute_visible_xy_roi_vox(
     yw1 = min(ymax, max(p[1] for p in pts))
 
     x0 = int(math.floor(xw0 / sx))
-    x1 = int(math.ceil (xw1 / sx))
+    x1 = int(math.ceil(xw1 / sx))
     y0 = int(math.floor(yw0 / sy))
-    y1 = int(math.ceil (yw1 / sy))
+    y1 = int(math.ceil(yw1 / sy))
 
     x0 -= margin_vox
     y0 -= margin_vox

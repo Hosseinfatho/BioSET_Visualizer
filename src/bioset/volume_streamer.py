@@ -21,7 +21,7 @@ from .camera import (
 )
 from .zarr import ZarrMultiscaleSource
 from .volume import (
-    SpacingConfig, 
+    SpacingConfig,
     color_name_to_rgb,
     build_histogram_tf,
 )
@@ -37,7 +37,7 @@ class ChannelState:
     roi: ROI
 
 
-@dataclass 
+@dataclass
 class LoadRequest:
     """Represents a pending load operation"""
     component: int
@@ -50,31 +50,31 @@ class LoadedData:
     """Data loaded in background thread, ready for VTK update on main thread"""
     component: int
     roi: ROI
-    channel_arrays: Dict[int, np.ndarray]  
+    channel_arrays: Dict[int, np.ndarray]
     timestamp: float
 
 
 class VolumeStreamer:
     """
     Improved volume streamer with async loading and debouncing.
-    
+
     IMPORTANT: OpenGL/VTK updates must happen on the main thread.
     We load data in background threads, then apply to VTK on main thread.
     """
-    
+
     DEBOUNCE_DELAY = 0.15
-    
+
     _executor: ThreadPoolExecutor = None
-    
+
     def __init__(self, *, cfg, renderer, render_window):
         self.cfg = cfg
         self.renderer = renderer
         self.render_window = render_window
         self.render_callback: Optional[Callable] = None
-        
+
         if VolumeStreamer._executor is None:
             VolumeStreamer._executor = ThreadPoolExecutor(max_workers=2)
-        
+
         max_bytes = int(cfg.cache_size_gb * (1024**3))
         self.zsrc = ZarrMultiscaleSource(
             url=cfg.zarr_url,
@@ -86,19 +86,20 @@ class VolumeStreamer:
         self.volumes: Dict[int, vtkVolume] = {}
         self.mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
         self.state: Dict[int, ChannelState] = {}
-        
-        self._channel_tfs: Dict[int, Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
-        
+
+        self._channel_tfs: Dict[int,
+                                Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
+
         self._pending_request: Optional[LoadRequest] = None
         self._debounce_lock = threading.Lock()
         self._loading_lock = threading.Lock()
         self._is_loading = False
-        
+
         self._loaded_data_queue: queue.Queue[LoadedData] = queue.Queue()
-        
+
         self._array_cache: Dict[Tuple[int, int, ROI], np.ndarray] = {}
         self._cache_max_entries = 32
-        
+
         self._last_component: Optional[int] = None
 
         self._init_low_res_full()
@@ -138,16 +139,16 @@ class VolumeStreamer:
         """Get existing VTK volume/mapper or create new ones."""
         if ch in self.volumes:
             return self.volumes[ch], self.mappers[ch]
-        
+
         mapper = vtkGPUVolumeRayCastMapper()
         mapper.SetAutoAdjustSampleDistances(True)
-        
+
         prop = vtkVolumeProperty()
         if self.cfg.linear_interpolation:
             prop.SetInterpolationTypeToLinear()
         else:
             prop.SetInterpolationTypeToNearest()
-        
+
         if self.cfg.shade:
             prop.ShadeOn()
             prop.SetAmbient(0.5)
@@ -156,11 +157,11 @@ class VolumeStreamer:
             prop.SetSpecularPower(8.0)
         else:
             prop.ShadeOff()
-        
+
         vol = vtkVolume()
         vol.SetMapper(mapper)
         vol.SetProperty(prop)
-        
+
         self.volumes[ch] = vol
         self.mappers[ch] = mapper
         return vol, mapper
@@ -196,12 +197,13 @@ class VolumeStreamer:
 
     def _put_cached_array(self, component: int, ch: int, roi: ROI, arr: np.ndarray):
         key = self._cache_key(component, ch, roi)
-        
+
         if len(self._array_cache) >= self._cache_max_entries:
-            keys_to_remove = list(self._array_cache.keys())[:self._cache_max_entries // 2]
+            keys_to_remove = list(self._array_cache.keys())[
+                :self._cache_max_entries // 2]
             for k in keys_to_remove:
                 del self._array_cache[k]
-        
+
         self._array_cache[key] = arr
 
     def _load_channel_data(self, component: int, ch: int, roi: ROI) -> np.ndarray:
@@ -210,17 +212,20 @@ class VolumeStreamer:
         if cached is not None:
             print(f"[cache hit] comp={component} ch={ch} roi={roi}")
             return cached
-        
-        print(f"[loading] comp={component} ch={ch} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
+
+        print(
+            f"[loading] comp={component} ch={ch} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
         t0 = time.perf_counter()
-        
+
         darr = self.zsrc.array(component)
-        vol_zyx = darr[self.cfg.zarr_time_index, ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
+        vol_zyx = darr[self.cfg.zarr_time_index,
+                       ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
         np_arr = vol_zyx.compute()
-        
+
         t1 = time.perf_counter()
-        print(f"[loaded] comp={component} ch={ch} in {t1-t0:.2f}s, shape={np_arr.shape}")
-        
+        print(
+            f"[loaded] comp={component} ch={ch} in {t1-t0:.2f}s, shape={np_arr.shape}")
+
         self._put_cached_array(component, ch, roi, np_arr)
         return np_arr
 
@@ -236,26 +241,30 @@ class VolumeStreamer:
 
         for i, ch in enumerate(self.cfg.channels):
             ch = int(ch)
-            
+
             np_vol = darr[self.cfg.zarr_time_index, ch, :, :, :].compute()
             img = self._create_vtk_image(np_vol, spacing, (0.0, 0.0, 0.0))
-            
+
             color_tf, opacity_tf = self._precompute_transfer_function(ch, img)
-            
+
             vol, mapper = self._get_or_create_volume(ch)
             mapper.SetInputData(img)
-            
+
             prop = vol.GetProperty()
             prop.SetColor(color_tf)
             prop.SetScalarOpacity(opacity_tf)
-            prop.SetScalarOpacityUnitDistance(max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
-            
+            prop.SetScalarOpacityUnitDistance(
+                max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+
             self.renderer.AddVolume(vol)
-            self.state[ch] = ChannelState(component=comp, roi=ROI(0, int(x), 0, int(y)))
+            self.state[ch] = ChannelState(
+                component=comp, roi=ROI(0, int(x), 0, int(y)))
             self._put_cached_array(comp, ch, ROI(0, int(x), 0, int(y)), np_vol)
-            
-            color_name = self.cfg.channel_colors[i % len(self.cfg.channel_colors)]
-            print(f"[stream] added ch={ch} color={color_name} dims=(z={z},y={y},x={x})")
+
+            color_name = self.cfg.channel_colors[i % len(
+                self.cfg.channel_colors)]
+            print(
+                f"[stream] added ch={ch} color={color_name} dims=(z={z},y={y},x={x})")
 
         self._last_component = comp
         self.renderer.ResetCameraClippingRange()
@@ -277,14 +286,14 @@ class VolumeStreamer:
         roi = loaded.roi
         spacing = self._spacing_for_component(component)
         origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
-        
+
         for ch, np_arr in loaded.channel_arrays.items():
             img = self._create_vtk_image(np_arr, spacing, origin_xyz)
-            
+
             vol, mapper = self._get_or_create_volume(ch)
             mapper.SetInputData(img)
             mapper.Modified()
-            
+
             if ch in self._channel_tfs:
                 color_tf, opacity_tf = self._channel_tfs[ch]
                 prop = vol.GetProperty()
@@ -293,14 +302,15 @@ class VolumeStreamer:
                 prop.SetScalarOpacityUnitDistance(
                     max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
                 )
-            
+
             self.state[ch] = ChannelState(component=component, roi=roi)
-        
+
         self._last_component = component
         self.renderer.ResetCameraClippingRange()
         self._render()
-        
-        print(f"[stream] applied {len(loaded.channel_arrays)} channels at comp={component}")
+
+        print(
+            f"[stream] applied {len(loaded.channel_arrays)} channels at comp={component}")
 
     def _background_load(self, request: LoadRequest):
         """
@@ -310,20 +320,22 @@ class VolumeStreamer:
             if self._is_loading:
                 return
             self._is_loading = True
-        
+
         try:
             component = request.component
             roi = request.roi
-            
+
             channel_arrays: Dict[int, np.ndarray] = {}
             for ch in self.cfg.channels:
                 ch = int(ch)
                 prev = self.state.get(ch)
-                need_update = (prev is None) or (prev.component != component) or (prev.roi != roi)
-                
+                need_update = (prev is None) or (
+                    prev.component != component) or (prev.roi != roi)
+
                 if need_update:
-                    channel_arrays[ch] = self._load_channel_data(component, ch, roi)
-            
+                    channel_arrays[ch] = self._load_channel_data(
+                        component, ch, roi)
+
             if channel_arrays:
                 loaded = LoadedData(
                     component=component,
@@ -332,12 +344,13 @@ class VolumeStreamer:
                     timestamp=request.timestamp,
                 )
                 self._loaded_data_queue.put(loaded)
-                print(f"[background] queued {len(channel_arrays)} channels for main thread")
-            
+                print(
+                    f"[background] queued {len(channel_arrays)} channels for main thread")
+
         finally:
             with self._loading_lock:
                 self._is_loading = False
-            
+
             with self._debounce_lock:
                 if self._pending_request and self._pending_request.timestamp > request.timestamp:
                     self._schedule_load(self._pending_request)
@@ -350,7 +363,7 @@ class VolumeStreamer:
     def _debounce_callback(self, request: LoadRequest):
         """Called after debounce delay"""
         time.sleep(self.DEBOUNCE_DELAY)
-        
+
         with self._debounce_lock:
             if self._pending_request and self._pending_request.timestamp == request.timestamp:
                 self._pending_request = None
@@ -377,17 +390,17 @@ class VolumeStreamer:
         This runs on main thread.
         """
         self.check_and_apply_loaded_data()
-        
+
         cam = self.renderer.GetActiveCamera()
         dist = camera_distance_to_focal(cam)
-        
+
         desired_comp = choose_component(
             dist,
             self.cfg.distance_rules,
             min_component=self.cfg.min_component,
             max_component=self.cfg.max_component,
         )
-        
+
         spacing = self._spacing_for_component(desired_comp)
         zdim, ydim, xdim = self._dims_for_component(desired_comp)
         bounds = self._volume_bounds_world(desired_comp)
@@ -402,8 +415,9 @@ class VolumeStreamer:
             margin_vox=self.cfg.roi_margin_vox,
         )
 
-        print(f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
-        
+        print(
+            f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
+
         needs_update = False
         for ch in self.cfg.channels:
             ch = int(ch)
@@ -411,20 +425,20 @@ class VolumeStreamer:
             if prev is None or prev.component != desired_comp or prev.roi != roi:
                 needs_update = True
                 break
-        
+
         if not needs_update:
             print(f"[interaction] no update needed")
             return
-        
+
         request = LoadRequest(
             component=desired_comp,
             roi=roi,
             timestamp=time.time(),
         )
-        
+
         with self._debounce_lock:
             self._pending_request = request
-        
+
         threading.Thread(
             target=self._debounce_callback,
             args=(request,),
