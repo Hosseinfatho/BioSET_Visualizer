@@ -59,7 +59,7 @@ def default_config() -> VolumeConfig:
         data_dir=data_dir,
         channels=(0,),
         level=5,
-        base_sx=1.0,
-        base_sy=1.0,
-        base_sz=1.0,
+        base_sx=0.14,
+        base_sy=0.14,
+        base_sz=0.28,
     )

@@ -10,7 +10,7 @@ from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkIOImage import vtkTIFFReader
 from vtkmodules.vtkImagingCore import vtkImageChangeInformation
 from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
-from vtkmodules.vtkRenderingVolume import vtkFixedPointVolumeRayCastMapper
+from vtkmodules.vtkRenderingVolume import vtkFixedPointVolumeRayCastMapper, vtkGPUVolumeRayCastMapper
 from vtkmodules.vtkCommonDataModel import vtkImageData
 from vtkmodules.util.numpy_support import numpy_to_vtk
 
@@ -47,7 +47,8 @@ def _make_volume_from_vtk_image(
     prop.SetInterpolationTypeToLinear() if linear_interpolation else prop.SetInterpolationTypeToNearest()
     apply_volume_properties(prop, image, shade=shade)
 
-    mapper = vtkFixedPointVolumeRayCastMapper()
+    # mapper = vtkFixedPointVolumeRayCastMapper()
+    mapper = vtkGPUVolumeRayCastMapper()
     mapper.SetInputData(image)
 
     vol = vtkVolume()

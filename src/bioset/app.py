@@ -30,7 +30,10 @@ def main():
         "zarr_url": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
         # "source": "tiff",
         "zarr_component": 4,
-        "channels": (0,2, 13),
+        "channels": (13,0,1,3),
+        "base_sx": 0.14,
+        "base_sy": 0.14,
+        "base_sz": 0.28,
     })
     
     scene = build_scene(cfg)
