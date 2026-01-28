@@ -1,2 +1,13 @@
 .vs
 *.tiff
+.git
+
+*.egg-info/
+build/
+dist/
+
+.venv/
+venv/
+
+__pycache__/
+*.pyc

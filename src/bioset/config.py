@@ -15,13 +15,13 @@ class VolumeConfig:
     # Which channels to load
     channels: Sequence[int] = (0,)  # e.g. (0, 1, 2, 3, 13, 14)
 
-    # Pyramid level spacing behavior
+    # Volume spacing and zarr comp
     level: int = 5
-    base_sx: float = 1.0
-    base_sy: float = 1.0
-    base_sz: float = 1.0
+    base_sx: float = 0.14
+    base_sy: float = 0.14
+    base_sz: float = 0.28
 
-    # Rendering defaults
+    # Rendering Defaults
     background: str = "White"
     shade: bool = True
     linear_interpolation: bool = True
@@ -35,7 +35,6 @@ class VolumeConfig:
 
 
 def default_config() -> VolumeConfig:
-    # app is in src/bioset; project root is 3 levels up: src/bioset/config.py -> project
     project_root = Path(__file__).resolve().parents[2]
     data_dir = project_root / "data"
     return VolumeConfig(project_root=project_root, data_dir=data_dir)

@@ -5,9 +5,10 @@ from typing import Iterable, Tuple
 
 from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkRenderingCore import vtkRenderer, vtkRenderWindow, vtkRenderWindowInteractor
+from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa
 
-# Ensures OpenGL2 backend is registered
 import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
+import vtkmodules.vtkRenderingVolumeOpenGL2
 
 from .config import VolumeConfig
 from .volume import SpacingConfig, make_volume_from_tiff
@@ -29,13 +30,15 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
 
     interactor = vtkRenderWindowInteractor()
     interactor.SetRenderWindow(render_window)
-    # Trackball camera
-    interactor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
+    style = vtkInteractorStyleSwitch()
+    style.SetCurrentStyleToTrackballCamera()
+    interactor.SetInteractorStyle(style)
+
 
     spacing = SpacingConfig(
         sx=cfg.base_sx * cfg.xy_scale,
         sy=cfg.base_sy * cfg.xy_scale,
-        sz=cfg.base_sz,  # z unchanged
+        sz=cfg.base_sz,  #
     )
 
     for ch in cfg.channels:
