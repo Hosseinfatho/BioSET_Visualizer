@@ -9,3 +9,9 @@ source .venv/bin/activate
 
 pip install -U pip
 pip install -e .
+```
+
+## Run
+```bash
+bioset
+```
