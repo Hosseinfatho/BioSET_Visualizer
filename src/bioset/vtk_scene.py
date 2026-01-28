@@ -34,8 +34,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     render_window.SetShowWindow(False)
 
     interactor = vtkRenderWindowInteractor()
-    interactor.Initialize()
     interactor.SetRenderWindow(render_window)
+    interactor.Initialize()
     style = vtkInteractorStyleSwitch()
     style.SetCurrentStyleToTrackballCamera()
     interactor.SetInteractorStyle(style)
