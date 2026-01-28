@@ -36,18 +36,18 @@ class VolumeConfig:
     # Zarr multiresolution settings
     # starting default component and range of componets to pick from
     start_component: int = 6
-    min_component: int = 0
+    min_component: int = 1
     max_component: int = 6
 
     # LOD zoom thresholds in world units (camera dist from vol)
     distance_rules: Sequence[Tuple[float, int]] = (
         (2500.0, 6),
-        (1000.0, 5),
-        (400.0,  4),
-        (200.0,  3),
-        (50.0,  2),
-        (10.0,  1),
-        (0.0,  0),
+        (1500.0, 5),
+        (1000.0,  4),
+        (600.0,  3),
+        (300.0,  2),
+        (100.0,  1),
+        (60.0,  0),
     )
 
     # ROI padding (voxels at the chosen component)

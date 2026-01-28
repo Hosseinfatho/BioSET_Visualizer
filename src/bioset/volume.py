@@ -261,10 +261,10 @@ def build_histogram_tf(image, *, tint_rgb=(0.2, 0.8, 1.0)):
 def apply_volume_properties(prop: vtkVolumeProperty, image, *, shade=True):
     if shade:
         prop.ShadeOn()
-        prop.SetAmbient(0.5)
-        prop.SetDiffuse(0.8)
-        prop.SetSpecular(0.1)
-        prop.SetSpecularPower(8.0)
+        prop.SetAmbient(0.8)
+        prop.SetDiffuse(1.0)
+        prop.SetSpecular(0.5)
+        prop.SetSpecularPower(32.0)
     else:
         prop.ShadeOff()
 
