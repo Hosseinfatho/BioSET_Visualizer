@@ -4,8 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from trame.app import get_server
-from trame.ui.vuetify import SinglePageLayout
-from trame.widgets import vtk, vuetify
 
 import asyncio
 import sys
