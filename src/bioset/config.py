@@ -35,9 +35,9 @@ class VolumeConfig:
 
     # Zarr multiresolution settings
     # starting default component and range of componets to pick from
-    start_component: int = 6
+    start_component: int = 5
     min_component: int = 1
-    max_component: int = 6
+    max_component: int = 5
 
     # LOD zoom thresholds in world units (camera dist from vol)
     distance_rules: Sequence[Tuple[float, int]] = (
@@ -84,7 +84,6 @@ def default_config() -> VolumeConfig:
         project_root=project_root,
         data_dir=data_dir,
         channels=(0,),
-        level=5,
         base_sx=0.14,
         base_sy=0.14,
         base_sz=0.28,

@@ -21,7 +21,7 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 
 from .config import default_config
 from .vtk_scene import build_scene
-from .gui import build_ui
+from .gui_new import build_ui
 
 def main():
     cfg = default_config()

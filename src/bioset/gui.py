@@ -2,15 +2,28 @@
 from __future__ import annotations
 
 from trame.ui.vuetify import VAppLayout
-from trame.widgets import html, vtk, vuetify
+from trame.widgets import html, vtk, vuetify, client
 
 
 def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
     state = server.state
 
+    if not hasattr(state, 'trame__scripts') or state.trame__scripts is None:
+        state.trame__scripts = []
+    state.trame__scripts = list(state.trame__scripts) + ["https://unpkg.com/@upsetjs/bundle"]
+
+    state.upset_click = None  
+
+    @state.change("upset_click")
+    def _on_upset_click(upset_click, **_):
+        if upset_click is None:
+            return
+        print("[UpSet Click]", upset_click)
+        
     # Drawer state
     state.drawer_mini = False
+    state.right_drawer_open = True
     
     # Channel states - TEMP!
     state.ch1_visible = True
@@ -27,11 +40,20 @@ def build_ui(server, render_window, streamer=None):
     
     # Selected channel 
     state.selected_channel = None
+    
+    @ctrl.trigger("on_upset_click")
+    def on_upset_click(selection):
+        print(f"[UpSet Click] {selection}")
 
     with VAppLayout(server) as layout:
         left_drawer()
-
+        right_drawer()
+        
+        # VTK RENDERER
         with layout.root:
+            #client.Script(src="https://cdn.jsdelivr.net/npm/@upsetjs/bundle@1.11.0/dist/upsetjs.umd.production.min.js")
+            #client.Script(src="https://unpkg.com/@upsetjs/bundle")
+            
             with vuetify.VContainer(
                 fluid=True,
                 classes="pa-0 fill-height",
@@ -42,7 +64,9 @@ def build_ui(server, render_window, streamer=None):
                     render_window.Render()
                     view.update()
                 ctrl.on_server_ready.add(_on_ready)
-
+                
+            upset_plot(client)
+        
     return ctrl, view
 
 
@@ -116,7 +140,7 @@ def left_drawer():
         mini_variant_width=48,
         width=200,
         dark=True,
-        color="rgba(18, 18, 18, 0.95)",
+        color="rgba(18, 18, 18, 0.7)",
     ):
         # Logo and title
         with vuetify.VListItem(
@@ -160,3 +184,80 @@ def left_drawer():
         #             vuetify.VIcon("mdi-cog-outline", size=20)
         #         with vuetify.VListItemContent():
         #             vuetify.VListItemTitle("Settings", classes="text-body-2")
+ 
+        
+def right_drawer():
+    with vuetify.VNavigationDrawer(
+        v_model=("right_drawer_open",),
+        app=True,
+        right=True,
+        width=350,
+        dark=True,
+        color="rgba(18, 18, 18, 0.7)",
+    ):
+        with vuetify.VListItem(classes="px-3 py-2"):
+            vuetify.VListItemTitle("Analysis", classes="text-subtitle-1")
+            vuetify.VSpacer()
+            with vuetify.VBtn(icon=True, small=True, click="right_drawer_open = false"):
+                vuetify.VIcon("mdi-close", small=True)
+        
+        vuetify.VDivider()
+        html.Div(id="upset-container", style="width: 100%; height: 300px; padding: 8px;")
+        
+        
+def upset_plot(client):
+    client.Script(r"""
+            (function initUpSet(){
+  const container = document.getElementById('upset-container');
+  if (!container) { setTimeout(initUpSet, 100); return; }
+
+  // Wait until UpSetJS is actually available
+  if (!window.UpSetJS) { 
+    console.warn("UpSetJS not loaded yet; retrying...");
+    setTimeout(initUpSet, 200); 
+    return; 
+  }
+
+  // Wait until trame state bridge exists
+  if (!window.trame || !window.trame.state) {
+    console.warn("window.trame.state not available yet; retrying...");
+    setTimeout(initUpSet, 200);
+    return;
+  }
+
+  const elems = [
+    { name: 'E1', sets: ['Ch1'] },
+    { name: 'E2', sets: ['Ch1', 'Ch2'] },
+    { name: 'E3', sets: ['Ch1', 'Ch2'] },
+    { name: 'E4', sets: ['Ch1', 'Ch2', 'Ch3'] },
+  ];
+
+  const { sets, combinations } = UpSetJS.extractCombinations(elems);
+
+  container.innerHTML = ""; // avoid double-render on hot reload
+  UpSetJS.render(container, {
+    sets,
+    combinations,
+    width: 330,
+    height: 280,
+    theme: 'dark',
+    onClick: (set) => {
+      if (!set) return;
+
+      // Send to Python by writing into trame state
+      window.trame.state.upset_click = {
+        name: set.name,
+        size: set.cardinality,
+        ts: Date.now(),
+      };
+
+      // Some trame builds need an explicit flush; call if it exists
+      if (window.trame.flushState) window.trame.flushState();
+      if (window.trame.pushState) window.trame.pushState();
+    },
+  });
+
+  console.log("UpSet rendered; clicks will update state.upset_click");
+})();
+        """)
+
