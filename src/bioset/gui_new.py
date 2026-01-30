@@ -70,6 +70,42 @@ def build_ui(server, render_window, streamer=None):
   background: rgba(255,255,255,0.12) !important;
 }
 """)
+        client.Style("""
+/* Make channel avatar+badge feel interactive */
+.channel-chip {
+  position: relative;
+  display: inline-flex;
+  border-radius: 6px;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+/* Hover effect on the whole chip (avatar + badge) */
+.channel-chip:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
+/* Give a subtle ring on hover */
+.channel-chip:hover .channel-avatar {
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.25) inset;
+}
+
+/* Make the badge icon pop a bit on hover */
+.channel-chip:hover .v-badge__badge {
+  filter: brightness(1.2);
+}
+
+/* Avoid badge clipping */
+.channel-chip .v-badge__wrapper,
+.channel-chip .v-list-item__avatar {
+  overflow: visible !important;
+}
+
+/* Cursor hints */
+.channel-avatar {
+  cursor: pointer;
+}
+""")
         
         left_drawer(layout, state)
         right_drawer(state)
@@ -154,7 +190,7 @@ def left_drawer(layout, state):
                 with vuetify.VListItemIcon():
                     vuetify.VIcon("mdi-cog-outline", style="font-size: 30px;")
                 with vuetify.VListItemContent(v_if="!drawer_mini"):
-                    vuetify.VListItemTitle("Settings", classes="text-body-1")
+                    vuetify.VListItemTitle("Settings", classes="text-overline")
 
             with vuetify.VExpandTransition():
                 with html.Div(v_show=("settings_open", False)):
@@ -162,13 +198,13 @@ def left_drawer(layout, state):
                         with vuetify.VListItemIcon():
                             vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
-                            vuetify.VListItemTitle("Toggle Theme", classes="text-body-2")
+                            vuetify.VListItemTitle("Toggle Theme", classes="")
                             
                     with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True, click=open_bg_picker):
                         with vuetify.VListItemIcon():
                             vuetify.VIcon("mdi-circle-outline", style=("`font-size: 25px; color: ${bg_color};`",))
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
-                            vuetify.VListItemTitle("Bg-color", classes="text-body-2")
+                            vuetify.VListItemTitle("Bg-color", classes="")
                         
                     with vuetify.VDialog(v_model=("bg_color_dialog", False), max_width=320):
                         with vuetify.VCard():
@@ -190,116 +226,106 @@ def left_drawer(layout, state):
                         with vuetify.VListItemIcon():
                             vuetify.VIcon("mdi-crop-free", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
-                            vuetify.VListItemTitle("Reset Camera", classes="text-body-2")
+                            vuetify.VListItemTitle("Reset Camera", classes="")
             
                         
         vuetify.VDivider()
 
         # channels
-        channels = [(0,"Hoechst"), (3,"MART1"), (13,"pan-Cytokeratin")]
+        channels = [
+            (0, "Hoechst", "#00FFFF"),
+            (1, "MART1", "#FF00FF"),
+            (2, "Pan-Cytokeratin", "#FFFF00"),
+        ]
+
+        # defaults states
+        for idx, _, default_hex in channels:
+            state.setdefault(f"ch{idx}_color", default_hex)
+            state.setdefault(f"ch{idx}_color_dialog", False)
 
         with vuetify.VList(dense=True, nav=True):
             with vuetify.VListItem(class_=("channels_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"), link=True, ripple=True, click=toggle_channels):
                 with vuetify.VListItemIcon():
                     vuetify.VIcon("mdi-layers-triple-outline", style="font-size: 30px;")
                 with vuetify.VListItemContent(v_if="!drawer_mini"):
-                    vuetify.VListItemTitle("Channels", classes="text-body-1")
+                    vuetify.VListItemTitle("Channels", classes="text-overline")
             
             with vuetify.VExpandTransition():
                 with html.Div(v_show=("channels_open", False), class_="px-2 pb-2"):
-                    for ch_idx, ch_name in channels:
-                        channel_row(
-                            state=state,
-                            name=ch_name,
-                            index=ch_idx,
-                            isActive=f"ch{ch_idx}_active",
-                            color=f"ch{ch_idx}_color",
-                            opacity=f"ch{ch_idx}_opacity",
-                        )
+                    with vuetify.VListItemGroup(multiple=True):
+                        for idx, ch_name, _ in channels:
+                            channel_item(state, idx, ch_name)
         
+def channel_item(state, idx, name):
+    color_key = f"ch{idx}_color"
+    dialog_key = f"ch{idx}_color_dialog"
 
-def channel_row(state, name, index, isActive, color, opacity):
-    # defaults
-    state.setdefault(isActive, True)
-    state.setdefault(color, "#00FFFF")
-    state.setdefault(opacity, [0, 100])
-    state.setdefault(f"ch{index}_color_dialog", False)
+    with vuetify.VListItem(dense=True, class_="px-2 py-1 mb-1"):
+        
+        with html.Div(class_="mr-2 channel-chip"):
+            
+            with html.Div(v_if="drawer_mini"):
+                with vuetify.VBadge(
+                    bordered=True,
+                    overlap=True,
+                    link=True,
+                    color="rgba(0,0,0,0.75)",
+                    icon="mdi-close",
+                    offset_x="25",
+                    offset_y="20",
+                ):
+                    with vuetify.VListItemAvatar(
+                        tile=True,
+                        size=40,
+                        class_="ma-0 channel-avatar",
+                        click=f"{dialog_key} = true",
+                        style=(f"`background-color: ${{{color_key}}} !important;`",),
+                    ):
+                        html.Span(
+                            f"{name[:2]}..",
+                            class_="text-truncate",
+                            style="color:black;",
+                        )
 
-    def open_color():
-        state[f"ch{index}_color_dialog"] = True
-
-    def close_color():
-        state[f"ch{index}_color_dialog"] = False
-
-    with vuetify.VListItem(
-        dense=True,
-        class_="channel-row px-2",
-        style="min-height: 44px;",
-    ):
-        # channel toggle
-        with vuetify.VListItemAction(class_="mr-1"):
-            vuetify.VSwitch(
-                v_model=(isActive, True),
-                hide_details=True,
-                dense=True,
-                inset=True,
-                class_="ma-0 pa-0",
-            )
+            with html.Div(v_else=True):
+                with vuetify.VListItemAvatar(
+                    tile=True,
+                    size=40,
+                    class_="ma-0 channel-avatar",
+                    click=f"{dialog_key} = true",
+                    style=(f"`background-color: ${{{color_key}}} !important;`",),
+                ):
+                    pass
 
         with vuetify.VListItemContent(class_="py-0"):
-            with html.Div(class_="d-flex align-center"):
-                # color pick
-                with vuetify.VBtn(icon=True, x_small=True, class_="mr-2", click=open_color):
-                    with html.Div(style="position: relative; width: 18px; height: 18px;"):
-                        vuetify.VIcon(
-                            "mdi-circle",
-                            style=(f"`position:absolute; left:0; top:0; font-size: 16px; color: ${{{color}}};`",),
-                        )
-                        vuetify.VIcon(
-                            "mdi-circle-outline",
-                            style="position:absolute; left:0; top:0; font-size: 16px; color: white;",
-                        )
-
-                # name + index
-                html.Div(
-                    f"{index} · {name}",
-                    class_="channel-name text-body-2",
-                    style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;",
-                )
-
-            # opacity slider 
+            html.Div(name, class_="text-truncate", style="line-height: 1.1;")
             vuetify.VRangeSlider(
-                v_model=(opacity, [0, 100]),
                 min=0,
                 max=100,
                 step=1,
                 dense=True,
                 hide_details=True,
-                track_color="grey",
                 class_="mt-0 pt-0",
                 style="height: 22px;",
             )
 
-    # color picker dialog 
-    with vuetify.VDialog(
-        v_model=(f"ch{index}_color_dialog", False),
-        max_width=320,
-    ):
+    with vuetify.VDialog(v_model=(dialog_key, False), max_width=320):
         with vuetify.VCard():
             with vuetify.VCardTitle(class_="py-2"):
-                html.Span(f"{index} · {name}", style="font-size: 14px;")
+                html.Span(f"{name} color", style="font-size: 14px;")
             with vuetify.VCardText(class_="pt-0"):
                 vuetify.VColorPicker(
-                    v_model=(color, "#00FFFF"),
+                    v_model=(color_key, "#FFFFFF"),
                     mode="hexa",
                     hide_mode_switch=True,
                     hide_inputs=True,
                 )
             with vuetify.VCardActions():
                 vuetify.VSpacer()
-                with vuetify.VBtn(text=True, click=close_color):
+                with vuetify.VBtn(text=True, click=f"{dialog_key} = false"):
                     html.Span("Close")
-                    
+    
+            
                     
 def right_drawer(state):
     state.right_drawer_open = True
