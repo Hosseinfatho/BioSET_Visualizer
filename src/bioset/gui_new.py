@@ -202,7 +202,7 @@ def left_drawer(layout, state):
                             
                     with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True, click=open_bg_picker):
                         with vuetify.VListItemIcon():
-                            vuetify.VIcon("mdi-circle-outline", style=("`font-size: 25px; color: ${bg_color};`",))
+                            vuetify.VIcon("mdi-format-color-fill", style=("`font-size: 25px; background-color: ${bg_color};`",))
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
                             vuetify.VListItemTitle("Bg-color", classes="")
                         
