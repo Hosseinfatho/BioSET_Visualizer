@@ -17,11 +17,11 @@ if sys.version_info >= (3, 10):
         asyncio.set_event_loop(loop)
 
 # Path to assets directory
-ASSETS_DIR = Path(__file__).parent / "assets"
+ASSETS_DIR = Path(__file__).parent / "ui" / "assets"
 
 from .config import default_config
-from .vtk_scene import build_scene
-from .gui_new import build_ui
+from .scene.builder import build_scene
+from .ui.layout import build_ui
 
 def main():
     cfg = default_config()

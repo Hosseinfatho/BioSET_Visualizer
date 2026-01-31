@@ -13,14 +13,14 @@ import dask.array as da
 from vtkmodules.vtkCommonDataModel import vtkImageData
 from vtkmodules.util.numpy_support import numpy_to_vtk
 
-from .camera import (
+from .lod import (
     camera_distance_to_focal,
     choose_component,
     compute_visible_xy_roi_vox,
     ROI,
 )
-from .zarr import ZarrMultiscaleSource
-from .volume import (
+from .zarr_source import ZarrMultiscaleSource
+from ..scene.volumes import (
     SpacingConfig,
     color_name_to_rgb,
     build_histogram_tf,
