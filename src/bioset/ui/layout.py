@@ -6,29 +6,19 @@ from trame.widgets import html, vtk, vuetify, client
 
 from .styles import register_styles
 from .scripts import register_scripts
+from .state import init_state, register_state_change_handlers
 
 def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
     state = server.state
     
-    server.state.trame__title = "BioSET"
-    server.state.trame__favicon = "assets/icon.jpg"
-    
-    if not hasattr(state, 'trame__scripts') or state.trame__scripts is None:
-        state.trame__scripts = []
-    state.trame__scripts = list(state.trame__scripts) + ["https://unpkg.com/@upsetjs/bundle"]
-    
-    state.setdefault("upset_click", None)
-
-    @state.change("upset_click")
-    def on_upset_click(upset_click, **kwargs):
-        if upset_click:
-            print(f"[Python] UpSet clicked: {upset_click}")
+    init_state(state)
+    register_state_change_handlers(state, ctrl)
 
     with VAppLayout(server) as layout:
         register_styles(client)
 
-        left_drawer(layout, state)
+        left_drawer(state, ctrl)
         right_drawer(state)
         
         # VTK RENDERER
@@ -51,17 +41,7 @@ def build_ui(server, render_window, streamer=None):
 
 
     
-def left_drawer(layout, state):
-    state.setdefault("drawer", True)
-    state.setdefault("drawer_mini", False)
-    
-    state.setdefault("data_open", True)
-    
-    state.setdefault("settings_open", False)
-    state.setdefault("bg_color", "#000000")
-    state.setdefault("bg_color_dialog", False)
-    
-    state.setdefault("channels_open", True)
+def left_drawer(state, ctrl):
     
     def expand_drawer():
         if state.drawer_mini:
@@ -107,10 +87,7 @@ def left_drawer(layout, state):
                 
         vuetify.VDivider()
         
-        # zarr data sources
-        state.default_sources = {"Zarr URL": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
-                           "Metadata URL": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml"}
-        
+       
         with vuetify.VList(dense=True, nav=True):
             with vuetify.VListItem(class_=("data_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"), link=True, ripple=True, click=toggle_data):
                 with vuetify.VListItemIcon():
@@ -124,13 +101,13 @@ def left_drawer(layout, state):
                         with vuetify.VListItemIcon(v_if="drawer_mini"):
                             vuetify.VIcon("mdi-radiobox-marked", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini",class_="mb-0 pb-0"):
-                            vuetify.VTextField(v_model=("default_sources['Zarr URL']", ""), label="Zarr URL", placeholder="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0", dense=True, clearable=True)
+                            vuetify.VTextField(v_model=("zarr_url", ""), label="Zarr URL", placeholder="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0", dense=True, clearable=True)
                             
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
                         with vuetify.VListItemIcon(v_if="drawer_mini"):
                             vuetify.VIcon("mdi-radiobox-marked", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini",class_="mt-0 pt-0 mb-0 pb-0"):
-                            vuetify.VTextField(v_model=("default_sources['Metadata URL']", ""), label="Metadata URL", placeholder="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml", dense=True, clearable=True)
+                            vuetify.VTextField(v_model=("metadata_url", ""), label="Metadata URL", placeholder="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml", dense=True, clearable=True)
         
         
         vuetify.VDivider()
@@ -188,11 +165,6 @@ def left_drawer(layout, state):
             (1, "MART1", "#FF00FF"),
             (2, "Pan-Cytokeratin", "#FFFF00"),
         ]
-
-        # defaults states
-        for idx, _, default_hex in channels:
-            state.setdefault(f"ch{idx}_color", default_hex)
-            state.setdefault(f"ch{idx}_color_dialog", False)
 
         with vuetify.VList(dense=True, nav=True):
             with vuetify.VListItem(class_=("channels_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"), link=True, ripple=True, click=toggle_channels):
@@ -280,8 +252,7 @@ def channel_item(state, idx, name):
             
                     
 def right_drawer(state):
-    state.right_drawer_open = True
-    
+
     with vuetify.VNavigationDrawer(
         v_model=("right_drawer_open",),
         app=True,
