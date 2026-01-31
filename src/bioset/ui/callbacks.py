@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .state import get_channel_color
 
+
 def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
 
@@ -11,7 +12,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     }
 
     def set_streamer(streamer):
-        """Set the streamer reference """
+        """Set the streamer reference."""
         _refs["streamer"] = streamer
         print(f"[callbacks] Streamer set: {streamer}")
     
@@ -35,17 +36,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.physical_size_y = metadata.physical_size_y
             state.physical_size_z = metadata.physical_size_z
             
+            # Update streamer with new URL and spacing
+            streamer = _refs.get("streamer")
+            if streamer:
+                streamer.set_zarr_url(state.zarr_url)
+                streamer.set_spacing(
+                    metadata.physical_size_x,
+                    metadata.physical_size_y,
+                    metadata.physical_size_z
+                )
+            
             # channel list with color defaults
             channels = [
-    {
-        "id": ch.id,
-        "name": ch.name,
-        "color": get_channel_color(ch.id),
-        "color_dialog": False,
-        "range": [0, 100],
-    }
-    for ch in metadata.channels
-]
+                {
+                    "id": ch.id,
+                    "name": ch.name,
+                    "color": get_channel_color(ch.id),
+                    "color_dialog": False,
+                    "range": [0, 100],
+                }
+                for ch in metadata.channels
+            ]
             
             # state update
             state.channels = channels
@@ -54,6 +65,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
+            
+            # Reset camera to show the volume bounds
+            if streamer:
+                streamer.renderer.ResetCamera()
+                streamer.renderer.ResetCameraClippingRange()
+            if _refs["view"]:
+                _refs["view"].update()
             
         except Exception as e:
             print(f"[callbacks] Error loading data: {e}")
@@ -67,13 +85,29 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Toggle a channel's active state (add/remove from rendering)."""
         print(f"[callbacks] Toggle channel {channel_id}")
         
+        streamer = _refs.get("streamer")
+        
         active = list(state.active_channels)
         if channel_id in active:
+            # Deactivate
             active.remove(channel_id)
-            print(f"[callbacks] Deactivated channel {channel_id}")
+            print(f"[callbacks] Deactivating channel {channel_id}")
+            if streamer:
+                streamer.deactivate_channel(channel_id)
         else:
+            # Activate - get color from channel list
             active.append(channel_id)
-            print(f"[callbacks] Activated channel {channel_id}")
+            print(f"[callbacks] Activating channel {channel_id}")
+            
+            # Find the channel color
+            color_hex = "#FFFFFF"
+            for ch in state.channels:
+                if ch["id"] == channel_id:
+                    color_hex = ch["color"]
+                    break
+            
+            if streamer:
+                streamer.activate_channel(channel_id, color_hex)
         
         state.active_channels = active
     
@@ -85,8 +119,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if streamer is None:
             print(f"[callbacks] No streamer available yet")
             return
-        
-        # TODO: Tell streamer to update visible channels
         
         if _refs["view"]:
             _refs["view"].update()
@@ -107,10 +139,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         streamer = _refs.get("streamer")
         if streamer and hasattr(streamer, 'renderer'):
             color_hex = color_hex.lstrip('#')
-            r = int(color_hex[0:2], 16) / 255.0
-            g = int(color_hex[2:4], 16) / 255.0
-            b = int(color_hex[4:6], 16) / 255.0
-            streamer.renderer.SetBackground(r, g, b)
+            if len(color_hex) >= 6:
+                r = int(color_hex[0:2], 16) / 255.0
+                g = int(color_hex[2:4], 16) / 255.0
+                b = int(color_hex[4:6], 16) / 255.0
+                streamer.renderer.SetBackground(r, g, b)
         if _refs["view"]:
             _refs["view"].update()
     
@@ -118,17 +151,20 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Update color of a channel."""
         print(f"[callbacks] Channel {channel_id} color: {color_hex}")
         
+        # Update in channels list
         channels = list(state.channels)
         for ch in channels:
             if ch["id"] == channel_id:
                 ch["color"] = color_hex
                 break
         state.channels = channels
-    
-    # def update_channel_range(channel_id, range_min, range_max):
-    #     """Update intensity range of a channel."""
-    #     print(f"[callbacks] Channel {channel_id} range: [{range_min}, {range_max}]")
-    #     # TODO: Update transfer function in streamer
+        
+        # If channel is active, update its transfer function
+        streamer = _refs.get("streamer")
+        if streamer and channel_id in state.active_channels:
+            # Deactivate and reactivate to apply new color
+            streamer.deactivate_channel(channel_id)
+            streamer.activate_channel(channel_id, color_hex)
     
     # Bind to controller
     ctrl.set_streamer = set_streamer
@@ -138,4 +174,3 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.reset_camera = reset_camera
     ctrl.update_background_color = update_background_color
     ctrl.update_channel_color = update_channel_color
-    # ctrl.update_channel_range = update_channel_range

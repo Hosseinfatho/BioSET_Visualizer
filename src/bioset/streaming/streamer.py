@@ -86,7 +86,9 @@ class VolumeStreamer:
 
         self._last_component: Optional[int] = None
 
-        # only init if channels are there
+        self._active_channels: set[int] = set() 
+        self._channel_colors: Dict[int, Tuple[float, float, float]] = {} 
+
         if self.cfg.channels:
             self._init_low_res_full()
         else:
@@ -94,6 +96,192 @@ class VolumeStreamer:
 
     def set_render_callback(self, fn: Callable):
         self.render_callback = fn
+
+    def set_zarr_url(self, url: str):
+        """Update the zarr URL and reinitialize the source."""
+        print(f"[stream] Setting zarr URL: {url}")
+        max_bytes = int(self.cfg.cache_size_gb * (1024**3))
+        self.zsrc = ZarrMultiscaleSource(
+            url=url,
+            cache_enabled=self.cfg.cache_enabled,
+            cache_dir=self.cfg.cache_dir,
+            cache_size_bytes=max_bytes,
+        )
+        self._array_cache.clear()
+        self._active_channels.clear()
+        self._channel_colors.clear()
+        self._channel_tfs.clear()
+        self.volumes.clear()
+        self.mappers.clear()
+        self.state.clear()
+
+    def set_spacing(self, sx: float, sy: float, sz: float):
+        """Update the base spacing."""
+        self.cfg = self.cfg.__class__(**{**self.cfg.__dict__,
+                                        "base_sx": sx,
+                                        "base_sy": sy,
+                                        "base_sz": sz})
+        print(f"[stream] Updated spacing: ({sx}, {sy}, {sz})")
+
+    def _hex_to_rgb(self, color_hex: str) -> Tuple[float, float, float]:
+        """Convert hex color to RGB tuple (0-1 range)."""
+        color_hex = color_hex.lstrip('#')
+        r = int(color_hex[0:2], 16) / 255.0
+        g = int(color_hex[2:4], 16) / 255.0
+        b = int(color_hex[4:6], 16) / 255.0
+        return (r, g, b)
+
+    def activate_channel(self, channel_id: int, color_hex: str):
+        """
+        Activate a channel for rendering.
+        Always loads at start_component first (fast), then LOD system upgrades.
+        """
+        if channel_id in self._active_channels:
+            print(f"[stream] Channel {channel_id} already active")
+            return
+        
+        print(f"[stream] Activating channel {channel_id} with color {color_hex}")
+        
+        self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
+        is_first_volume = len(self._active_channels) == 0 
+        self._active_channels.add(channel_id)
+        
+        # ALWAYS start at low-res component for fast initial load
+        comp = self.cfg.start_component
+        
+        try:
+            z, y, x = self._dims_for_component(comp)
+        except Exception as e:
+            print(f"[stream] Error getting dims: {e}")
+            self._active_channels.discard(channel_id)  # Rollback
+            return
+        
+        roi = ROI(0, x, 0, y)
+        
+        print(f"[stream] Initial load at low-res comp={comp} (dims: {x}x{y}x{z})")
+        
+        self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
+        
+        # After initial display, trigger LOD update if camera is zoomed in
+        if self._last_component is not None and self._last_component < comp:
+            print(f"[stream] Scheduling upgrade from comp={comp} to current view")
+            self._trigger_lod_update_for_new_channel()
+
+    def _trigger_lod_update_for_new_channel(self):
+        """Trigger an async LOD update after adding a new channel."""
+        if not self._active_channels:
+            return
+        
+        cam = self.renderer.GetActiveCamera()
+        dist = camera_distance_to_focal(cam)
+        
+        desired_comp = choose_component(
+            dist,
+            self.cfg.distance_rules,
+            min_component=self.cfg.min_component,
+            max_component=self.cfg.max_component,
+        )
+        
+        spacing = self._spacing_for_component(desired_comp)
+        zdim, ydim, xdim = self._dims_for_component(desired_comp)
+        bounds = self._volume_bounds_world(desired_comp)
+        
+        roi = compute_visible_xy_roi_vox(
+            self.renderer,
+            bounds_world=bounds,
+            sx=spacing.sx,
+            sy=spacing.sy,
+            x_dim=xdim,
+            y_dim=ydim,
+            margin_vox=self.cfg.roi_margin_vox,
+        )
+        
+        print(f"[stream] Scheduling LOD update: comp={desired_comp} roi={roi}")
+        
+        request = LoadRequest(
+            component=desired_comp,
+            roi=roi,
+            timestamp=time.time(),
+        )
+        
+        # Schedule async load immediately
+        self._schedule_load(request)
+
+    def deactivate_channel(self, channel_id: int):
+        """
+        Deactivate a channel - remove from rendering.
+        """
+        if channel_id not in self._active_channels:
+            print(f"[stream] Channel {channel_id} not active")
+            return
+        
+        print(f"[stream] Deactivating channel {channel_id}")
+        
+        self._active_channels.discard(channel_id)
+        
+        if channel_id in self.volumes:
+            vol = self.volumes[channel_id]
+            self.renderer.RemoveVolume(vol)
+            del self.volumes[channel_id]
+        
+        if channel_id in self.mappers:
+            del self.mappers[channel_id]
+        
+        if channel_id in self.state:
+            del self.state[channel_id]
+        
+        if channel_id in self._channel_tfs:
+            del self._channel_tfs[channel_id]
+        
+        self._render()
+
+    def _load_and_display_channel(self, channel_id: int, component: int, roi: ROI, reset_camera: bool = False):
+        """Load a single channel and add to display."""
+        spacing = self._spacing_for_component(component)
+        
+        print(f"[stream] Loading channel {channel_id} at comp={component} roi={roi}")
+        
+        try:
+            np_arr = self._load_channel_data(component, channel_id, roi)
+        except Exception as e:
+            print(f"[stream] Error loading channel {channel_id}: {e}")
+            return
+        
+        origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
+        img = self._create_vtk_image(np_arr, spacing, origin_xyz)
+        
+        vol, mapper = self._get_or_create_volume(channel_id)
+        mapper.SetInputData(img)
+        
+        tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
+        color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
+        self._channel_tfs[channel_id] = (color_tf, opacity_tf)
+        
+        prop = vol.GetProperty()
+        prop.SetColor(color_tf)
+        prop.SetScalarOpacity(opacity_tf)
+        prop.SetScalarOpacityUnitDistance(
+            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
+        )
+        
+        if not self.renderer.HasViewProp(vol):
+            self.renderer.AddVolume(vol)
+        
+        self.state[channel_id] = ChannelState(component=component, roi=roi)
+        self._last_component = component
+        
+        if reset_camera:
+            print(f"[stream] Resetting camera for first volume")
+            self.renderer.ResetCamera()
+        
+        self.renderer.ResetCameraClippingRange()
+        self._render()
+        
+        print(f"[stream] Channel {channel_id} displayed")
+
+    def get_active_channels(self) -> set[int]:
+        """Return the set of currently active channel IDs."""
+        return self._active_channels.copy()
 
     def _spacing_for_component(self, component: int) -> SpacingConfig:
         scale = float(2 ** component)
@@ -318,7 +506,7 @@ class VolumeStreamer:
             roi = request.roi
 
             channel_arrays: Dict[int, np.ndarray] = {}
-            for ch in self.cfg.channels:
+            for ch in self._active_channels:  # Changed from self.cfg.channels
                 ch = int(ch)
                 prev = self.state.get(ch)
                 need_update = (prev is None) or (
@@ -381,9 +569,9 @@ class VolumeStreamer:
         Called on EndInteractionEvent - debounced and async.
         This runs on main thread.
         """
-        if not self.cfg.channels:
+        if not self._active_channels:  # Changed from self.cfg.channels
             return
-    
+
         self.check_and_apply_loaded_data()
 
         cam = self.renderer.GetActiveCamera()
@@ -414,7 +602,7 @@ class VolumeStreamer:
             f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
 
         needs_update = False
-        for ch in self.cfg.channels:
+        for ch in self._active_channels:  # Changed from self.cfg.channels
             ch = int(ch)
             prev = self.state.get(ch)
             if prev is None or prev.component != desired_comp or prev.roi != roi:
