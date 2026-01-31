@@ -1,5 +1,14 @@
-# BioSET Visualizer
+<p align='center'>
+  <img src="src\bioset\assets\icon_new.jpg" width=150 />
+</p>
 
+
+<h1 align='center'>
+  BioSET
+  Visualizer
+</h1>
+
+# Introduction
 Project is being actively developed.
 
 ## Setup
