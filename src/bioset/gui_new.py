@@ -134,6 +134,8 @@ def left_drawer(layout, state):
     state.setdefault("drawer", True)
     state.setdefault("drawer_mini", False)
     
+    state.setdefault("data_open", True)
+    
     state.setdefault("settings_open", False)
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)
@@ -146,6 +148,9 @@ def left_drawer(layout, state):
     
     def toggle_mini():
         state.drawer_mini = not state.drawer_mini
+        
+    def toggle_data():
+        state.data_open = not state.data_open
         
     def toggle_settings():
         state.settings_open = not state.settings_open
@@ -182,7 +187,32 @@ def left_drawer(layout, state):
         vuetify.VDivider()
         
         # zarr data sources
-        # todo
+        state.default_sources = {"Zarr URL": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
+                           "Metadata URL": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml"}
+        
+        with vuetify.VList(dense=True, nav=True):
+            with vuetify.VListItem(class_=("data_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"), link=True, ripple=True, click=toggle_data):
+                with vuetify.VListItemIcon():
+                    vuetify.VIcon("mdi-upload-box-outline", style="font-size: 30px;")
+                with vuetify.VListItemContent(v_if="!drawer_mini"):
+                    vuetify.VListItemTitle("Data Sources", classes="text-overline")
+            
+            with vuetify.VExpandTransition():
+                with html.Div(v_show=("data_open", False)):
+                    with vuetify.VListItem(class_="nav-item nav-item--nested"):
+                        with vuetify.VListItemIcon(v_if="drawer_mini"):
+                            vuetify.VIcon("mdi-radiobox-marked", style="font-size: 25px;")
+                        with vuetify.VListItemContent(v_if="!drawer_mini",class_="mb-0 pb-0"):
+                            vuetify.VTextField(v_model=("default_sources['Zarr URL']", ""), label="Zarr URL", placeholder="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0", dense=True, clearable=True)
+                            
+                    with vuetify.VListItem(class_="nav-item nav-item--nested"):
+                        with vuetify.VListItemIcon(v_if="drawer_mini"):
+                            vuetify.VIcon("mdi-radiobox-marked", style="font-size: 25px;")
+                        with vuetify.VListItemContent(v_if="!drawer_mini",class_="mt-0 pt-0 mb-0 pb-0"):
+                            vuetify.VTextField(v_model=("default_sources['Metadata URL']", ""), label="Metadata URL", placeholder="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml", dense=True, clearable=True)
+        
+        
+        vuetify.VDivider()
         
         # settings
         with vuetify.VList(dense=True, nav=True):
@@ -198,13 +228,13 @@ def left_drawer(layout, state):
                         with vuetify.VListItemIcon():
                             vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
-                            vuetify.VListItemTitle("Toggle Theme", classes="")
+                            html.Span("Toggle Theme")
                             
                     with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True, click=open_bg_picker):
                         with vuetify.VListItemIcon():
                             vuetify.VIcon("mdi-format-color-fill", style=("`font-size: 25px; background-color: ${bg_color};`",))
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
-                            vuetify.VListItemTitle("Bg-color", classes="")
+                            html.Span("Background Color")
                         
                     with vuetify.VDialog(v_model=("bg_color_dialog", False), max_width=320):
                         with vuetify.VCard():
@@ -226,7 +256,7 @@ def left_drawer(layout, state):
                         with vuetify.VListItemIcon():
                             vuetify.VIcon("mdi-crop-free", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
-                            vuetify.VListItemTitle("Reset Camera", classes="")
+                            html.Span("Reset Camera")
             
                         
         vuetify.VDivider()
@@ -259,6 +289,7 @@ def left_drawer(layout, state):
 def channel_item(state, idx, name):
     color_key = f"ch{idx}_color"
     dialog_key = f"ch{idx}_color_dialog"
+    
 
     with vuetify.VListItem(dense=True, class_="px-2 py-1 mb-1"):
         
