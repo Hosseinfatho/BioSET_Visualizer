@@ -13,7 +13,7 @@ import vtkmodules.vtkRenderingVolumeOpenGL2  # noqa: F401
 
 from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
-from ..streaming.streamer import VolumeStreamer
+from ..streaming import VolumeStreamer
 from .meshes import create_red_cube
 
 @dataclass
