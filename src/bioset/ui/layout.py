@@ -9,7 +9,7 @@ def build_ui(server, render_window, streamer=None):
     state = server.state
     
     server.state.trame__title = "BioSET"
-    server.state.trame__favicon = "assets/icon_new.jpg"
+    server.state.trame__favicon = "assets/icon.jpg"
     
     if not hasattr(state, 'trame__scripts') or state.trame__scripts is None:
         state.trame__scripts = []
@@ -179,7 +179,7 @@ def left_drawer(layout, state):
         # logo and title
         with vuetify.VListItem(click=toggle_mini, style="padding-left: 5px;",dense=True):
             with vuetify.VListItemAvatar(size=60,classes="d-flex justify-center"):
-                vuetify.VImg(src="assets/icon_new.jpg", contain=True)
+                vuetify.VImg(src="assets/icon.jpg", contain=True)
             with vuetify.VListItemContent(classes="d-flex justify-center flex-column"):
                 vuetify.VListItemTitle("BioSET", classes="brand-title")
                 vuetify.VListItemSubtitle("Visualizer", classes="brand-subtitle")

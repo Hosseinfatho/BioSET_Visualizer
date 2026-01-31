@@ -11,10 +11,10 @@ from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa
 import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
 import vtkmodules.vtkRenderingVolumeOpenGL2  # noqa: F401
 
-from .config import VolumeConfig
-from .volume import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
-from .volume_streamer import VolumeStreamer
-from .mesh import create_red_cube
+from ..config import VolumeConfig
+from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
+from ..streaming.streamer import VolumeStreamer
+from .meshes import create_red_cube
 
 @dataclass
 class VtkScene:

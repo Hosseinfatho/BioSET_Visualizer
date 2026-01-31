@@ -1,5 +1,5 @@
 <p align='center'>
-  <img src="src\bioset\assets\icon_new.jpg" width=150 />
+  <img src="src\bioset\ui\assets\icon.jpg" width=150 />
 </p>
 
 
