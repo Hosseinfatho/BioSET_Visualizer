@@ -7,7 +7,7 @@ from typing import Dict, Tuple, Any
 import dask.array as da
 from ome_zarr.io import parse_url
 
-from ..cache.store import wrap_store_with_cache
+from ..cache import wrap_store_with_cache
 
 
 @dataclass

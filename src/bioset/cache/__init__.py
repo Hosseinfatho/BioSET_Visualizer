@@ -1,0 +1,1 @@
+from .store import wrap_store_with_cache
