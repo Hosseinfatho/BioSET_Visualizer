@@ -4,6 +4,9 @@ from __future__ import annotations
 from trame.ui.vuetify import VAppLayout
 from trame.widgets import html, vtk, vuetify, client
 
+from .styles import register_styles
+from .scripts import register_scripts
+
 def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
     state = server.state
@@ -16,97 +19,8 @@ def build_ui(server, render_window, streamer=None):
     state.trame__scripts = list(state.trame__scripts) + ["https://unpkg.com/@upsetjs/bundle"]
     
     with VAppLayout(server) as layout:
-        client.Style("""
-    @import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&display=swap');
+        register_styles(client)
 
-    .v-application {
-      font-family: 'Merriweather', serif !important;
-    }
-
-    .v-application * {
-      font-family: 'Merriweather', serif !important;
-    }
-    
-    .brand-title { 
-        font-size: 25px !important;
-        line-height: 1.15 !important;
-        font-weight: 700 !important;
-    }
-    .brand-subtitle {
-        font-size: 14px !important;
-        line-height: 1.1 !important;
-        opacity: 0.85;
-    }
-    
-    
-    """)
-        
-        client.Style("""
-        /* Fixed icon column => aligned midpoints + aligned text start */
-        .nav-item .v-list-item__icon {
-        width: 40px !important;
-        min-width: 40px !important;
-        margin-right: 8px !important;
-        }
-
-        /* Keep paddings consistent */
-        .nav-item {
-        padding-left: 8px !important;
-        padding-right: 8px !important;
-        }
-
-        /* Nested row: slightly smaller + darker */
-        .nav-item--nested .v-list-item__title {
-        font-size: 0.92rem !important;
-        opacity: 0.75;
-        }
-        .nav-item--nested .v-icon {
-        opacity: 0.75;
-        }
-        """)
-        
-        client.Style("""
-.nav-item--active {
-  background: rgba(255,255,255,0.12) !important;
-}
-""")
-        client.Style("""
-/* Make channel avatar+badge feel interactive */
-.channel-chip {
-  position: relative;
-  display: inline-flex;
-  border-radius: 6px;
-  transition: transform 120ms ease, filter 120ms ease;
-}
-
-/* Hover effect on the whole chip (avatar + badge) */
-.channel-chip:hover {
-  transform: translateY(-1px);
-  filter: brightness(1.08);
-}
-
-/* Give a subtle ring on hover */
-.channel-chip:hover .channel-avatar {
-  box-shadow: 0 0 0 2px rgba(255,255,255,0.25) inset;
-}
-
-/* Make the badge icon pop a bit on hover */
-.channel-chip:hover .v-badge__badge {
-  filter: brightness(1.2);
-}
-
-/* Avoid badge clipping */
-.channel-chip .v-badge__wrapper,
-.channel-chip .v-list-item__avatar {
-  overflow: visible !important;
-}
-
-/* Cursor hints */
-.channel-avatar {
-  cursor: pointer;
-}
-""")
-        
         left_drawer(layout, state)
         right_drawer(state)
         
@@ -380,58 +294,4 @@ def right_drawer(state):
         
         
 def upset_plot(client):
-    client.Script(r"""
-            (function initUpSet(){
-  const container = document.getElementById('upset-container');
-  if (!container) { setTimeout(initUpSet, 100); return; }
-
-  // Wait until UpSetJS is actually available
-  if (!window.UpSetJS) { 
-    console.warn("UpSetJS not loaded yet; retrying...");
-    setTimeout(initUpSet, 200); 
-    return; 
-  }
-
-  // Wait until trame state bridge exists
-  if (!window.trame || !window.trame.state) {
-    console.warn("window.trame.state not available yet; retrying...");
-    setTimeout(initUpSet, 200);
-    return;
-  }
-
-  const elems = [
-    { name: 'E1', sets: ['Ch1'] },
-    { name: 'E2', sets: ['Ch1', 'Ch2'] },
-    { name: 'E3', sets: ['Ch1', 'Ch2'] },
-    { name: 'E4', sets: ['Ch1', 'Ch2', 'Ch3'] },
-  ];
-
-  const { sets, combinations } = UpSetJS.extractCombinations(elems);
-
-  container.innerHTML = ""; // avoid double-render on hot reload
-  UpSetJS.render(container, {
-    sets,
-    combinations,
-    width: 330,
-    height: 280,
-    theme: 'dark',
-    onClick: (set) => {
-      if (!set) return;
-
-      // Send to Python by writing into trame state
-      window.trame.state.upset_click = {
-        name: set.name,
-        size: set.cardinality,
-        ts: Date.now(),
-      };
-
-      // Some trame builds need an explicit flush; call if it exists
-      if (window.trame.flushState) window.trame.flushState();
-      if (window.trame.pushState) window.trame.pushState();
-    },
-  });
-
-  console.log("UpSet rendered; clicks will update state.upset_click");
-})();
-        """)
-
+    register_scripts(client)
