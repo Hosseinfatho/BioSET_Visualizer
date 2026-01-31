@@ -18,6 +18,13 @@ def build_ui(server, render_window, streamer=None):
         state.trame__scripts = []
     state.trame__scripts = list(state.trame__scripts) + ["https://unpkg.com/@upsetjs/bundle"]
     
+    state.setdefault("upset_click", None)
+
+    @state.change("upset_click")
+    def on_upset_click(upset_click, **kwargs):
+        if upset_click:
+            print(f"[Python] UpSet clicked: {upset_click}")
+
     with VAppLayout(server) as layout:
         register_styles(client)
 

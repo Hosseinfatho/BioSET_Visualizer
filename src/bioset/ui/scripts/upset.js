@@ -1,20 +1,21 @@
-(function initUpSet(){
+(function initUpSet() {
   const container = document.getElementById('upset-container');
-  if (!container) { setTimeout(initUpSet, 100); return; }
-
-  if (!window.UpSetJS) { 
-    console.warn("UpSetJS not loaded yet; retrying...");
-    setTimeout(initUpSet, 200); 
-    return; 
+  if (!container) {
+    setTimeout(initUpSet, 100);
+    return;
   }
 
-  // Wait until trame state bridge exists
-  if (!window.trame || !window.trame.state) {
-    console.warn("window.trame.state not available yet; retrying...");
+  if (!window.UpSetJS) {
     setTimeout(initUpSet, 200);
     return;
   }
 
+  if (!window.trame || !window.trame.state) {
+    setTimeout(initUpSet, 200);
+    return;
+  }
+
+  // Sample data - will be replaced with real data later
   const elems = [
     { name: 'E1', sets: ['Ch1'] },
     { name: 'E2', sets: ['Ch1', 'Ch2'] },
@@ -24,7 +25,7 @@
 
   const { sets, combinations } = UpSetJS.extractCombinations(elems);
 
-  container.innerHTML = ""; 
+  container.innerHTML = "";
   UpSetJS.render(container, {
     sets,
     combinations,
@@ -33,17 +34,12 @@
     theme: 'dark',
     onClick: (set) => {
       if (!set) return;
-
-      window.trame.state.upset_click = {
+      
+      window.trame.state.set("upset_click", {
         name: set.name,
         size: set.cardinality,
         ts: Date.now(),
-      };
-
-      if (window.trame.flushState) window.trame.flushState();
-      if (window.trame.pushState) window.trame.pushState();
+      });
     },
   });
-
-  console.log("UpSet rendered; clicks will update state.upset_click");
 })();
