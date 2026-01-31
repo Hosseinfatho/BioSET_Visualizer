@@ -7,7 +7,7 @@ from trame.widgets import html, vuetify
 
 
 def channels_section(state, ctrl):
-    """Create the channels section with channel list."""
+    """Create the channels section with dynamic channel list."""
     
     def toggle_channels():
         state.channels_open = not state.channels_open
@@ -23,86 +23,60 @@ def channels_section(state, ctrl):
                 vuetify.VIcon("mdi-layers-triple-outline", style="font-size: 30px;")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Channels", classes="text-overline")
+                # Show count badge
+                vuetify.VChip(
+                    v_if="channels.length > 0",
+                    x_small=True,
+                    class_="ml-2",
+                    v_text="channels.length",
+                )
         
         with vuetify.VExpandTransition():
             with html.Div(v_show=("channels_open", False), class_="px-2 pb-2"):
-                with vuetify.VListItemGroup(multiple=True):
-                    # Use legacy channel state for now
-                    # TODO: Migrate to dynamic state.channels list
-                    for ch in state.channels:
-                        _channel_item(state, ch["id"], ch["name"])
-
-
-def _channel_item(state, idx, name):
-    """Create a single channel item with color picker and range slider."""
-    
-    color_key = f"ch{idx}_color"
-    dialog_key = f"ch{idx}_color_dialog"
-
-    with vuetify.VListItem(dense=True, class_="px-2 py-1 mb-1"):
-        
-        with html.Div(class_="mr-2 channel-chip"):
-            
-            # Mini drawer view
-            with html.Div(v_if="drawer_mini"):
-                with vuetify.VBadge(
-                    bordered=True,
-                    overlap=True,
-                    link=True,
-                    color="rgba(0,0,0,0.75)",
-                    icon="mdi-close",
-                    offset_x="25",
-                    offset_y="20",
+                # Message when no data loaded
+                with html.Div(
+                    v_if="!data_loaded",
+                    class_="text-center pa-4 text--secondary",
+                    style="font-size: 12px;",
                 ):
-                    with vuetify.VListItemAvatar(
-                        tile=True,
-                        size=40,
-                        class_="ma-0 channel-avatar",
-                        click=f"{dialog_key} = true",
-                        style=(f"`background-color: ${{{color_key}}} !important;`",),
+                    html.Span("Load data to see channels")
+                
+                # Dynamic channel list
+                with html.Div(v_if="data_loaded"):
+                    # Use v-for for dynamic rendering
+                    with vuetify.VListItem(
+                        v_for="channel in channels",
+                        key="channel.id",
+                        dense=True,
+                        class_="px-2 py-1 mb-1",
                     ):
-                        html.Span(
-                            f"{name[:2]}..",
-                            class_="text-truncate",
-                            style="color:black;",
-                        )
-
-            # Full drawer view
-            with html.Div(v_else=True):
-                with vuetify.VListItemAvatar(
-                    tile=True,
-                    size=40,
-                    class_="ma-0 channel-avatar",
-                    click=f"{dialog_key} = true",
-                    style=(f"`background-color: ${{{color_key}}} !important;`",),
-                ):
-                    pass
-
-        with vuetify.VListItemContent(class_="py-0"):
-            html.Div(name, class_="text-truncate", style="line-height: 1.1;")
-            vuetify.VRangeSlider(
-                min=0,
-                max=100,
-                step=1,
-                dense=True,
-                hide_details=True,
-                class_="mt-0 pt-0",
-                style="height: 22px;",
-            )
-
-    # Color picker dialog
-    with vuetify.VDialog(v_model=(dialog_key, False), max_width=320):
-        with vuetify.VCard():
-            with vuetify.VCardTitle(class_="py-2"):
-                html.Span(f"{name} color", style="font-size: 14px;")
-            with vuetify.VCardText(class_="pt-0"):
-                vuetify.VColorPicker(
-                    v_model=(color_key, "#FFFFFF"),
-                    mode="hexa",
-                    hide_mode_switch=True,
-                    hide_inputs=True,
-                )
-            with vuetify.VCardActions():
-                vuetify.VSpacer()
-                with vuetify.VBtn(text=True, click=f"{dialog_key} = false"):
-                    html.Span("Close")
+                        # Channel chip with color indicator
+                        with html.Div(class_="mr-2 channel-chip"):
+                            with vuetify.VListItemAvatar(
+                                tile=True,
+                                size=40,
+                                class_="ma-0 channel-avatar",
+                                click=(ctrl.toggle_channel, "[channel.id]"),
+                                style=("`background-color: ${channel.color} !important; opacity: ${active_channels.includes(channel.id) ? 1 : 0.3};`",),
+                            ):
+                                # Show checkmark if active
+                                vuetify.VIcon(
+                                    v_if="active_channels.includes(channel.id)",
+                                    small=True,
+                                    style="color: black;",
+                                    v_text="'mdi-check'",
+                                )
+                        
+                        with vuetify.VListItemContent(class_="py-0", v_if="!drawer_mini"):
+                            html.Div(
+                                v_text="channel.name",
+                                class_="text-truncate",
+                                style="line-height: 1.3; font-size: 12px;",
+                            )
+                            # Show "active" indicator
+                            html.Div(
+                                v_if="active_channels.includes(channel.id)",
+                                class_="text--secondary",
+                                style="font-size: 10px;",
+                                v_text="'Rendering'",
+                            )

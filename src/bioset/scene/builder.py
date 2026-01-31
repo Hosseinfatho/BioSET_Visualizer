@@ -44,11 +44,11 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
 
     streamer: Optional[VolumeStreamer] = None
 
-    cube_actor = create_red_cube(center=(1000.0, 400.0, 25.0),size=50,opacity=0.5)  
-    cube_actor1 = create_red_cube(center=(900.0, 400.0, 0.0), size=50, opacity=1.0)  
+    # cube_actor = create_red_cube(center=(1000.0, 400.0, 25.0),size=50,opacity=0.5)  
+    # cube_actor1 = create_red_cube(center=(900.0, 400.0, 0.0), size=50, opacity=1.0)  
 
-    renderer.AddActor(cube_actor)
-    renderer.AddActor(cube_actor1)
+    # renderer.AddActor(cube_actor)
+    # renderer.AddActor(cube_actor1)
 
     if cfg.source == "zarr_s3":
         if not cfg.zarr_url:

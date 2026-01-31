@@ -46,13 +46,6 @@ class LoadedData:
 
 
 class VolumeStreamer:
-    """
-    Improved volume streamer with async loading and debouncing.
-
-    IMPORTANT: OpenGL/VTK updates must happen on the main thread.
-    We load data in background threads, then apply to VTK on main thread.
-    """
-
     DEBOUNCE_DELAY = 0.15
 
     _executor: ThreadPoolExecutor = None
@@ -93,7 +86,11 @@ class VolumeStreamer:
 
         self._last_component: Optional[int] = None
 
-        self._init_low_res_full()
+        # only init if channels are there
+        if self.cfg.channels:
+            self._init_low_res_full()
+        else:
+            print("[stream] No channels configured - waiting for dynamic load")
 
     def set_render_callback(self, fn: Callable):
         self.render_callback = fn
@@ -222,6 +219,10 @@ class VolumeStreamer:
 
     def _init_low_res_full(self):
         """Initialize with full low-res volumes - runs on main thread"""
+        if not self.cfg.channels:
+            print("[stream] No channels to initialize")
+            return
+    
         comp = self.cfg.start_component
         spacing = self._spacing_for_component(comp)
 
@@ -380,6 +381,9 @@ class VolumeStreamer:
         Called on EndInteractionEvent - debounced and async.
         This runs on main thread.
         """
+        if not self.cfg.channels:
+            return
+    
         self.check_and_apply_loaded_data()
 
         cam = self.renderer.GetActiveCamera()
