@@ -146,14 +146,13 @@ class VolumeStreamer:
         is_first_volume = len(self._active_channels) == 0 
         self._active_channels.add(channel_id)
         
-        # ALWAYS start at low-res component for fast initial load
         comp = self.cfg.start_component
         
         try:
             z, y, x = self._dims_for_component(comp)
         except Exception as e:
             print(f"[stream] Error getting dims: {e}")
-            self._active_channels.discard(channel_id)  # Rollback
+            self._active_channels.discard(channel_id)  
             return
         
         roi = ROI(0, x, 0, y)
@@ -162,7 +161,6 @@ class VolumeStreamer:
         
         self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
         
-        # After initial display, trigger LOD update if camera is zoomed in
         if self._last_component is not None and self._last_component < comp:
             print(f"[stream] Scheduling upgrade from comp={comp} to current view")
             self._trigger_lod_update_for_new_channel()
