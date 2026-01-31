@@ -1,5 +1,7 @@
 # BioSET Visualizer
 
+Project is being actively developed.
+
 ## Setup
 
 ```bash
@@ -11,10 +13,24 @@ pip install -U pip
 pip install -e .
 ```
 
-## Run
+## Running
+The rendering is performed at the server's side. The following starts a local server instance, and opens the client in a browser (at [http://localhost:8080/index.html](http://localhost:8080/index.html)).
+
 ```bash
+source .venv\bin\activate
+# Windows: .venv\Scripts\activate
 bioset
 ```
+The default port is ``8080``. To change this, you can supply a port command line argument such as ``bioset --port 1234``.  
+
+To run the server remotely, and prevent the browser from opening up, do:
+```bash
+source .venv\bin\activate
+# Windows: .venv\Scripts\activate
+bioset --server --host 0.0.0.0 --port 1234
+```
+Then, on the client machine, navigate to ``http://<server-ip-address>:1234/index.html`` in a browser.   
+If you are not able to access the server ensure that the server is reacheable from the client network and that there is no firewall blocking access.
 
 ## Config
 
