@@ -20,6 +20,8 @@ dependencies = [
   "numcodecs",
   "numpy",
   "tifffile",
+  "ome-types",
+  "requests"
 ]
 
 [project.scripts]

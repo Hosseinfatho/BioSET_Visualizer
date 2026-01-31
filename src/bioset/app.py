@@ -7,8 +7,8 @@ from trame.app import get_server
 
 import asyncio
 import sys
-# Python 3.10+ compatibility: ensure event loop exists before trame imports
-# In Python 3.10+, asyncio.get_event_loop() raises RuntimeError if no loop exists
+
+# Python 3.10+ compatibility
 if sys.version_info >= (3, 10):
     try:
         asyncio.get_running_loop()
@@ -27,8 +27,8 @@ def main():
     cfg = default_config()
     cfg = cfg.__class__(**{**cfg.__dict__,
                            "source": "zarr_s3",
-                           "zarr_url": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
-                           "channels": (0, 3, 13),
+                           #"zarr_url": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0",
+                           "channels": (), # loaded after upload from frontend
                            "base_sx": 0.14,
                            "base_sy": 0.14,
                            "base_sz": 0.28,
@@ -38,7 +38,11 @@ def main():
 
     server = get_server(client_type="vue2")
     server.enable_module({"serve": {"assets": str(ASSETS_DIR)}})
+
     ctrl, view = build_ui(server, scene.render_window, streamer=scene.streamer)
+
+    if scene.streamer is not None:
+        ctrl.set_streamer(scene.streamer)
 
     if scene.streamer is not None:
         import asyncio

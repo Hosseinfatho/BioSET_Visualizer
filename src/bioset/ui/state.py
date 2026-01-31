@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# TODO: import from config.py
+DEFAULT_CHANNEL_COLORS = (
+    "#00FFFF",  # Cyan
+    "#FF00FF",  # Magenta
+    "#FFFF00",  # Yellow
+    "#FF0000",  # Red
+    "#00FF00",  # Green
+    "#0000FF",  # Blue
+)
 
 def init_state(state):
     """Initialize all UI state with defaults."""
@@ -38,19 +47,16 @@ def init_state(state):
     # UpSet plot
     state.setdefault("upset_click", None)
     
-    # Channels - will be populated dynamically after data load
-    # For now, initialize with defaults
-    state.setdefault("channels", [
-        {"id": 0, "name": "Hoechst", "color": "#00FFFF", "visible": True, "range": [0, 100]},
-        {"id": 1, "name": "MART1", "color": "#FF00FF", "visible": True, "range": [0, 100]},
-        {"id": 2, "name": "Pan-Cytokeratin", "color": "#FFFF00", "visible": True, "range": [0, 100]},
-    ])
+    # Channels - all channels
+    # {id: int, name: str, color: str}
+    state.setdefault("channels", [])
     
-    # Legacy channel state (for current UI until we migrate to channels list)
-    for ch in state.channels:
-        state.setdefault(f"ch{ch['id']}_color", ch["color"])
-        state.setdefault(f"ch{ch['id']}_color_dialog", False)
+    # Active channels (ids)
+    state.setdefault("active_channels", [])
 
+def get_channel_color(index: int) -> str:
+    """Get default color for a channel by index."""
+    return DEFAULT_CHANNEL_COLORS[index % len(DEFAULT_CHANNEL_COLORS)]
 
 def register_state_change_handlers(state, ctrl):
     """Register all @state.change handlers."""
@@ -66,7 +72,8 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_background_color'):
             ctrl.update_background_color(bg_color)
     
-    @state.change("channels")
-    def on_channels_change(channels, **kwargs):
-        print(f"[state] Channels updated: {len(channels)} channels")
-        # TODO: Update volume rendering when channels change
+    @state.change("active_channels")
+    def on_active_channels_change(active_channels, **kwargs):
+        print(f"[state] Active channels changed: {active_channels}")
+        if hasattr(ctrl, 'update_active_channels'):
+            ctrl.update_active_channels(active_channels)
