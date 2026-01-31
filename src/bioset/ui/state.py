@@ -63,9 +63,8 @@ def register_state_change_handlers(state, ctrl):
     
     @state.change("bg_color")
     def on_bg_color_change(bg_color, **kwargs):
-        print(f"[state] Background color changed: {bg_color}")
-        # TODO: Update renderer background
-        # ctrl.update_background_color(bg_color)
+        if hasattr(ctrl, 'update_background_color'):
+            ctrl.update_background_color(bg_color)
     
     @state.change("channels")
     def on_channels_change(channels, **kwargs):

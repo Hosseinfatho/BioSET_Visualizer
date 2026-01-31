@@ -7,13 +7,13 @@ from trame.widgets import html, vtk, vuetify, client
 from .styles import register_styles
 from .scripts import register_scripts
 from .state import init_state, register_state_change_handlers
+from .callbacks import register_callbacks
 
 def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
     state = server.state
     
     init_state(state)
-    register_state_change_handlers(state, ctrl)
 
     with VAppLayout(server) as layout:
         register_styles(client)
@@ -36,6 +36,9 @@ def build_ui(server, render_window, streamer=None):
                 ctrl.on_server_ready.add(_on_ready)
                 
             upset_plot(client)
+
+    register_callbacks(ctrl, state, view, streamer)
+    register_state_change_handlers(state, ctrl)
         
     return ctrl, view
 
@@ -108,6 +111,18 @@ def left_drawer(state, ctrl):
                             vuetify.VIcon("mdi-radiobox-marked", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini",class_="mt-0 pt-0 mb-0 pb-0"):
                             vuetify.VTextField(v_model=("metadata_url", ""), label="Metadata URL", placeholder="https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml", dense=True, clearable=True)
+
+                    with vuetify.VListItem(class_="nav-item nav-item--nested"):
+                        with vuetify.VListItemContent(v_if="!drawer_mini", class_="mt-0 pt-0"):
+                            vuetify.VBtn(
+                                "Load Data",
+                                click=ctrl.load_data,
+                                loading=("data_loading", False),
+                                disabled=("data_loading", False),
+                                block=True,
+                                small=True,
+                                color="primary",
+                            )
         
         
         vuetify.VDivider()
@@ -150,7 +165,7 @@ def left_drawer(state, ctrl):
                                 with vuetify.VBtn(text=True, click=close_bg_picker):
                                     html.Span("Close")    
                     
-                    with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
+                    with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True, click=ctrl.reset_camera):
                         with vuetify.VListItemIcon():
                             vuetify.VIcon("mdi-crop-free", style="font-size: 25px;")
                         with vuetify.VListItemContent(v_if="!drawer_mini"):
