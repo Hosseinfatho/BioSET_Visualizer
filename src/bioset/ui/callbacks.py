@@ -26,17 +26,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks]   Metadata URL: {state.metadata_url}")
         
         try:
-            # metadata parsing
             from bioset.metadata import parse_ome_metadata
             
             metadata = parse_ome_metadata(state.metadata_url)
             
-            # voxel physical size
             state.physical_size_x = metadata.physical_size_x
             state.physical_size_y = metadata.physical_size_y
             state.physical_size_z = metadata.physical_size_z
             
-            # Update streamer with new URL and spacing
             streamer = _refs.get("streamer")
             if streamer:
                 streamer.set_zarr_url(state.zarr_url)
@@ -46,7 +43,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     metadata.physical_size_z
                 )
             
-            # channel list with color defaults
             channels = [
                 {
                     "id": ch.id,
@@ -58,7 +54,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 for ch in metadata.channels
             ]
             
-            # state update
             state.channels = channels
             state.active_channels = []
             state.data_loaded = True
@@ -66,7 +61,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
             
-            # Reset camera to show the volume bounds
             if streamer:
                 streamer.renderer.ResetCamera()
                 streamer.renderer.ResetCameraClippingRange()
@@ -85,40 +79,40 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Toggle a channel's active state (add/remove from rendering)."""
         print(f"[callbacks] Toggle channel {channel_id}")
         
-        streamer = _refs.get("streamer")
-        
         active = list(state.active_channels)
         if channel_id in active:
-            # Deactivate
             active.remove(channel_id)
-            print(f"[callbacks] Deactivating channel {channel_id}")
-            if streamer:
-                streamer.deactivate_channel(channel_id)
         else:
-            # Activate - get color from channel list
             active.append(channel_id)
-            print(f"[callbacks] Activating channel {channel_id}")
-            
-            # Find the channel color
-            color_hex = "#FFFFFF"
-            for ch in state.channels:
-                if ch["id"] == channel_id:
-                    color_hex = ch["color"]
-                    break
-            
-            if streamer:
-                streamer.activate_channel(channel_id, color_hex)
         
         state.active_channels = active
     
     def update_active_channels(active_channels):
-        """Update which channels are being rendered."""
-        print(f"[callbacks] Updating active channels: {active_channels}")
+        """Sync streamer state with UI state when active_channels changes."""
+        print(f"[callbacks] Syncing active channels: {active_channels}")
         
         streamer = _refs.get("streamer")
         if streamer is None:
             print(f"[callbacks] No streamer available yet")
             return
+        
+        currently_active = streamer.get_active_channels()
+        new_active = set(active_channels)
+        
+        to_deactivate = currently_active - new_active
+        for channel_id in to_deactivate:
+            print(f"[callbacks] Deactivating channel {channel_id}")
+            streamer.deactivate_channel(channel_id)
+        
+        to_activate = new_active - currently_active
+        for channel_id in to_activate:
+            color_hex = "#FFFFFF"
+            for ch in state.channels:
+                if ch["id"] == channel_id:
+                    color_hex = ch["color"]
+                    break
+            print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
+            streamer.activate_channel(channel_id, color_hex)
         
         if _refs["view"]:
             _refs["view"].update()
@@ -151,7 +145,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Update color of a channel."""
         print(f"[callbacks] Channel {channel_id} color: {color_hex}")
         
-        # Update in channels list
         channels = list(state.channels)
         for ch in channels:
             if ch["id"] == channel_id:
@@ -159,12 +152,24 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 break
         state.channels = channels
         
-        # If channel is active, update its transfer function
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
-            # Deactivate and reactivate to apply new color
             streamer.deactivate_channel(channel_id)
             streamer.activate_channel(channel_id, color_hex)
+            
+    def on_channel_color_change(channel_id, color_hex):
+        """Handle color change from the color picker."""
+        print(f"[callbacks] Channel {channel_id} color changed to: {color_hex}")
+        
+        # If channel is active, update its volume color in the streamer
+        streamer = _refs.get("streamer")
+        if streamer and channel_id in state.active_channels:
+            streamer.deactivate_channel(channel_id)
+            streamer.activate_channel(channel_id, color_hex)
+        
+        if _refs["view"]:
+            _refs["view"].update()
+
     
     # Bind to controller
     ctrl.set_streamer = set_streamer
@@ -174,3 +179,4 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.reset_camera = reset_camera
     ctrl.update_background_color = update_background_color
     ctrl.update_channel_color = update_channel_color
+    ctrl.on_channel_color_change = on_channel_color_change

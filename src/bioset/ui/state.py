@@ -53,6 +53,9 @@ def init_state(state):
     
     # Active channels (ids)
     state.setdefault("active_channels", [])
+    
+    # default color picker swatches
+    state.setdefault("color_swatches", DEFAULT_CHANNEL_COLORS)
 
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""
