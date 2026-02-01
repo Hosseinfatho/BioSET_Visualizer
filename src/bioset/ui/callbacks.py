@@ -9,12 +9,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
     _refs = {
         "streamer": None,
         "view": view,
+        "analysis_loader": None,  
+        "heatmap": None,
     }
 
     def set_streamer(streamer):
         """Set the streamer reference."""
         _refs["streamer"] = streamer
         print(f"[callbacks] Streamer set: {streamer}")
+
+    def set_heatmap(heatmap):
+        """Set the heatmap renderer reference."""
+        _refs["heatmap"] = heatmap
+        print(f"[callbacks] Heatmap renderer set: {heatmap}")
     
     def load_data():
         """Load data from zarr_url and metadata_url."""
@@ -75,6 +82,76 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.data_loading = False
 
+    def load_analysis_file(file_info):
+        """
+        Load analysis results from uploaded .bioset file.
+        
+        Args:
+            file_info: File info dict from trame file upload containing 'content' (base64) and 'name'
+        """
+        if state.analysis_loading:
+            return
+        
+        state.analysis_loading = True
+        print(f"[callbacks] Loading analysis file...")
+        
+        try:
+            import base64
+            from bioset.analysis import AnalysisLoader
+            
+            content = file_info.get("content", "")
+            
+            
+            # file_bytes = base64.b64decode(content)
+            if(isinstance(content, bytes)):
+                file_bytes = content
+            else:
+                if "," in content:
+                    content = content.split(",", 1)[1]
+                file_bytes = base64.b64decode(content)
+                
+            file_name = file_info.get("name", "unknown.bioset")
+            
+            print(f"[callbacks] File: {file_name}, size: {len(file_bytes)} bytes")
+            
+            if _refs["analysis_loader"] is None:
+                _refs["analysis_loader"] = AnalysisLoader()
+            
+            loader = _refs["analysis_loader"]
+            metadata = loader.load_from_bytes(file_bytes)
+            
+            state.analysis_file_name = file_name
+            state.analysis_channels = metadata.channels
+            state.analysis_dilation_amounts = metadata.dilation_amounts
+            state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
+            state.analysis_volume_bounds = metadata.volume_bounds
+            
+            if metadata.dilation_amounts:
+                state.current_dilation = metadata.dilation_amounts[0]
+            
+            if metadata.hierarchy_levels:
+                mid_idx = len(metadata.hierarchy_levels) // 2
+                state.current_hierarchy_level = metadata.hierarchy_levels[mid_idx]["level"]
+            
+            state.analysis_loaded = True
+            state.right_drawer_open = True  
+            
+            print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
+                  f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
+            
+            update_heatmap()
+            
+            if _refs["view"]:
+                _refs["view"].update()
+            
+        except Exception as e:
+            print(f"[callbacks] Error loading analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            state.analysis_loaded = False
+        finally:
+            state.analysis_loading = False
+
     def toggle_channel(channel_id):
         """Toggle a channel's active state (add/remove from rendering)."""
         print(f"[callbacks] Toggle channel {channel_id}")
@@ -113,6 +190,61 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
             print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
             streamer.activate_channel(channel_id, color_hex)
+        
+        if _refs["view"]:
+            _refs["view"].update()
+
+    def update_heatmap():
+        """Update heatmap visualization based on current state."""
+        loader = _refs.get("analysis_loader")
+        heatmap = _refs.get("heatmap")
+        streamer = _refs.get("streamer")
+        
+        if not loader or not loader.is_loaded or not heatmap:
+            print("[callbacks] Cannot update heatmap - loader or heatmap not ready")
+            return
+        
+        selected_channel_names = []
+        for ch_id in state.active_channels:
+            for ch in state.channels:
+                if ch["id"] == ch_id:
+                    selected_channel_names.append(ch["name"])
+                    break
+        
+        if not selected_channel_names:
+            print("[callbacks] No channels selected - clearing heatmap")
+            heatmap.clear()
+            state.heatmap_tile_count = 0
+            if _refs["view"]:
+                _refs["view"].update()
+            return
+        
+        print(f"[callbacks] Updating heatmap for channels: {selected_channel_names}")
+        print(f"[callbacks]   dilation={state.current_dilation}, level={state.current_hierarchy_level}")
+        
+        tiles = loader.get_combination_tiles(
+            channels=selected_channel_names,
+            dilation=state.current_dilation,
+            hierarchy_level=state.current_hierarchy_level,
+        )
+        
+        if not tiles:
+            print(f"[callbacks] No tiles found for this combination")
+            heatmap.clear()
+            state.heatmap_tile_count = 0
+        else:
+            print(f"[callbacks] Found {len(tiles)} tiles")
+            
+            spacing = (
+                getattr(state, 'physical_size_x', 1.0),
+                getattr(state, 'physical_size_y', 1.0),
+                getattr(state, 'physical_size_z', 1.0),
+            )
+            
+            from bioset.scene.heatmap import hex_to_rgb
+            color = hex_to_rgb(state.heatmap_color)
+            heatmap.update_tiles(tiles, spacing=spacing, color=color)
+            state.heatmap_tile_count = len(tiles)
         
         if _refs["view"]:
             _refs["view"].update()
@@ -173,7 +305,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
     
     # Bind to controller
     ctrl.set_streamer = set_streamer
+    ctrl.set_heatmap = set_heatmap                
     ctrl.load_data = load_data
+    ctrl.load_analysis_file = load_analysis_file  
+    ctrl.update_heatmap = update_heatmap         
     ctrl.toggle_channel = toggle_channel
     ctrl.update_active_channels = update_active_channels
     ctrl.reset_camera = reset_camera

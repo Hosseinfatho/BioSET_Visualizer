@@ -52,3 +52,15 @@
 .v-navigation-drawer__content::-webkit-scrollbar {
     display: none;  
 }
+
+.helper-link {
+    font-size: 10px !important;
+    color: #9e9e9e !important;
+    opacity: 0.8;
+    text-decoration: none;
+}
+
+.helper-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+}

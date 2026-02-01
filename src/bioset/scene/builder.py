@@ -14,7 +14,7 @@ import vtkmodules.vtkRenderingVolumeOpenGL2  # noqa: F401
 from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
 from ..streaming import VolumeStreamer
-from .meshes import create_red_cube
+from .heatmap import HeatmapRenderer
 
 @dataclass
 class VtkScene:
@@ -22,6 +22,7 @@ class VtkScene:
     render_window: vtkRenderWindow
     interactor: vtkRenderWindowInteractor
     streamer: Optional[VolumeStreamer] = None
+    heatmap: Optional[HeatmapRenderer] = None  
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -43,6 +44,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.SetBackground(colors.GetColor3d(cfg.background))
 
     streamer: Optional[VolumeStreamer] = None
+
+    heatmap = HeatmapRenderer(renderer)
 
     # cube_actor = create_red_cube(center=(1000.0, 400.0, 25.0),size=50,opacity=0.5)  
     # cube_actor1 = create_red_cube(center=(900.0, 400.0, 0.0), size=50, opacity=1.0)  
@@ -91,4 +94,5 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         render_window=render_window,
         interactor=interactor,
         streamer=streamer,
+        heatmap=heatmap
     )

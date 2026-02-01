@@ -26,7 +26,10 @@ def settings_section(state, ctrl):
             click=toggle_settings,
         ):
             with vuetify.VListItemIcon():
-                vuetify.VIcon("mdi-cog-outline", style="font-size: 40px;")
+                with vuetify.VTooltip(right=True):
+                    with html.Template(v_slot_activator="{ on, attrs }"):
+                        vuetify.VIcon("mdi-cog-outline", style="font-size: 40px;", v_bind="attrs", v_on="on")
+                    html.Span("Settings")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Settings", classes="text-overline")
 
@@ -35,7 +38,10 @@ def settings_section(state, ctrl):
                 # Toggle Theme
                 with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
                     with vuetify.VListItemIcon():
-                        vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;")
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Light on/off")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Toggle Theme")
                 
@@ -47,10 +53,15 @@ def settings_section(state, ctrl):
                     click=open_bg_picker,
                 ):
                     with vuetify.VListItemIcon():
-                        vuetify.VIcon(
-                            "mdi-format-color-fill",
-                            style=("`font-size: 25px; background-color: ${bg_color};`",),
-                        )
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon(
+                                    "mdi-format-color-fill",
+                                    style=("`font-size: 25px; background-color: ${bg_color};`",),
+                                    v_bind="attrs",
+                                    v_on="on",
+                                )
+                            html.Span("Change background color")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Background Color")
                 
@@ -79,6 +90,9 @@ def settings_section(state, ctrl):
                     click=ctrl.reset_camera,
                 ):
                     with vuetify.VListItemIcon():
-                        vuetify.VIcon("mdi-crop-free", style="font-size: 25px;")
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon("mdi-crop-free", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Reset camera position")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Reset Camera")
