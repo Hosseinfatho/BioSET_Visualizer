@@ -21,7 +21,7 @@ def build_ui(server, render_window, streamer=None):
 
         # UI components
         left_drawer(state, ctrl)
-        right_drawer(state)
+        right_drawer(state, ctrl)
         
         # VTK RENDERER
         with layout.root:

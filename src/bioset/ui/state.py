@@ -44,7 +44,7 @@ def init_state(state):
     state.setdefault("bg_color_dialog", False)
     
     # Right drawer
-    state.setdefault("right_drawer_open", True)
+    state.setdefault("right_drawer_open", False)
     
     # UpSet plot
     state.setdefault("upset_click", None)
@@ -58,6 +58,26 @@ def init_state(state):
     
     # default color picker swatches (nested array for VColorPicker)
     state.setdefault("color_swatches", DEFAULT_COLOR_SWATCHES)
+
+    # bioset analysis file loading
+    state.setdefault("analysis_loaded", False)
+    state.setdefault("analysis_loading", False)
+    state.setdefault("analysis_file_name", "")
+
+    # Analysis metadata (from .bioset file)
+    state.setdefault("analysis_channels", [])  # Channel names from analysis
+    state.setdefault("analysis_dilation_amounts", [])  # Available dilations
+    state.setdefault("analysis_hierarchy_levels", [])  # Available levels
+    state.setdefault("analysis_volume_bounds", {})  # Spatial bounds
+
+    # Current analysis settings
+    state.setdefault("current_dilation", 0)  # Selected dilation amount
+    state.setdefault("current_hierarchy_level", 2)  # Selected hierarchy (default coarse)
+
+    # Heatmap state
+    state.setdefault("heatmap_visible", True)
+    state.setdefault("heatmap_color", "#FFFFFF")  # White
+    state.setdefault("heatmap_tile_count", 0)
 
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""
@@ -82,3 +102,17 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Active channels changed: {active_channels}")
         if hasattr(ctrl, 'update_active_channels'):
             ctrl.update_active_channels(active_channels)
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
+    @state.change("current_dilation")
+    def on_dilation_change(current_dilation, **kwargs):
+        print(f"[state] Dilation changed: {current_dilation}")
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
+    @state.change("current_hierarchy_level")
+    def on_hierarchy_change(current_hierarchy_level, **kwargs):
+        print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()

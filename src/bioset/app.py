@@ -63,6 +63,8 @@ def main():
 
     if scene.streamer is not None:
         scene.streamer.set_render_callback(view.update)
+    if scene.heatmap is not None:
+        ctrl.set_heatmap(scene.heatmap)
 
     server.start()
 

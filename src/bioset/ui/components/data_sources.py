@@ -74,20 +74,30 @@ def data_sources_section(state, ctrl):
                         
                 with html.Div(v_if="!drawer_mini && data_loaded"):
                     vuetify.VDivider()
-                    vuetify.VFileInput(class_="nav-item nav-item--nested",
-                                label="BioSET analysis results",
-                                # click=ctrl.load_data,
-                                chips=True,
-                                # loading=("data_loading", False),
-                                # disabled=("data_loading", False),
-                                # rules need to be added
-                                block=True,
-                                small=True,
-                            )
+                    vuetify.VFileInput(
+                        class_="nav-item nav-item--nested",
+                        label="Analysis results (.bioset)",
+                        accept=".bioset",
+                        chips=True,
+                        small_chips=True,
+                        prepend_icon="mdi-chart-box-outline",
+                        loading=("analysis_loading", False),
+                        disabled=("analysis_loading", False),
+                        dense=True,
+                        hide_details=True,
+                        __events=["change"],
+                        change=(ctrl.load_analysis_file, "[$event]"),
+                    )
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
                         with vuetify.VListItemContent():
+                            # Show loaded status
+                            with html.Div(v_if="analysis_loaded", class_="text-caption success--text"):
+                                vuetify.VIcon("mdi-check-circle", x_small=True, color="success", class_="mr-1")
+                                html.Span("{{ analysis_file_name }}")
+                            
                             with vuetify.VCard(
-                                class_="text-center",
+                                class_="text-center mt-2",
+                                v_if="!analysis_loaded",
                             ):
                                 html.A(
                                     "Instructions for running the BioSET analysis pipeline.",

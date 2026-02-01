@@ -7,3 +7,4 @@ from .volumes import (
     make_volume_from_zarr_s3,
 )
 from .meshes import create_red_cube
+from .heatmap import HeatmapRenderer, HeatmapConfig, hex_to_rgb
