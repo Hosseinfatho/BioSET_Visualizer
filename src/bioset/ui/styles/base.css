@@ -19,3 +19,37 @@
     line-height: 1.1 !important;
     opacity: 0.85;
 }
+
+.ch-icons {
+  display: flex;
+  align-items: center;      
+  justify-content: center;  
+  gap: 3px;                 
+}
+
+.eye-icon {
+  opacity: 0.85;
+}
+
+.ch-slider {
+    max-width: 20px !important;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+}
+
+.ch-slider .v-input__slot {
+    margin-bottom: 0 !important;
+}
+
+.ch-slider .v-slider {
+    margin: 0 !important;
+}
+
+.v-navigation-drawer__content {
+    scrollbar-width: none;  
+    -ms-overflow-style: none;  
+}
+
+.v-navigation-drawer__content::-webkit-scrollbar {
+    display: none;  
+}

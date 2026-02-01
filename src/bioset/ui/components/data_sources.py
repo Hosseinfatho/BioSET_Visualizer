@@ -20,14 +20,14 @@ def data_sources_section(state, ctrl):
             click=toggle_data,
         ):
             with vuetify.VListItemIcon():
-                vuetify.VIcon("mdi-database-outline", style="font-size: 30px;")
+                vuetify.VIcon("mdi-database-outline", style="font-size: 40px;")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Data Sources", classes="text-overline")
         
         with vuetify.VExpandTransition():
             with html.Div(v_show=("data_open", False)):
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemIcon(v_if="drawer_mini"):
+                    with vuetify.VListItemIcon(v_if="drawer_mini", title=("zarr_url",)):
                         vuetify.VIcon("mdi-link-variant", style="font-size: 25px;")
                     with vuetify.VListItemContent(v_if="!drawer_mini", class_="mb-0 pb-0"):
                         vuetify.VTextField(
@@ -39,7 +39,7 @@ def data_sources_section(state, ctrl):
                         )
                         
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemIcon(v_if="drawer_mini"):
+                    with vuetify.VListItemIcon(v_if="drawer_mini", title=("metadata_url",)):
                         vuetify.VIcon("mdi-file-document-outline", style="font-size: 25px;")
                     with vuetify.VListItemContent(v_if="!drawer_mini", class_="mt-0 pt-0 mb-0 pb-0"):
                         vuetify.VTextField(
@@ -50,8 +50,8 @@ def data_sources_section(state, ctrl):
                             hide_details=True,
                         )
                 
-                with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemContent(v_if="!drawer_mini", class_="mt-2 pt-0"):
+                with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
+                    with vuetify.VListItemContent(class_="mt-2 pt-0"):
                         vuetify.VBtn(
                             "Load Data",
                             click=ctrl.load_data,

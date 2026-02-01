@@ -2,13 +2,15 @@ from __future__ import annotations
 
 # TODO: import from config.py
 DEFAULT_CHANNEL_COLORS = (
-    "#00FFFF",  # Cyan
-    "#FF00FF",  # Magenta
-    "#FFFF00",  # Yellow
-    "#FF0000",  # Red
-    "#00FF00",  # Green
-    "#0000FF",  # Blue
+    "#FFFFFF", # White
 )
+
+# Swatches for VColorPicker 
+DEFAULT_COLOR_SWATCHES = [
+    ["#00FFFF", "#FF00FF", "#FFFF00"],
+    ["#FF0000", "#00FF00", "#0000FF"],
+    ["#FFFFFF", "#808080", "#000000"],
+]
 
 def init_state(state):
     """Initialize all UI state with defaults."""
@@ -53,6 +55,9 @@ def init_state(state):
     
     # Active channels (ids)
     state.setdefault("active_channels", [])
+    
+    # default color picker swatches (nested array for VColorPicker)
+    state.setdefault("color_swatches", DEFAULT_COLOR_SWATCHES)
 
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""

@@ -17,13 +17,15 @@ def left_drawer(state, ctrl):
         state.drawer_mini = not state.drawer_mini
     
     with vuetify.VNavigationDrawer(
-        v_model=("drawer", True),
+         v_model=("drawer", True),
         mini_variant=("drawer_mini", False),
-        mini_variant_width=65,
+        mini_variant_width=80,
         width=250,
         permanent=True,
         app=True,
         dark=True,
+        expand_on_hover=False,
+        class_=("drawer_mini ? 'drawer-mini-lock' : ''", ""),
         color="rgba(18, 18, 18, 0.6)",
     ):
         # Logo and title
