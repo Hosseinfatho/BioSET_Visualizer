@@ -73,6 +73,7 @@ def _make_volume_from_vtk_image(
     ) if linear_interpolation else prop.SetInterpolationTypeToNearest()
     apply_volume_properties(prop, image, shade=shade)
 
+    # mapper = vtkFixedPointVolumeRayCastMapper()
     mapper = vtkGPUVolumeRayCastMapper()
     mapper.SetInputData(image)
 

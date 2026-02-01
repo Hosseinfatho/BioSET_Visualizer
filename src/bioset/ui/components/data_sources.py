@@ -73,9 +73,9 @@ def data_sources_section(state, ctrl):
                 
                         
                 with html.Div(v_if="!drawer_mini && data_loaded"):
-                    vuetify.VDivider()
+                    vuetify.VDivider(classes="mb-4")
                     vuetify.VFileInput(
-                        class_="nav-item nav-item--nested",
+                        classes="nav-item nav-item--nested mt-4",
                         label="Analysis results (.bioset)",
                         accept=".bioset",
                         chips=True,
@@ -92,8 +92,8 @@ def data_sources_section(state, ctrl):
                         with vuetify.VListItemContent():
                             # Show loaded status
                             with html.Div(v_if="analysis_loaded", class_="text-caption success--text"):
-                                vuetify.VIcon("mdi-check-circle", x_small=True, color="success", class_="mr-1")
-                                html.Span("{{ analysis_file_name }}")
+                                vuetify.VIcon("mdi-check-circle-outline", x_small=True, class_="mr-1")
+                                html.Span("{{ analysis_file_name }}",classes="text-truncate text-center", style="font-size: 10px; color: #9e9e9e;")
                             
                             with vuetify.VCard(
                                 class_="text-center mt-2",
