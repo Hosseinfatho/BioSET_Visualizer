@@ -1,5 +1,5 @@
 # data_sources.py
-"""Data sources section component."""
+"""Data sources section in left drawer component."""
 
 from __future__ import annotations
 
@@ -60,3 +60,29 @@ def data_sources_section(state, ctrl):
                             block=True,
                             small=True,
                         )
+                        
+                
+                        
+                with html.Div(v_if="!drawer_mini && data_loaded"):
+                    vuetify.VDivider()
+                    vuetify.VFileInput(class_="nav-item nav-item--nested",
+                                label="BioSET analysis results",
+                                # click=ctrl.load_data,
+                                chips=True,
+                                # loading=("data_loading", False),
+                                # disabled=("data_loading", False),
+                                # rules need to be added
+                                block=True,
+                                small=True,
+                            )
+                    with vuetify.VListItem(class_="nav-item nav-item--nested"):
+                        with vuetify.VListItemContent():
+                            with vuetify.VCard(
+                                class_="text-center",
+                            ):
+                                html.A(
+                                    "Instructions for running the BioSET analysis pipeline.",
+                                    href="https://github.com/Chahat08/BioSET_Preprocessing",
+                                    target="_blank",
+                                    style="font-size: 10px; color: #9e9e9e;",
+                                )
