@@ -20,7 +20,7 @@ def data_sources_section(state, ctrl):
             click=toggle_data,
         ):
             with vuetify.VListItemIcon():
-                vuetify.VIcon("mdi-database-outline", style="font-size: 30px;")
+                vuetify.VIcon("mdi-database-outline", style="font-size: 40px;")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Data Sources", classes="text-overline")
         

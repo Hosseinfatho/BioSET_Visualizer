@@ -26,7 +26,7 @@ def settings_section(state, ctrl):
             click=toggle_settings,
         ):
             with vuetify.VListItemIcon():
-                vuetify.VIcon("mdi-cog-outline", style="font-size: 30px;")
+                vuetify.VIcon("mdi-cog-outline", style="font-size: 40px;")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Settings", classes="text-overline")
 

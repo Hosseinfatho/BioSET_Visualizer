@@ -19,7 +19,7 @@ def left_drawer(state, ctrl):
     with vuetify.VNavigationDrawer(
          v_model=("drawer", True),
         mini_variant=("drawer_mini", False),
-        mini_variant_width=60,
+        mini_variant_width=80,
         width=250,
         permanent=True,
         app=True,
