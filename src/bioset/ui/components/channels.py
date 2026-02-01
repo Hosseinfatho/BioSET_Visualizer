@@ -17,7 +17,7 @@ def channels_section(state, ctrl):
             click=toggle_channels,
         ):
             with vuetify.VListItemIcon():
-                with vuetify.VTooltip(right=True):
+                with vuetify.VTooltip(right=True, disabled=("!drawer_mini",)):
                     with html.Template(v_slot_activator="{ on, attrs }"):
                         vuetify.VIcon("mdi-layers-triple-outline", style="font-size: 40px;", v_bind="attrs", v_on="on")
                     html.Span("Channels")
@@ -46,7 +46,7 @@ def channels_section(state, ctrl):
                             class_="ch-item",
                         ):
                             with vuetify.VListItemIcon():
-                                with vuetify.VTooltip(right=True):
+                                with vuetify.VTooltip(right=True, disabled=("!drawer_mini",)):
                                     with html.Template(v_slot_activator="{ on, attrs }"):
                                         with html.Div(
                                             class_="ch-icons",
