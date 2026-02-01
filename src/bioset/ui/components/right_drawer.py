@@ -1,15 +1,10 @@
-# right_drawer.py
-"""Right drawer component with analysis panel."""
-
 from __future__ import annotations
 
 from trame.widgets import html, vuetify
 
 
 def right_drawer(state, ctrl):
-    """Create the right drawer with analysis panel."""
-    
-    # Only show when analysis is loaded
+        
     with vuetify.VNavigationDrawer(
         v_model=("right_drawer_open",),
         v_if="analysis_loaded",
@@ -21,7 +16,7 @@ def right_drawer(state, ctrl):
     ):
         # Header
         with vuetify.VListItem(classes="px-3 py-2"):
-            vuetify.VListItemTitle("Analysis", classes="text-subtitle-1")
+            vuetify.VListItemTitle("Analysis", classes="")
             vuetify.VSpacer()
             with vuetify.VBtn(icon=True, small=True, click="right_drawer_open = false"):
                 vuetify.VIcon("mdi-close", small=True)
