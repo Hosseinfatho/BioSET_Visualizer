@@ -52,7 +52,7 @@ def channels_section(state, ctrl):
                                 ):
                                     with html.Template(v_slot_activator="{ on, attrs }"):
                                         vuetify.VIcon(
-                                            "mdi-square-rounded",
+                                            v_text="active_channels.includes(channel.id) ? 'mdi-square-rounded' : 'mdi-square-rounded-outline'",
                                             style=("`color: ${channel.color || '#fff'}; cursor: pointer;`",),
                                             v_bind="attrs",
                                             v_on="on",
@@ -68,6 +68,7 @@ def channels_section(state, ctrl):
                                             hide_inputs=True,
                                             show_swatches=True,
                                             swatches_max_height=150,
+                                            swatches=("color_swatches", []),
                                             input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
                                         )
 
