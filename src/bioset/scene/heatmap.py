@@ -22,7 +22,7 @@ class HeatmapConfig:
     base_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)  
     min_opacity: float = 0.1
     max_opacity: float = 0.8
-    z_height: float = 194*0.28  # todo, data and meta data decide?
+    z_height: float = 1.0  # todo, data and meta data decide?
     z_offset: float = 0.0    
     edge_visibility: bool = True
     edge_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)

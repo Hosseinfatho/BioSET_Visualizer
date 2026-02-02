@@ -100,6 +100,9 @@ class VolumeStreamer:
     def set_zarr_url(self, url: str):
         """Update the zarr URL and reinitialize the source."""
         print(f"[stream] Setting zarr URL: {url}")
+        # Remove existing volumes from the renderer
+        for vol in self.volumes.values():
+            self.renderer.RemoveVolume(vol)
         max_bytes = int(self.cfg.cache_size_gb * (1024**3))
         self.zsrc = ZarrMultiscaleSource(
             url=url,

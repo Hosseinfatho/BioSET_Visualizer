@@ -69,8 +69,16 @@ def data_sources_section(state, ctrl):
                             block=True,
                             small=True,
                         )
-                        
-                
+                    with vuetify.VListItemContent(class_="mt-2 pt-0", v_if="!drawer_mini && data_loaded"):
+                        vuetify.VBtn(
+                            "Clear Data",
+                            click=ctrl.clear_data,
+                            loading=("data_loading", False),
+                            disabled=("data_loading", False),
+                            block=True,
+                            small=True,
+                        )
+                    
                         
                 with html.Div(v_if="!drawer_mini && data_loaded"):
                     vuetify.VDivider(classes="mb-4")

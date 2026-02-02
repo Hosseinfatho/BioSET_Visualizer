@@ -82,6 +82,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.data_loading = False
 
+    def clear_data():
+        print(f"[callbacks] Clearing data...")
+
     def load_analysis_file(file_info):
         """
         Load analysis results from uploaded .bioset file.

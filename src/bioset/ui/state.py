@@ -7,9 +7,9 @@ DEFAULT_CHANNEL_COLORS = (
 
 # Swatches for VColorPicker 
 DEFAULT_COLOR_SWATCHES = [
-    ["#00FFFF", "#FF00FF", "#FFFF00"],
-    ["#FF0000", "#00FF00", "#0000FF"],
-    ["#FFFFFF", "#808080", "#000000"],
+    ["#FF0000", "#00FFFF", "#FFFFFF"],
+    ["#00FF00", "#FF00FF", "#808080"],
+    ["#0000FF", "#FFFF00", "#000000"],
 ]
 
 def init_state(state):

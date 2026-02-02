@@ -38,7 +38,7 @@ def channels_section(state, ctrl):
                         v_model=("active_channels", []),
                     ):
                         with vuetify.VListItem(
-                            v_for="(channel, index) in channels",
+                            v_for="(channel, index) in channels.length <=5 ? channels : channels.slice(0, 4)",
                             key="channel.id",
                             value=("channel.id",),  
                             link=True,
@@ -70,12 +70,15 @@ def channels_section(state, ctrl):
                                                 with vuetify.VCard():
                                                     vuetify.VColorPicker(
                                                         v_model=("channels[index].color",),
-                                                        mode="hexa",
-                                                        hide_mode_switch=True,
-                                                        hide_inputs=True,
+                                                        mode="RGBA",
+                                                        hide_canvas=True,
                                                         show_swatches=True,
                                                         swatches_max_height=150,
                                                         swatches=("color_swatches", []),
+                                                        elevation="20",
+                                                        outlined=True,
+                                                        dense=True,
+                                                        dark=True,
                                                         input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
                                                     )
 
@@ -102,3 +105,6 @@ def channels_section(state, ctrl):
                                     mousedown_stop=True,
                                     style="max-width: 150px;",
                                 )
+
+                            # todo: add channel button
+                           
