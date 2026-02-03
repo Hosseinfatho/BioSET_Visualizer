@@ -357,18 +357,76 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.deactivate_channel(channel_id)
             streamer.activate_channel(channel_id, color_hex)
             
-    def on_channel_color_change(channel_id, color_hex):
+    def on_channel_color_change(channel_id, color_value):
         """Handle color change from the color picker."""
+        print(f"[callbacks] Raw color_value: {color_value}, type: {type(color_value)}")
+        
+        if isinstance(color_value, dict):
+            if 'hexa' in color_value:
+                color_hex = color_value['hexa']
+            elif 'hex' in color_value:
+                color_hex = color_value['hex']
+            elif 'r' in color_value and 'g' in color_value and 'b' in color_value:
+                r = int(color_value['r'])
+                g = int(color_value['g'])
+                b = int(color_value['b'])
+                color_hex = f'#{r:02x}{g:02x}{b:02x}'
+            elif 'rgba' in color_value:
+                import re
+                match = re.match(r'rgba?\((\d+),\s*(\d+),\s*(\d+)', str(color_value['rgba']))
+                if match:
+                    r, g, b = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                    color_hex = f'#{r:02x}{g:02x}{b:02x}'
+                else:
+                    color_hex = '#FFFFFF'
+            else:
+                color_hex = '#FFFFFF'
+        elif isinstance(color_value, str):
+            color_hex = color_value
+        else:
+            color_hex = '#FFFFFF'
+        
+        if not color_hex.startswith('#'):
+            color_hex = f'#{color_hex}'
+        
+        if len(color_hex) > 7:
+            color_hex = color_hex[:7]
+        
+        color_hex = color_hex.upper()
+        
         print(f"[callbacks] Channel {channel_id} color changed to: {color_hex}")
         
-        # If channel is active, update its volume color in the streamer
+        new_channels = []
+        for ch in state.channels:
+            if ch["id"] == channel_id:
+                new_channels.append({**ch, "color": color_hex})
+            else:
+                new_channels.append({**ch})  
+        state.channels = new_channels
+        
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
-            streamer.deactivate_channel(channel_id)
-            streamer.activate_channel(channel_id, color_hex)
+            streamer._channel_colors[channel_id] = streamer._hex_to_rgb(color_hex)
+            
+            if channel_id in streamer.volumes:
+                from bioset.scene.volumes import build_histogram_tf
+                
+                vol = streamer.volumes[channel_id]
+                mapper = streamer.mappers[channel_id]
+                
+                img = mapper.GetInput()
+                if img:
+                    tint_rgb = streamer._channel_colors[channel_id]
+                    color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
+                    streamer._channel_tfs[channel_id] = (color_tf, opacity_tf)
+                    
+                    prop = vol.GetProperty()
+                    prop.SetColor(color_tf)
+                    prop.SetScalarOpacity(opacity_tf)
         
         if _refs["view"]:
             _refs["view"].update()
+
 
     
     # Bind to controller

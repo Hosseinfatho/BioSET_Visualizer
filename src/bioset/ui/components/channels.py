@@ -66,23 +66,55 @@ def channels_section(state, ctrl):
                                                         _class="mr-3",
                                                         click_stop=True,
                                                     )
-                                                
-                                                with vuetify.VCard():
+                                                    
+                                                with vuetify.VCard(class_="pa-2", dark=True):
                                                     vuetify.VColorPicker(
-                                                        v_model=("channel.color",),
-                                                        # mode="RGBA",
+                                                        value=("channel.color",),
+                                                        mode="rgba",
                                                         hide_canvas=True,
-                                                        show_swatches=True,
-                                                        swatches_max_height=150,
-                                                        show_mode_switch=True,
-                                                        swatches=("color_swatches", []),
-                                                        elevation="20",
-                                                        outlined=True,
-                                                        dense=True,
+                                                        hide_inputs=False,
+                                                        hide_mode_switch=False,
+                                                        show_swatches=False, 
+                                                        flat=True,
+                                                        width="280",
                                                         dark=True,
-                                                        __events=["update:color"],
+                                                        __events=["input", "update:color"],
+                                                        input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
                                                         update_color=(ctrl.on_channel_color_change, "[channel.id, $event]"),
                                                     )
+                                                    
+                                                    vuetify.VDivider(classes="my-2")
+                                                    
+                                                    with html.Div(
+                                                        v_for="(row, rowIndex) in color_swatches",
+                                                        key="'row-' + rowIndex",
+                                                        classes="d-flex justify-center mb-1",
+                                                        style="gap: 8px;",
+                                                    ):
+                                                        vuetify.VBtn(
+                                                            v_for="(swatch_color, colIndex) in row",
+                                                            key="'swatch-' + rowIndex + '-' + colIndex",
+                                                            style=("`background-color: ${swatch_color} !important; border: 2px solid ${channel.color === swatch_color ? '#FFD700' : (swatch_color === '#000000' ? '#555' : '#333')}; min-width: 80px; width: 80px; height: 32px; border-radius: 4px;`",),
+                                                            click=(ctrl.on_channel_color_change, "[channel.id, swatch_color]"),
+                                                        )
+
+
+                                                
+                                                # with vuetify.VCard():
+                                                #     vuetify.VColorPicker(
+                                                #         value=("channel.color",),  
+                                                #         hide_canvas=True,
+                                                #         show_swatches=True,
+                                                #         swatches_max_height=150,
+                                                #         show_mode_switch=True,
+                                                #         swatches=("color_swatches", []),
+                                                #         elevation="20",
+                                                #         outlined=True,
+                                                #         dense=True,
+                                                #         dark=True,
+                                                #         __events=["input"],  
+                                                #         input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
+                                                #     )
 
                                             with html.Span(
                                                     v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
