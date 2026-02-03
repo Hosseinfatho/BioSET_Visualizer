@@ -84,6 +84,48 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def clear_data():
         print(f"[callbacks] Clearing data...")
+        
+        streamer = _refs.get("streamer")
+        heatmap = _refs.get("heatmap")
+        
+        if streamer:
+            for channel_id in list(state.active_channels):
+                streamer.deactivate_channel(channel_id)
+            streamer._active_channels.clear()
+            streamer._channel_colors.clear()
+            streamer._channel_tfs.clear()
+            streamer.volumes.clear()
+            streamer.mappers.clear()
+            streamer.state.clear()
+            streamer._last_component = None
+            streamer.renderer.ResetCamera()
+            streamer.renderer.ResetCameraClippingRange() 
+            
+        if heatmap:
+            heatmap.clear()   
+            
+        if _refs["analysis_loader"]:
+            _refs["analysis_loader"].close()
+            _refs["analysis_loader"] = None
+        
+        state.channels = []
+        state.active_channels = []
+        state.data_loaded = False
+        
+        state.analysis_loaded = False
+        state.analysis_file_name = ""
+        state.analysis_channels = []
+        state.analysis_dilation_amounts = []
+        state.analysis_hierarchy_levels = []
+        state.analysis_volume_bounds = {}
+        state.heatmap_tile_count = 0
+        
+        state.right_drawer_open = False
+    
+        if _refs["view"]:
+            _refs["view"].update()
+        
+        print(f"[callbacks] Data cleared successfully")
 
     def load_analysis_file(file_info):
         """
@@ -310,6 +352,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
     ctrl.load_data = load_data
+    ctrl.clear_data = clear_data
     ctrl.load_analysis_file = load_analysis_file  
     ctrl.update_heatmap = update_heatmap         
     ctrl.toggle_channel = toggle_channel

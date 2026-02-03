@@ -56,7 +56,7 @@ class VolumeConfig:
     # caching
     cache_enabled: bool = True
     cache_dir: Path = Path.home() / ".cache" / "bioset_zarr_cache"
-    cache_size_gb: float = 48.0
+    cache_size_gb: float = 8.0
 
     # Rendering Defaults
     background: str = "Black"

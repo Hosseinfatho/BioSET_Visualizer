@@ -59,7 +59,7 @@ def data_sources_section(state, ctrl):
                             hide_details=True,
                         )
                 
-                with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
+                with vuetify.VListItem(class_="nav-item nav-item--nested",v_if="!drawer_mini && !data_loaded"):
                     with vuetify.VListItemContent(class_="mt-2 pt-0"):
                         vuetify.VBtn(
                             "Load Data",
@@ -69,7 +69,22 @@ def data_sources_section(state, ctrl):
                             block=True,
                             small=True,
                         )
-                    with vuetify.VListItemContent(class_="mt-2 pt-0", v_if="!drawer_mini && data_loaded"):
+                      
+                with vuetify.VListItem(class_="nav-item nav-item--nested",v_if="data_loaded"):  
+                    with vuetify.VListItemIcon(v_if="drawer_mini"):
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon(
+                                    "mdi-close-circle-outline",
+                                    style="font-size: 25px;",
+                                    v_bind="attrs",
+                                    v_on="on",
+                                    link=True,
+                                    click=ctrl.clear_data,
+                                )
+                            html.Span("Clear Data")
+                            
+                    with vuetify.VListItemContent(class_="mt-2 pt-0"):
                         vuetify.VBtn(
                             "Clear Data",
                             click=ctrl.clear_data,
