@@ -89,12 +89,12 @@ def channels_section(state, ctrl):
                                                         v_for="(row, rowIndex) in color_swatches",
                                                         key="'row-' + rowIndex",
                                                         classes="d-flex justify-center mb-1",
-                                                        style="gap: 8px;",
+                                                        style="gap: 5px;",
                                                     ):
                                                         vuetify.VBtn(
                                                             v_for="(swatch_color, colIndex) in row",
                                                             key="'swatch-' + rowIndex + '-' + colIndex",
-                                                            style=("`background-color: ${swatch_color} !important; border: 2px solid ${channel.color === swatch_color ? '#FFD700' : (swatch_color === '#000000' ? '#555' : '#333')}; min-width: 80px; width: 80px; height: 32px; border-radius: 4px;`",),
+                                                            style=("`background-color: ${swatch_color} !important; border: 2px solid ${channel.color === swatch_color ? '#FFFFFF' : (swatch_color === '#000000' ? '#555' : '#333')}; min-width: 72px; width: 72px; height: 32px; border-radius: 4px;`",),
                                                             click=(ctrl.on_channel_color_change, "[channel.id, swatch_color]"),
                                                         )
  
