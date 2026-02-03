@@ -38,7 +38,7 @@ def channels_section(state, ctrl):
                         v_model=("active_channels", []),
                     ):
                         with vuetify.VListItem(
-                            v_for="(channel, index) in channels.length <=5 ? channels : channels.slice(0, 4)",
+                            v_for="channel in channels.filter(ch => visible_channel_ids.includes(ch.id))",
                             key="channel.id",
                             value=("channel.id",),  
                             link=True,
@@ -57,37 +57,49 @@ def channels_section(state, ctrl):
                                                 offset_y=True,
                                                 close_on_content_click=False,
                                             ):
-                                                with html.Template(v_slot_activator="{ on, attrs }"):
+                                                with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
                                                     vuetify.VIcon(
                                                         v_text="active_channels.includes(channel.id) ? 'mdi-square-rounded' : 'mdi-square-rounded-outline'",
                                                         style=("`color: ${channel.color || '#fff'}; cursor: pointer;`",),
-                                                        v_bind="attrs",
-                                                        v_on="on",
+                                                        v_bind="menuAttrs",
+                                                        v_on="menuOn",
                                                         _class="mr-3",
                                                         click_stop=True,
                                                     )
                                                 
                                                 with vuetify.VCard():
                                                     vuetify.VColorPicker(
-                                                        v_model=("channels[index].color",),
-                                                        mode="RGBA",
+                                                        v_model=("channel.color",),
+                                                        # mode="RGBA",
                                                         hide_canvas=True,
                                                         show_swatches=True,
                                                         swatches_max_height=150,
+                                                        show_mode_switch=True,
                                                         swatches=("color_swatches", []),
                                                         elevation="20",
                                                         outlined=True,
                                                         dense=True,
                                                         dark=True,
-                                                        input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
+                                                        __events=["update:color"],
+                                                        update_color=(ctrl.on_channel_color_change, "[channel.id, $event]"),
                                                     )
 
-                                            vuetify.VIcon(
-                                                "mdi-close-circle",
-                                                v_if="active_channels.includes(channel.id)",
-                                                class_="eye-icon mr-3",
-                                                click_stop_prevent=(ctrl.toggle_channel, "[channel.id]"),
-                                            )
+                                            with html.Span(
+                                                    v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
+                                                ):
+                                                    vuetify.VIcon(
+                                                        "mdi-close-circle",
+                                                        class_="eye-icon mr-3",
+                                                        click=(ctrl.remove_channel_from_visible, "[channel.id]"),
+                                                    )
+                                            
+                                            # vuetify.VIcon(
+                                            #     "mdi-minus-circle-outline",
+                                            #     #v_if="!channels.slice(0, state.default_num_channels).map(c => c.id).includes(channel.id)",
+                                            #     class_="remove-icon",
+                                            #     small=True,
+                                            #     click_stop_prevent=(ctrl.remove_channel_from_visible, "[channel.id]"),
+                                            # )
                                     html.Span("{{ channel.name }}")
 
                             with vuetify.VListItemContent(v_if="!drawer_mini"):
@@ -106,5 +118,62 @@ def channels_section(state, ctrl):
                                     style="max-width: 150px;",
                                 )
 
-                            # todo: add channel button
-                           
+                with vuetify.VListItem(
+                    v_if="channels.length > visible_channel_ids.length && drawer_mini",
+                    class_="nav-item nav-item--nested",
+                ):
+                    with vuetify.VMenu(
+                        offset_y=True,
+                        max_height=300,
+                        dark=True,
+                    ):
+                        with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
+                            with vuetify.VListItemIcon():
+                                with vuetify.VTooltip(right=True):
+                                    with html.Template(v_slot_activator="{ on, attrs }"):
+                                        vuetify.VIcon(
+                                            "mdi-plus-circle-outline",
+                                            style="font-size: 25px;",
+                                            v_bind="{ ...attrs, ...menuAttrs }",
+                                            v_on="{ ...on, ...menuOn }",
+                                            link=True,
+                                        )
+                                    html.Span("Add Channel")
+                        
+                        with vuetify.VList(dense=True):
+                            with vuetify.VListItem(
+                                v_for="channel in channels.filter(ch => !visible_channel_ids.includes(ch.id))",
+                                key="'add-' + channel.id",
+                                click=(ctrl.add_channel_to_visible, "[channel.id]"),
+                            ):
+                                with vuetify.VListItemContent():
+                                    vuetify.VListItemTitle("{{ channel.name }}")
+
+                with vuetify.VListItem(
+                    v_if="channels.length > visible_channel_ids.length && !drawer_mini",
+                    class_="nav-item nav-item--nested",
+                ):
+                    with vuetify.VMenu(
+                        offset_y=True,
+                        max_height=300,
+                        dark=True,
+                    ):
+                        with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
+                            with vuetify.VListItemContent(class_="mt-2 pt-0"):
+                                vuetify.VBtn(
+                                    "Add Channel",
+                                    v_bind="menuAttrs",
+                                    v_on="menuOn",
+                                    block=True,
+                                    small=True,
+                                )
+                        
+                        with vuetify.VList(dense=True):
+                            with vuetify.VListItem(
+                                v_for="channel in channels.filter(ch => !visible_channel_ids.includes(ch.id))",
+                                key="'add-' + channel.id",
+                                click=(ctrl.add_channel_to_visible, "[channel.id]"),
+                            ):
+                                with vuetify.VListItemContent():
+                                    vuetify.VListItemTitle("{{ channel.name }}")       
+                        

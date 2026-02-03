@@ -12,6 +12,8 @@ DEFAULT_COLOR_SWATCHES = [
     ["#0000FF", "#FFFF00", "#000000"],
 ]
 
+DEFAULT_NUM_CHANNELS = 3
+
 def init_state(state):
     """Initialize all UI state with defaults."""
     
@@ -55,6 +57,8 @@ def init_state(state):
     
     # Active channels (ids)
     state.setdefault("active_channels", [])
+    state.setdefault("visible_channel_ids", []) # channels shown in the list (first 3 and more if added)
+    state.setdefault("default_num_channels", DEFAULT_NUM_CHANNELS)
     
     # default color picker swatches (nested array for VColorPicker)
     state.setdefault("color_swatches", DEFAULT_COLOR_SWATCHES)

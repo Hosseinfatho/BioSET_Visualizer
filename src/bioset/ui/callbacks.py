@@ -63,6 +63,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             state.channels = channels
             state.active_channels = []
+            initial_visible = channels if len(channels) < state.default_num_channels else [ch["id"] for ch in channels[:state.default_num_channels]]
+            state.visible_channel_ids = initial_visible
             state.data_loaded = True
             
             print(f"[callbacks] Loaded {len(channels)} channels")
@@ -110,6 +112,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         state.channels = []
         state.active_channels = []
+        state.visible_channel_ids = []
         state.data_loaded = False
         
         state.analysis_loaded = False
@@ -126,6 +129,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
             _refs["view"].update()
         
         print(f"[callbacks] Data cleared successfully")
+        
+    def add_channel_to_visible(channel_id):
+        print(f"[callbacks] Adding channel {channel_id} to visible list")
+        visible = list(state.visible_channel_ids)
+        if channel_id not in visible:
+            visible.append(channel_id)
+            state.visible_channel_ids = visible
+
+    def remove_channel_from_visible(channel_id):
+        print(f"[callbacks] Removing channel {channel_id} from visible list")
+        
+        visible = list(state.visible_channel_ids)
+        if channel_id in visible:
+            visible.remove(channel_id)
+            state.visible_channel_ids = visible
+        
+        if channel_id in state.active_channels:
+            active = list(state.active_channels)
+            active.remove(channel_id)
+            state.active_channels = active
 
     def load_analysis_file(file_info):
         """
@@ -361,3 +384,5 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_background_color = update_background_color
     ctrl.update_channel_color = update_channel_color
     ctrl.on_channel_color_change = on_channel_color_change
+    ctrl.add_channel_to_visible = add_channel_to_visible
+    ctrl.remove_channel_from_visible = remove_channel_from_visible
