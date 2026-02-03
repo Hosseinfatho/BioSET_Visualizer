@@ -100,6 +100,9 @@ class VolumeStreamer:
     def set_zarr_url(self, url: str):
         """Update the zarr URL and reinitialize the source."""
         print(f"[stream] Setting zarr URL: {url}")
+        # Remove existing volumes from the renderer
+        for vol in self.volumes.values():
+            self.renderer.RemoveVolume(vol)
         max_bytes = int(self.cfg.cache_size_gb * (1024**3))
         self.zsrc = ZarrMultiscaleSource(
             url=url,
@@ -131,39 +134,39 @@ class VolumeStreamer:
         b = int(color_hex[4:6], 16) / 255.0
         return (r, g, b)
 
-    def activate_channel(self, channel_id: int, color_hex: str):
-        """
-        Activate a channel for rendering.
-        Always loads at start_component first (fast), then LOD system upgrades.
-        """
-        if channel_id in self._active_channels:
-            print(f"[stream] Channel {channel_id} already active")
-            return
+    # def activate_channel(self, channel_id: int, color_hex: str):
+    #     """
+    #     Activate a channel for rendering.
+    #     Always loads at start_component first (fast), then LOD system upgrades.
+    #     """
+    #     if channel_id in self._active_channels:
+    #         print(f"[stream] Channel {channel_id} already active")
+    #         return
         
-        print(f"[stream] Activating channel {channel_id} with color {color_hex}")
+    #     print(f"[stream] Activating channel {channel_id} with color {color_hex}")
         
-        self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
-        is_first_volume = len(self._active_channels) == 0 
-        self._active_channels.add(channel_id)
+    #     self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
+    #     is_first_volume = len(self._active_channels) == 0 
+    #     self._active_channels.add(channel_id)
         
-        comp = self.cfg.start_component
+    #     comp = self.cfg.start_component
         
-        try:
-            z, y, x = self._dims_for_component(comp)
-        except Exception as e:
-            print(f"[stream] Error getting dims: {e}")
-            self._active_channels.discard(channel_id)  
-            return
+    #     try:
+    #         z, y, x = self._dims_for_component(comp)
+    #     except Exception as e:
+    #         print(f"[stream] Error getting dims: {e}")
+    #         self._active_channels.discard(channel_id)  
+    #         return
         
-        roi = ROI(0, x, 0, y)
+    #     roi = ROI(0, x, 0, y)
         
-        print(f"[stream] Initial load at low-res comp={comp} (dims: {x}x{y}x{z})")
+    #     print(f"[stream] Initial load at low-res comp={comp} (dims: {x}x{y}x{z})")
         
-        self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
+    #     self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
         
-        if self._last_component is not None and self._last_component < comp:
-            print(f"[stream] Scheduling upgrade from comp={comp} to current view")
-            self._trigger_lod_update_for_new_channel()
+    #     if self._last_component is not None and self._last_component < comp:
+    #         print(f"[stream] Scheduling upgrade from comp={comp} to current view")
+    #         self._trigger_lod_update_for_new_channel()
 
     def _trigger_lod_update_for_new_channel(self):
         """Trigger an async LOD update after adding a new channel."""
@@ -205,6 +208,75 @@ class VolumeStreamer:
         # Schedule async load immediately
         self._schedule_load(request)
 
+    def activate_channel(self, channel_id: int, color_hex: str):
+        """
+        Activate a channel for rendering.
+        Loads at the appropriate resolution based on current camera zoom.
+        """
+        if channel_id in self._active_channels:
+            print(f"[stream] Channel {channel_id} already active")
+            return
+        
+        print(f"[stream] Activating channel {channel_id} with color {color_hex}")
+        
+        self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
+        is_first_volume = len(self._active_channels) == 0 
+        self._active_channels.add(channel_id)
+        
+        # Determine the appropriate component based on current camera
+        if is_first_volume or self._last_component is None:
+            # First volume - use start_component (low res for fast initial load)
+            comp = self.cfg.start_component
+            try:
+                z, y, x = self._dims_for_component(comp)
+            except Exception as e:
+                print(f"[stream] Error getting dims: {e}")
+                self._active_channels.discard(channel_id)  
+                return
+            roi = ROI(0, x, 0, y)
+            print(f"[stream] First volume - loading at start_component={comp}")
+        else:
+            # Not first volume - match the current view's resolution
+            cam = self.renderer.GetActiveCamera()
+            dist = camera_distance_to_focal(cam)
+            
+            comp = choose_component(
+                dist,
+                self.cfg.distance_rules,
+                min_component=self.cfg.min_component,
+                max_component=self.cfg.max_component,
+            )
+            
+            # Use same ROI as other active channels if available
+            existing_state = None
+            for ch_id in self._active_channels:
+                if ch_id != channel_id and ch_id in self.state:
+                    existing_state = self.state[ch_id]
+                    break
+            
+            if existing_state and existing_state.component == comp:
+                # Use same ROI as existing channels
+                roi = existing_state.roi
+                print(f"[stream] Matching existing view: comp={comp} roi={roi}")
+            else:
+                # Compute ROI based on current view
+                spacing = self._spacing_for_component(comp)
+                zdim, ydim, xdim = self._dims_for_component(comp)
+                bounds = self._volume_bounds_world(comp)
+                
+                roi = compute_visible_xy_roi_vox(
+                    self.renderer,
+                    bounds_world=bounds,
+                    sx=spacing.sx,
+                    sy=spacing.sy,
+                    x_dim=xdim,
+                    y_dim=ydim,
+                    margin_vox=self.cfg.roi_margin_vox,
+                )
+                print(f"[stream] Computed view: comp={comp} roi={roi}")
+        
+        self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
+        
     def deactivate_channel(self, channel_id: int):
         """
         Deactivate a channel - remove from rendering.

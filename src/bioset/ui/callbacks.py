@@ -63,6 +63,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             state.channels = channels
             state.active_channels = []
+            initial_visible = channels if len(channels) < state.default_num_channels else [ch["id"] for ch in channels[:state.default_num_channels]]
+            state.visible_channel_ids = initial_visible
             state.data_loaded = True
             
             print(f"[callbacks] Loaded {len(channels)} channels")
@@ -81,6 +83,72 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.data_loaded = False
         finally:
             state.data_loading = False
+
+    def clear_data():
+        print(f"[callbacks] Clearing data...")
+        
+        streamer = _refs.get("streamer")
+        heatmap = _refs.get("heatmap")
+        
+        if streamer:
+            for channel_id in list(state.active_channels):
+                streamer.deactivate_channel(channel_id)
+            streamer._active_channels.clear()
+            streamer._channel_colors.clear()
+            streamer._channel_tfs.clear()
+            streamer.volumes.clear()
+            streamer.mappers.clear()
+            streamer.state.clear()
+            streamer._last_component = None
+            streamer.renderer.ResetCamera()
+            streamer.renderer.ResetCameraClippingRange() 
+            
+        if heatmap:
+            heatmap.clear()   
+            
+        if _refs["analysis_loader"]:
+            _refs["analysis_loader"].close()
+            _refs["analysis_loader"] = None
+        
+        state.channels = []
+        state.active_channels = []
+        state.visible_channel_ids = []
+        state.data_loaded = False
+        
+        state.analysis_loaded = False
+        state.analysis_file_name = ""
+        state.analysis_channels = []
+        state.analysis_dilation_amounts = []
+        state.analysis_hierarchy_levels = []
+        state.analysis_volume_bounds = {}
+        state.heatmap_tile_count = 0
+        
+        state.right_drawer_open = False
+    
+        if _refs["view"]:
+            _refs["view"].update()
+        
+        print(f"[callbacks] Data cleared successfully")
+        
+    def add_channel_to_visible(channel_id):
+        print(f"[callbacks] Adding channel {channel_id} to visible list")
+        visible = list(state.visible_channel_ids)
+        if channel_id not in visible:
+            visible.append(channel_id)
+            state.visible_channel_ids = visible
+
+    def remove_channel_from_visible(channel_id):
+        print(f"[callbacks] Removing channel {channel_id} from visible list")
+        
+        visible = list(state.visible_channel_ids)
+        if channel_id in visible:
+            visible.remove(channel_id)
+            state.visible_channel_ids = visible
+        
+        if channel_id in state.active_channels:
+            active = list(state.active_channels)
+            active.remove(channel_id)
+            state.active_channels = active
 
     def load_analysis_file(file_info):
         """
@@ -289,24 +357,83 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.deactivate_channel(channel_id)
             streamer.activate_channel(channel_id, color_hex)
             
-    def on_channel_color_change(channel_id, color_hex):
+    def on_channel_color_change(channel_id, color_value):
         """Handle color change from the color picker."""
+        print(f"[callbacks] Raw color_value: {color_value}, type: {type(color_value)}")
+        
+        if isinstance(color_value, dict):
+            if 'hexa' in color_value:
+                color_hex = color_value['hexa']
+            elif 'hex' in color_value:
+                color_hex = color_value['hex']
+            elif 'r' in color_value and 'g' in color_value and 'b' in color_value:
+                r = int(color_value['r'])
+                g = int(color_value['g'])
+                b = int(color_value['b'])
+                color_hex = f'#{r:02x}{g:02x}{b:02x}'
+            elif 'rgba' in color_value:
+                import re
+                match = re.match(r'rgba?\((\d+),\s*(\d+),\s*(\d+)', str(color_value['rgba']))
+                if match:
+                    r, g, b = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                    color_hex = f'#{r:02x}{g:02x}{b:02x}'
+                else:
+                    color_hex = '#FFFFFF'
+            else:
+                color_hex = '#FFFFFF'
+        elif isinstance(color_value, str):
+            color_hex = color_value
+        else:
+            color_hex = '#FFFFFF'
+        
+        if not color_hex.startswith('#'):
+            color_hex = f'#{color_hex}'
+        
+        if len(color_hex) > 7:
+            color_hex = color_hex[:7]
+        
+        color_hex = color_hex.upper()
+        
         print(f"[callbacks] Channel {channel_id} color changed to: {color_hex}")
         
-        # If channel is active, update its volume color in the streamer
+        new_channels = []
+        for ch in state.channels:
+            if ch["id"] == channel_id:
+                new_channels.append({**ch, "color": color_hex})
+            else:
+                new_channels.append({**ch})  
+        state.channels = new_channels
+        
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
-            streamer.deactivate_channel(channel_id)
-            streamer.activate_channel(channel_id, color_hex)
+            streamer._channel_colors[channel_id] = streamer._hex_to_rgb(color_hex)
+            
+            if channel_id in streamer.volumes:
+                from bioset.scene.volumes import build_histogram_tf
+                
+                vol = streamer.volumes[channel_id]
+                mapper = streamer.mappers[channel_id]
+                
+                img = mapper.GetInput()
+                if img:
+                    tint_rgb = streamer._channel_colors[channel_id]
+                    color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
+                    streamer._channel_tfs[channel_id] = (color_tf, opacity_tf)
+                    
+                    prop = vol.GetProperty()
+                    prop.SetColor(color_tf)
+                    prop.SetScalarOpacity(opacity_tf)
         
         if _refs["view"]:
             _refs["view"].update()
+
 
     
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
     ctrl.load_data = load_data
+    ctrl.clear_data = clear_data
     ctrl.load_analysis_file = load_analysis_file  
     ctrl.update_heatmap = update_heatmap         
     ctrl.toggle_channel = toggle_channel
@@ -315,3 +442,5 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_background_color = update_background_color
     ctrl.update_channel_color = update_channel_color
     ctrl.on_channel_color_change = on_channel_color_change
+    ctrl.add_channel_to_visible = add_channel_to_visible
+    ctrl.remove_channel_from_visible = remove_channel_from_visible
