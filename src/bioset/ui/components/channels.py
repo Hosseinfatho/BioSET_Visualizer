@@ -113,19 +113,22 @@ def channels_section(state, ctrl):
 
                             with vuetify.VListItemContent(v_if="!drawer_mini"):
                                 vuetify.VListItemTitle("{{ channel.name }}")
-
-                                vuetify.VRangeSlider(
-                                    class_="ch-slider",
-                                    dense=True,
-                                    hide_details=True,
-                                    thumb_label="never",
-                                    min=0,
-                                    max=100,
-                                    value=("channel.range", [0, 100]),
-                                    click_stop=True,
-                                    mousedown_stop=True,
-                                    style="max-width: 150px;",
-                                )
+                                with html.Span(
+                                        v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
+                                    ):
+                                    vuetify.VRangeSlider(
+                                        class_="ch-slider",
+                                        dense=True,
+                                        hide_details=True,
+                                        min=0,
+                                        max=100,
+                                        value=("channel.range", [0, 100]),
+                                        click_stop=True,
+                                        mousedown_stop=True,
+                                        style="max-width: 150px;",
+                                        __events=["end"],  
+                                        end=(ctrl.on_channel_range_change, "[channel.id, $event]"),
+                                    )
 
                 with vuetify.VListItem(
                     v_if="channels.length > visible_channel_ids.length && drawer_mini",

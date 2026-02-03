@@ -417,12 +417,43 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 img = mapper.GetInput()
                 if img:
                     tint_rgb = streamer._channel_colors[channel_id]
-                    color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
+                    current_range = [0, 100]
+                    for ch in state.channels:
+                        if ch["id"] == channel_id:
+                            current_range = ch.get("range", [0, 100])
+                            break
+
+                    if channel_id in streamer._channel_data_range:
+                        from bioset.scene.volumes import build_tf_with_range
+                        data_range = streamer._channel_data_range[channel_id]
+                        color_tf, opacity_tf = build_tf_with_range(data_range, tuple(current_range), tint_rgb)
+                    else:
+                        from bioset.scene.volumes import build_histogram_tf
+                        color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
                     streamer._channel_tfs[channel_id] = (color_tf, opacity_tf)
                     
                     prop = vol.GetProperty()
                     prop.SetColor(color_tf)
                     prop.SetScalarOpacity(opacity_tf)
+        
+        if _refs["view"]:
+            _refs["view"].update()
+            
+    def on_channel_range_change(channel_id, range_value):
+        """Handle intensity range slider change."""
+        print(f"[callbacks] Channel {channel_id} range changed to: {range_value}")
+        
+        new_channels = []
+        for ch in state.channels:
+            if ch["id"] == channel_id:
+                new_channels.append({**ch, "range": range_value})
+            else:
+                new_channels.append({**ch})
+        state.channels = new_channels
+        
+        streamer = _refs.get("streamer")
+        if streamer and channel_id in state.active_channels:
+            streamer.update_channel_intensity_range(channel_id, tuple(range_value))
         
         if _refs["view"]:
             _refs["view"].update()
@@ -444,3 +475,5 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.on_channel_color_change = on_channel_color_change
     ctrl.add_channel_to_visible = add_channel_to_visible
     ctrl.remove_channel_from_visible = remove_channel_from_visible
+    ctrl.on_channel_range_change = on_channel_range_change
+

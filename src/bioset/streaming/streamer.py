@@ -15,7 +15,7 @@ from vtkmodules.util.numpy_support import numpy_to_vtk
 
 from .lod import ROI, camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
 from .zarr_source import ZarrMultiscaleSource
-from ..scene.volumes import SpacingConfig, color_name_to_rgb, build_histogram_tf
+from ..scene.volumes import SpacingConfig, color_name_to_rgb, build_histogram_tf, build_tf_with_range
 
 from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
 from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
@@ -88,6 +88,8 @@ class VolumeStreamer:
 
         self._active_channels: set[int] = set() 
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {} 
+        
+        self._channel_data_range: Dict[int, Tuple[float, float]] = {}  
 
         if self.cfg.channels:
             self._init_low_res_full()
@@ -100,7 +102,6 @@ class VolumeStreamer:
     def set_zarr_url(self, url: str):
         """Update the zarr URL and reinitialize the source."""
         print(f"[stream] Setting zarr URL: {url}")
-        # Remove existing volumes from the renderer
         for vol in self.volumes.values():
             self.renderer.RemoveVolume(vol)
         max_bytes = int(self.cfg.cache_size_gb * (1024**3))
@@ -205,7 +206,6 @@ class VolumeStreamer:
             timestamp=time.time(),
         )
         
-        # Schedule async load immediately
         self._schedule_load(request)
 
     def activate_channel(self, channel_id: int, color_hex: str):
@@ -223,9 +223,7 @@ class VolumeStreamer:
         is_first_volume = len(self._active_channels) == 0 
         self._active_channels.add(channel_id)
         
-        # Determine the appropriate component based on current camera
         if is_first_volume or self._last_component is None:
-            # First volume - use start_component (low res for fast initial load)
             comp = self.cfg.start_component
             try:
                 z, y, x = self._dims_for_component(comp)
@@ -236,7 +234,6 @@ class VolumeStreamer:
             roi = ROI(0, x, 0, y)
             print(f"[stream] First volume - loading at start_component={comp}")
         else:
-            # Not first volume - match the current view's resolution
             cam = self.renderer.GetActiveCamera()
             dist = camera_distance_to_focal(cam)
             
@@ -247,7 +244,6 @@ class VolumeStreamer:
                 max_component=self.cfg.max_component,
             )
             
-            # Use same ROI as other active channels if available
             existing_state = None
             for ch_id in self._active_channels:
                 if ch_id != channel_id and ch_id in self.state:
@@ -255,11 +251,9 @@ class VolumeStreamer:
                     break
             
             if existing_state and existing_state.component == comp:
-                # Use same ROI as existing channels
                 roi = existing_state.roi
                 print(f"[stream] Matching existing view: comp={comp} roi={roi}")
             else:
-                # Compute ROI based on current view
                 spacing = self._spacing_for_component(comp)
                 zdim, ydim, xdim = self._dims_for_component(comp)
                 bounds = self._volume_bounds_world(comp)
@@ -320,6 +314,9 @@ class VolumeStreamer:
         origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
         img = self._create_vtk_image(np_arr, spacing, origin_xyz)
         
+        r0, r1 = img.GetScalarRange()
+        self._channel_data_range[channel_id] = (r0, r1)
+        
         vol, mapper = self._get_or_create_volume(channel_id)
         mapper.SetInputData(img)
         
@@ -330,9 +327,9 @@ class VolumeStreamer:
         prop = vol.GetProperty()
         prop.SetColor(color_tf)
         prop.SetScalarOpacity(opacity_tf)
-        prop.SetScalarOpacityUnitDistance(
-            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
-        )
+        # prop.SetScalarOpacityUnitDistance(
+        #     max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
+        # )
         
         if not self.renderer.HasViewProp(vol):
             self.renderer.AddVolume(vol)
@@ -380,6 +377,35 @@ class VolumeStreamer:
         color_tf, opacity_tf = build_histogram_tf(sample_image, tint_rgb=tint)
         self._channel_tfs[ch] = (color_tf, opacity_tf)
         return color_tf, opacity_tf
+    
+    def update_channel_intensity_range(self, channel_id: int, range_pct: Tuple[float, float]):
+        """
+        Update the intensity range for a channel.
+        
+        Args:
+            channel_id: Channel to update
+            range_pct: [low%, high%] from slider (0-100)
+        """
+        if channel_id not in self._active_channels:
+            return
+        
+        if channel_id not in self._channel_data_range:
+            print(f"[stream] No data range stored for channel {channel_id}")
+            return
+        
+        data_range = self._channel_data_range[channel_id]
+        tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
+        
+        color_tf, opacity_tf = build_tf_with_range(data_range, range_pct, tint_rgb)
+        self._channel_tfs[channel_id] = (color_tf, opacity_tf)
+        
+        if channel_id in self.volumes:
+            vol = self.volumes[channel_id]
+            prop = vol.GetProperty()
+            prop.SetColor(color_tf)
+            prop.SetScalarOpacity(opacity_tf)
+        
+        self._render()
 
     def _get_or_create_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
         """Get existing VTK volume/mapper or create new ones."""
@@ -576,7 +602,7 @@ class VolumeStreamer:
             roi = request.roi
 
             channel_arrays: Dict[int, np.ndarray] = {}
-            for ch in self._active_channels:  # Changed from self.cfg.channels
+            for ch in self._active_channels: 
                 ch = int(ch)
                 prev = self.state.get(ch)
                 need_update = (prev is None) or (
@@ -639,7 +665,7 @@ class VolumeStreamer:
         Called on EndInteractionEvent - debounced and async.
         This runs on main thread.
         """
-        if not self._active_channels:  # Changed from self.cfg.channels
+        if not self._active_channels:  
             return
 
         self.check_and_apply_loaded_data()
@@ -672,7 +698,7 @@ class VolumeStreamer:
             f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
 
         needs_update = False
-        for ch in self._active_channels:  # Changed from self.cfg.channels
+        for ch in self._active_channels:  
             ch = int(ch)
             prev = self.state.get(ch)
             if prev is None or prev.component != desired_comp or prev.roi != roi:
