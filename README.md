@@ -32,6 +32,11 @@ bioset
 ```
 The default port is ``8080``. To change this, you can supply a port command line argument such as ``bioset --port 1234``.  
 
+By default, console output is suppressed. To enable logging/print statements, use the ``--logs`` flag:
+```bash
+bioset --logs
+```
+
 To run the server remotely, and prevent the browser from opening up, do:
 ```bash
 source .venv\bin\activate

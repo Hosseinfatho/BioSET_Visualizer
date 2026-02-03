@@ -5,8 +5,20 @@ from pathlib import Path
 
 from trame.app import get_server
 
+import argparse
 import asyncio
 import sys
+import os
+
+# Parse --logs argument early before any other imports
+# Default: no logs (quiet mode). Use --logs to enable output.
+_parser = argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--logs", action="store_true", default=False, help="Enable console output")
+_args, _ = _parser.parse_known_args()
+
+if not _args.logs:
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = open(os.devnull, "w")
 
 # Python 3.10+ compatibility
 if sys.version_info >= (3, 10):
@@ -22,6 +34,8 @@ ASSETS_DIR = Path(__file__).parent / "ui" / "assets"
 from .config import default_config
 from .scene import build_scene
 from .ui import build_ui
+
+import contextlib
 
 def main():
     cfg = default_config()
@@ -70,4 +84,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with contextlib.redirect_stdout(None):
+        main()
