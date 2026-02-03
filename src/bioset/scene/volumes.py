@@ -273,3 +273,41 @@ def apply_volume_properties(prop: vtkVolumeProperty, image, *, shade=True):
 
     sx, sy, sz = image.GetSpacing()
     prop.SetScalarOpacityUnitDistance(max(1e-6, 1.0 * min(sx, sy, sz)))
+
+def build_tf_with_range(
+    data_range: Tuple[float, float],
+    intensity_range_pct: Tuple[float, float],  
+    tint_rgb: Tuple[float, float, float],
+) -> Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]:
+    """
+    Build transfer functions with user-specified intensity range.
+    
+    Args:
+        data_range: (min, max) scalar values from the data
+        intensity_range_pct: [low%, high%] from slider (0-100)
+        tint_rgb: Channel color as RGB tuple (0-1 range)
+    """
+    r0, r1 = data_range
+    pct_lo, pct_hi = intensity_range_pct
+    
+    lo = r0 + (pct_lo / 100.0) * (r1 - r0)
+    hi = r0 + (pct_hi / 100.0) * (r1 - r0)
+    
+    if hi <= lo:
+        hi = lo + 1.0
+    
+    opacity = vtkPiecewiseFunction()
+    opacity.AddPoint(r0, 0.0)
+    opacity.AddPoint(lo, 0.0)
+    opacity.AddPoint(lo + 0.25 * (hi - lo), 0.03)
+    opacity.AddPoint(lo + 0.60 * (hi - lo), 0.12)
+    opacity.AddPoint(hi, 0.25)
+    opacity.AddPoint(r1, 0.25)
+    
+    color = vtkColorTransferFunction()
+    color.AddRGBPoint(r0, 0.0, 0.0, 0.0)
+    color.AddRGBPoint(lo, 0.0, 0.0, 0.0)
+    color.AddRGBPoint(hi, *tint_rgb)
+    color.AddRGBPoint(r1, *tint_rgb)
+    
+    return color, opacity

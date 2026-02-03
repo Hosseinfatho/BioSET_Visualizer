@@ -5,6 +5,7 @@ from .volumes import (
     build_histogram_tf,
     make_volume_from_tiff,
     make_volume_from_zarr_s3,
+    build_tf_with_range,
 )
 from .meshes import create_red_cube
 from .heatmap import HeatmapRenderer, HeatmapConfig, hex_to_rgb
