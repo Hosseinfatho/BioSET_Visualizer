@@ -97,24 +97,7 @@ def channels_section(state, ctrl):
                                                             style=("`background-color: ${swatch_color} !important; border: 2px solid ${channel.color === swatch_color ? '#FFD700' : (swatch_color === '#000000' ? '#555' : '#333')}; min-width: 80px; width: 80px; height: 32px; border-radius: 4px;`",),
                                                             click=(ctrl.on_channel_color_change, "[channel.id, swatch_color]"),
                                                         )
-
-
-                                                
-                                                # with vuetify.VCard():
-                                                #     vuetify.VColorPicker(
-                                                #         value=("channel.color",),  
-                                                #         hide_canvas=True,
-                                                #         show_swatches=True,
-                                                #         swatches_max_height=150,
-                                                #         show_mode_switch=True,
-                                                #         swatches=("color_swatches", []),
-                                                #         elevation="20",
-                                                #         outlined=True,
-                                                #         dense=True,
-                                                #         dark=True,
-                                                #         __events=["input"],  
-                                                #         input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
-                                                #     )
+ 
 
                                             with html.Span(
                                                     v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
@@ -125,13 +108,7 @@ def channels_section(state, ctrl):
                                                         click=(ctrl.remove_channel_from_visible, "[channel.id]"),
                                                     )
                                             
-                                            # vuetify.VIcon(
-                                            #     "mdi-minus-circle-outline",
-                                            #     #v_if="!channels.slice(0, state.default_num_channels).map(c => c.id).includes(channel.id)",
-                                            #     class_="remove-icon",
-                                            #     small=True,
-                                            #     click_stop_prevent=(ctrl.remove_channel_from_visible, "[channel.id]"),
-                                            # )
+
                                     html.Span("{{ channel.name }}")
 
                             with vuetify.VListItemContent(v_if="!drawer_mini"):
