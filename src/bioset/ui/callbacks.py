@@ -458,6 +458,65 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    def chatbot_login():
+        """Handle chatbot login/authentication."""
+        print("[callbacks] Chatbot login requested")
+        # TODO: Implement actual authentication with biomni or other service
+        # For now, just set to authenticated for testing
+        state.chatbot_authenticated = True
+        state.chatbot_messages = []
+        print("[callbacks] Chatbot authenticated (mock)")
+    
+    def chatbot_send_message():
+        """Send a message to the chatbot and get response."""
+        if not state.chatbot_input or not state.chatbot_input.strip():
+            return
+        
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot send message - not authenticated")
+            return
+        
+        user_message = state.chatbot_input.strip()
+        print(f"[callbacks] Chatbot user message: {user_message}")
+        
+        # Add user message to chat
+        state.chatbot_messages = state.chatbot_messages + [
+            {"role": "user", "content": user_message}
+        ]
+        
+        # Clear input
+        state.chatbot_input = ""
+        
+        # Set loading state
+        state.chatbot_loading = True
+        
+        try:
+            # TODO: Implement actual LLM API call
+            # For now, mock response
+            import time
+            time.sleep(1)  # Simulate API delay
+            
+            response_text = f"Mock response to: '{user_message}'. LLM integration coming soon!"
+            
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "assistant", "content": response_text}
+            ]
+            
+            print(f"[callbacks] Chatbot response: {response_text}")
+            
+        except Exception as e:
+            print(f"[callbacks] Chatbot error: {e}")
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "error", "content": f"Error: {str(e)}"}
+            ]
+        finally:
+            state.chatbot_loading = False
+    
+    def chatbot_clear():
+        """Clear the chatbot conversation history."""
+        print("[callbacks] Clearing chatbot messages")
+        state.chatbot_messages = []
+        state.chatbot_input = ""
 
     
     # Bind to controller
@@ -476,4 +535,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.add_channel_to_visible = add_channel_to_visible
     ctrl.remove_channel_from_visible = remove_channel_from_visible
     ctrl.on_channel_range_change = on_channel_range_change
+    ctrl.chatbot_login = chatbot_login
+    ctrl.chatbot_send_message = chatbot_send_message
+    ctrl.chatbot_clear = chatbot_clear
 

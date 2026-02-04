@@ -18,7 +18,7 @@ def viewer(ctrl, render_window):
         ctrl.view_update = view.update
         
         with vuetify.VBtn(
-            v_if="analysis_loaded && !right_drawer_open",
+            #v_if="analysis_loaded && !right_drawer_open",
             fab=True,
             large=True,
             dark=True,

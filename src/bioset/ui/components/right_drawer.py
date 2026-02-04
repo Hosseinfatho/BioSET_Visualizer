@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from trame.widgets import html, vuetify
-
+from .chatbot import chatbot_section
 
 def right_drawer(state, ctrl):
         
     with vuetify.VNavigationDrawer(
         v_model=("right_drawer_open",),
-        v_if="analysis_loaded",
+        #v_if="analysis_loaded",
         app=True,
         right=True,
         width=350,
@@ -126,3 +126,6 @@ def right_drawer(state, ctrl):
         with html.Div(classes="px-4 py-3"):
             html.Div("Marker Combinations", classes="text-overline mb-3 text-center", style="color: white;")
             html.Div(id="upset-container", style="width: 100%; height: 300px;")
+            
+        # Chatbot section
+        chatbot_section(state, ctrl)
