@@ -4,11 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from trame.app import get_server
+from dotenv import load_dotenv
 
 import argparse
 import asyncio
 import sys
 import os
+
+load_dotenv()
 
 # Parse --logs argument early before any other imports
 # Default: no logs (quiet mode). Use --logs to enable output.

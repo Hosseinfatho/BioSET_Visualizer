@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .state import get_channel_color
+from bioset.llm import BiomniClient
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -458,17 +459,51 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    _refs["biomni_client"] = None
+    
+    def _get_biomni_client():
+        """Get or create Biomni client."""
+        if _refs["biomni_client"] is None:
+            _refs["biomni_client"] = BiomniClient()
+        return _refs["biomni_client"]
+    
     def chatbot_login():
-        """Handle chatbot login/authentication."""
+        """Handle chatbot login/authentication with Biomni."""
         print("[callbacks] Chatbot login requested")
-        # TODO: Implement actual authentication with biomni or other service
-        # For now, just set to authenticated for testing
-        state.chatbot_authenticated = True
-        state.chatbot_messages = []
-        print("[callbacks] Chatbot authenticated (mock)")
+        state.chatbot_loading = True
+        
+        try:
+            client = _get_biomni_client()
+            
+            # Attempt login (credentials from environment variables)
+            client.login()
+            
+            state.chatbot_authenticated = True
+            state.chatbot_messages = []
+            print("[callbacks] Chatbot authenticated successfully")
+            
+        except ValueError as e:
+            # Missing credentials
+            error_msg = str(e)
+            print(f"[callbacks] Login error: {error_msg}")
+            state.chatbot_authenticated = False
+            state.chatbot_messages = [
+                {"role": "error", "content": f"Login failed: {error_msg}"}
+            ]
+            
+        except Exception as e:
+            # API error
+            error_msg = f"Authentication failed: {str(e)}"
+            print(f"[callbacks] Login error: {error_msg}")
+            state.chatbot_authenticated = False
+            state.chatbot_messages = [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
     
     def chatbot_send_message():
-        """Send a message to the chatbot and get response."""
+        """Send a message to the Biomni chatbot and get response."""
         if not state.chatbot_input or not state.chatbot_input.strip():
             return
         
@@ -491,23 +526,58 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.chatbot_loading = True
         
         try:
-            # TODO: Implement actual LLM API call
-            # For now, mock response
-            import time
-            time.sleep(1)  # Simulate API delay
+            client = _get_biomni_client()
             
-            response_text = f"Mock response to: '{user_message}'. LLM integration coming soon!"
+            # Gather current visualization state
+            state_info = {
+                "data_loaded": state.data_loaded,
+                "total_channels": len(state.channels) if state.channels else 0,
+            }
+            
+            # ALL available channels (for LLM to know what exists in the dataset)
+            if state.channels:
+                all_channel_names = [ch["name"] for ch in state.channels]
+                state_info["available_channels"] = all_channel_names
+            
+            # Active channels with names and colors
+            if state.active_channels:
+                active_channel_names = []
+                channel_colors = {}
+                
+                for ch_id in state.active_channels:
+                    for ch in state.channels:
+                        if ch["id"] == ch_id:
+                            active_channel_names.append(ch["name"])
+                            channel_colors[ch["name"]] = ch.get("color", "#FFFFFF")
+                            break
+                
+                state_info["active_channels"] = active_channel_names
+                state_info["channel_colors"] = channel_colors
+            
+            # Analysis settings
+            if state.analysis_loaded:
+                state_info["dilation"] = state.current_dilation
+                state_info["hierarchy_level"] = state.current_hierarchy_level
+                state_info["heatmap_tile_count"] = state.heatmap_tile_count
+                
+                # Also include available analysis channels if different from main channels
+                if state.analysis_channels:
+                    state_info["analysis_channels"] = state.analysis_channels
+                
+            # Generate response from Biomni with state context
+            response_text = client.generate_response(user_message, state_info=state_info)
             
             state.chatbot_messages = state.chatbot_messages + [
                 {"role": "assistant", "content": response_text}
             ]
             
-            print(f"[callbacks] Chatbot response: {response_text}")
+            print(f"[callbacks] Chatbot response received ({len(response_text)} chars)")
             
         except Exception as e:
-            print(f"[callbacks] Chatbot error: {e}")
+            error_msg = f"Error: {str(e)}"
+            print(f"[callbacks] Chatbot error: {error_msg}")
             state.chatbot_messages = state.chatbot_messages + [
-                {"role": "error", "content": f"Error: {str(e)}"}
+                {"role": "error", "content": error_msg}
             ]
         finally:
             state.chatbot_loading = False
