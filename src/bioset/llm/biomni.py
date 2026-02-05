@@ -69,7 +69,8 @@ class BiomniClient:
         prompt: str, 
         model: str = "Claude-4-Sonnet",
         add_context: bool = True,
-        state_info: dict = None
+        state_info: dict = None,
+        screenshot: str = None
     ) -> str:
         """
         Generate a response from Biomni LLM.
@@ -79,6 +80,7 @@ class BiomniClient:
             model: Model to use (default: Claude-4-Sonnet)
             add_context: Whether to add challenge context to prompt
             state_info: Current visualization state (channels, colors, settings, etc.)
+            screenshot: Base64-encoded screenshot of current view
             
         Returns:
             LLM response text
@@ -95,19 +97,59 @@ class BiomniClient:
             prompt = self._add_challenge_context(prompt)
             if state_info:
                 prompt += self._format_visualization_state(state_info)
+                
+            # Add note about image if screenshot is provided
+            if screenshot:
+                prompt += "\n\nI'm also sharing a screenshot of the current 3D visualization for your reference."
         
         try:
-            print(f"[biomni] Sending prompt to {model} (with state: {bool(state_info)})")
+            print(f"[biomni] Sending prompt to {model} (state: {bool(state_info)}, image: {bool(screenshot)})")
+            
+            # Prepare input value
+            input_value = {"text": prompt}
+            
+            # Add screenshot if provided
+            if screenshot:
+                # Biomni expects images in a specific format
+                # Convert base64 to file-like object or handle_file format
+                from gradio_client import handle_file
+                import tempfile
+                import base64
+                
+                try:
+                    # Decode base64 to bytes
+                    image_bytes = base64.b64decode(screenshot)
+                    
+                    # Write to temporary file (Gradio client needs file path)
+                    with tempfile.NamedTemporaryFile(mode='wb', suffix='.png', delete=False) as tmp_file:
+                        tmp_file.write(image_bytes)
+                        tmp_path = tmp_file.name
+                    
+                    # Add file to input
+                    input_value["files"] = [handle_file(tmp_path)]
+                    print(f"[biomni] Screenshot added to request ({len(image_bytes)} bytes)")
+                    
+                except Exception as img_error:
+                    print(f"[biomni] Failed to process screenshot: {img_error}")
+                    # Continue without image if it fails
             
             # Call /process_input API with proper parameters
             result = self.client.predict(
-                input_value={"text": prompt},
-                inner_history=[],  # Executor chatbot history
-                main_history=[],   # Co-pilot chatbot history
+                input_value=input_value,
+                inner_history=[],
+                main_history=[],
                 model=model,
-                direct_mode=True,  # Direct response mode for simpler output
+                direct_mode=True,
                 api_name="/process_input"
             )
+            
+            # Clean up temporary file if created
+            if screenshot and 'tmp_path' in locals():
+                try:
+                    import os
+                    os.unlink(tmp_path)
+                except:
+                    pass
             
             # result is tuple of 5 elements:
             # [0] inner_history (executor chatbot)

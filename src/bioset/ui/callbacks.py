@@ -534,7 +534,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 "total_channels": len(state.channels) if state.channels else 0,
             }
             
-            # ALL available channels (for LLM to know what exists in the dataset)
+            # ALL available channels
             if state.channels:
                 all_channel_names = [ch["name"] for ch in state.channels]
                 state_info["available_channels"] = all_channel_names
@@ -560,12 +560,18 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 state_info["hierarchy_level"] = state.current_hierarchy_level
                 state_info["heatmap_tile_count"] = state.heatmap_tile_count
                 
-                # Also include available analysis channels if different from main channels
                 if state.analysis_channels:
                     state_info["analysis_channels"] = state.analysis_channels
-                
-            # Generate response from Biomni with state context
-            response_text = client.generate_response(user_message, state_info=state_info)
+            
+            # Capture screenshot of current view
+            screenshot_base64 = capture_screenshot()
+            
+            # Generate response from Biomni with state context and screenshot
+            response_text = client.generate_response(
+                user_message, 
+                state_info=state_info,
+                screenshot=screenshot_base64  # Pass screenshot
+            )
             
             state.chatbot_messages = state.chatbot_messages + [
                 {"role": "assistant", "content": response_text}
@@ -587,8 +593,62 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print("[callbacks] Clearing chatbot messages")
         state.chatbot_messages = []
         state.chatbot_input = ""
+        
+    def capture_screenshot():
+        """Capture current VTK view as base64-encoded PNG."""
+        try:
+            import vtk
+            import base64
+            
+            streamer = _refs.get("streamer")
+            if not streamer or not hasattr(streamer, 'renderer'):
+                print("[callbacks] No renderer available for screenshot")
+                return None
+            
+            # Get render window
+            render_window = streamer.renderer.GetRenderWindow()
+            render_window.Render()
+            
+            # Create window to image filter
+            window_to_image = vtk.vtkWindowToImageFilter()
+            window_to_image.SetInput(render_window)
+            window_to_image.SetScale(1)
+            window_to_image.SetInputBufferTypeToRGB()
+            window_to_image.ReadFrontBufferOff()
+            window_to_image.Update()
+            
+            # Write to PNG in memory
+            writer = vtk.vtkPNGWriter()
+            writer.SetWriteToMemory(True)
+            writer.SetInputConnection(window_to_image.GetOutputPort())
+            writer.Write()
+            
+            # Get the vtkUnsignedCharArray result
+            result = writer.GetResult()
+            
+            if result and result.GetNumberOfTuples() > 0:
+                # Convert VTK array to bytes using numpy
+                from vtk.util.numpy_support import vtk_to_numpy
+                
+                # Convert to numpy array, then to bytes
+                numpy_array = vtk_to_numpy(result)
+                png_bytes = numpy_array.tobytes()
+                
+                # Encode to base64
+                base64_image = base64.b64encode(png_bytes).decode('utf-8')
+                
+                print(f"[callbacks] Screenshot captured ({len(png_bytes)} bytes)")
+                return base64_image
+            else:
+                print("[callbacks] Failed to capture screenshot - no data in result")
+                return None
+                
+        except Exception as e:
+            print(f"[callbacks] Screenshot capture failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
-    
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
