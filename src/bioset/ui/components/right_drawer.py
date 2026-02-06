@@ -126,3 +126,10 @@ def right_drawer(state, ctrl):
         with html.Div(classes="px-4 py-3"):
             html.Div("Marker Combinations", classes="text-overline mb-3 text-center", style="color: white;")
             html.Div(id="upset-container", style="width: 100%; height: 300px;")
+        
+        vuetify.VDivider()
+        
+        # Bar chart container
+        with html.Div(classes="px-4 py-3"):
+            html.Div("Channel Frequencies", classes="text-overline mb-3 text-center", style="color: white;")
+            html.Div(id="bar-container", style="width: 100%; height: 300px;")

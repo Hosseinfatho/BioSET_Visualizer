@@ -208,6 +208,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
                   f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
             
             update_heatmap()
+            update_upset_data()
+            update_bar_data()
             
             if _refs["view"]:
                 _refs["view"].update()
@@ -316,6 +318,73 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         if _refs["view"]:
             _refs["view"].update()
+    
+    def update_upset_data():
+        """Update UpSet plot data based on current analysis settings."""
+        loader = _refs.get("analysis_loader")
+        
+        if not loader or not loader.is_loaded:
+            print("[callbacks] Cannot update UpSet data - loader not ready")
+            state.upset_data_reduced = []
+            state.upset_data = []
+            return
+        
+        print(f"[callbacks] Updating UpSet data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
+        
+        # Get all combinations from analysis (large limit)
+        combinations = loader.get_top_combinations(
+            dilation=state.current_dilation,
+            hierarchy_level=state.current_hierarchy_level,
+            limit=1000,  # Get all combinations
+            min_channels=2,
+        )
+
+        # Transform to format expected by UpSetJS: {channels: [...], count: int}
+        all_data = [
+            {"channels": combo.channels, "count": combo.total_count}
+            for combo in combinations
+        ]
+        
+        # Store all combinations
+        state.upset_data = all_data
+        
+        # Store only top for UpSet plot
+        state.upset_data_reduced = all_data[:7]
+        
+        print(f"[callbacks] UpSet data updated: {len(state.upset_data_reduced)} shown, {len(all_data)} total")
+    
+    def update_bar_data():
+        """Update bar chart data based on current analysis settings."""
+        loader = _refs.get("analysis_loader")
+        
+        if not loader or not loader.is_loaded:
+            print("[callbacks] Cannot update bar data - loader not ready")
+            state.bar_data_reduced = []
+            state.bar_data = []
+            return
+        
+        print(f"[callbacks] Updating bar data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
+        
+        # Get all combinations (including single-channel)
+        combinations = loader.get_top_combinations(
+            dilation=state.current_dilation,
+            hierarchy_level=state.current_hierarchy_level,
+            limit=1000,
+            min_channels=1,
+        )
+        
+        # Compute per-channel frequencies
+        from collections import Counter
+        channel_counter = Counter()
+        for combo in combinations:
+            for channel in combo.channels:
+                channel_counter[channel] += combo.total_count
+        
+        all_bar_data = channel_counter.most_common()
+        state.bar_data = all_bar_data
+        state.bar_data_reduced = all_bar_data[:10]
+        
+        print(f"[callbacks] Bar data updated: {len(state.bar_data_reduced)} shown, {len(all_bar_data)} total")
     
     def reset_camera():
         """Reset the VTK camera to default view."""
@@ -476,4 +545,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.add_channel_to_visible = add_channel_to_visible
     ctrl.remove_channel_from_visible = remove_channel_from_visible
     ctrl.on_channel_range_change = on_channel_range_change
+    ctrl.update_upset_data = update_upset_data
+    ctrl.update_bar_data = update_bar_data
 

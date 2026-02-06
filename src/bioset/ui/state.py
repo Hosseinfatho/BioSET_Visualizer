@@ -24,7 +24,10 @@ def init_state(state):
     # External scripts
     if not hasattr(state, 'trame__scripts') or state.trame__scripts is None:
         state.trame__scripts = []
-    state.trame__scripts = list(state.trame__scripts) + ["assets/upsetjs.umd.production.min.js"]
+    state.trame__scripts = list(state.trame__scripts) + [
+        "https://cdn.jsdelivr.net/npm/d3@7",
+        "assets/upsetjs.umd.production.min.js",
+    ]
     
     # Data sources
     state.setdefault("zarr_url", "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0")
@@ -50,6 +53,13 @@ def init_state(state):
     
     # UpSet plot
     state.setdefault("upset_click", None)
+    state.setdefault("upset_data_reduced", [])  # Top combinations for UpSet plot
+    state.setdefault("upset_data", [])  # All combinations -> we'll probably just have one state later and filter in the plot
+    state.setdefault("upset_selection", None)  # Currently selected set/combination
+    
+    # Bar chart - per-channel frequencies
+    state.setdefault("bar_data_reduced", [])  # Top 10 channels for bar chart
+    state.setdefault("bar_data", [])  # All channels [[channel_name, count], ...]
     
     # Channels - all channels
     # {id: int, name: str, color: str}
@@ -114,9 +124,17 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Dilation changed: {current_dilation}")
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data() # Necessary?
+        if hasattr(ctrl, 'update_bar_data'):
+            ctrl.update_bar_data() # Necessary?
 
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data() # Necessary?
+        if hasattr(ctrl, 'update_bar_data'):
+            ctrl.update_bar_data() # Necessary?
