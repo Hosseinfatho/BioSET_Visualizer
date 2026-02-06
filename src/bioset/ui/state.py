@@ -24,7 +24,7 @@ def init_state(state):
     # External scripts
     if not hasattr(state, 'trame__scripts') or state.trame__scripts is None:
         state.trame__scripts = []
-    state.trame__scripts = list(state.trame__scripts) + ["https://unpkg.com/@upsetjs/bundle"]
+    state.trame__scripts = list(state.trame__scripts) + ["assets/upsetjs.umd.production.min.js"]
     
     # Data sources
     state.setdefault("zarr_url", "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0")
