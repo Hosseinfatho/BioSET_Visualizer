@@ -53,13 +53,17 @@ def init_state(state):
     
     # UpSet plot
     state.setdefault("upset_click", None)
-    state.setdefault("upset_data_reduced", [])  # Top combinations for UpSet plot
-    state.setdefault("upset_data", [])  # All combinations -> we'll probably just have one state later and filter in the plot
+    state.setdefault("upset_data", [])  # All combinations (global)
+    state.setdefault("upset_data_local", [])  # Combinations filtered by active_channels
     state.setdefault("upset_selection", None)  # Currently selected set/combination
     
     # Bar chart - per-channel frequencies
-    state.setdefault("bar_data_reduced", [])  # Top 10 channels for bar chart
-    state.setdefault("bar_data", [])  # All channels [[channel_name, count], ...]
+    state.setdefault("bar_data", [])  # All channels [[channel_name, count], ...] (global)
+    state.setdefault("bar_data_local", [])  # Channels filtered to active_channels only
+    
+    # View mode toggles
+    state.setdefault("upset_view_mode", "global")  # "global" or "local"
+    state.setdefault("bar_view_mode", "global")  # "global" or "local"
     
     # Channels - all channels
     # {id: int, name: str, color: str}
@@ -118,6 +122,10 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_active_channels(active_channels)
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_upset_data_local'):
+            ctrl.update_upset_data_local()
+        if hasattr(ctrl, 'update_bar_data_local'):
+            ctrl.update_bar_data_local()
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):
@@ -125,9 +133,9 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
         if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data() # Necessary?
+            ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
-            ctrl.update_bar_data() # Necessary?
+            ctrl.update_bar_data()
 
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
@@ -135,6 +143,17 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
         if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data() # Necessary?
+            ctrl.update_upset_data() 
         if hasattr(ctrl, 'update_bar_data'):
-            ctrl.update_bar_data() # Necessary?
+            ctrl.update_bar_data()
+
+    @state.change("upset_data")
+    def on_upset_data_change(upset_data, **kwargs):
+        if hasattr(ctrl, 'update_upset_data_local'):
+            ctrl.update_upset_data_local()
+
+    @state.change("bar_data")
+    def on_bar_data_change(bar_data, **kwargs):
+        if hasattr(ctrl, 'update_bar_data_local'):
+            ctrl.update_bar_data_local()
+        
