@@ -1,45 +1,74 @@
-(function initUpSet() {
-  const container = document.getElementById('upset-container');
-  if (!container) {
-    setTimeout(initUpSet, 100);
-    return;
-  }
 
-  if (!window.UpSetJS) {
-    setTimeout(initUpSet, 200);
-    return;
-  }
+// UpSet Plot Component
+Vue.component('upset-plot', {
+  props: ['data', 'dataLocal', 'viewMode'],
+  template: '<div ref="container"></div>',
+  watch: {
+    data: 'render',
+    dataLocal: 'render',
+    viewMode: 'render'
+  },
+  mounted() {
+    this.render();
+  },
+  methods: {
+    render() {
+      if (!this.$refs.container || !window.UpSetJS) return;
 
-  if (!window.trame || !window.trame.state) {
-    setTimeout(initUpSet, 200);
-    return;
-  }
+      // Determine which data to use
+      const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
+      // Safety slice
+      const renderData = sourceData.slice(0, 7);
 
-  // Sample data - will be replaced with real data later
-  const elems = [
-    { name: 'E1', sets: ['Ch1'] },
-    { name: 'E2', sets: ['Ch1', 'Ch2'] },
-    { name: 'E3', sets: ['Ch1', 'Ch2'] },
-    { name: 'E4', sets: ['Ch1', 'Ch2', 'Ch3'] },
-  ];
+      // Transform data as expected by UpSetJS
+      const mappedData = renderData.map(item => ({
+        sets: item.channels,
+        cardinality: item.count
+      }));
 
-  const { sets, combinations } = UpSetJS.extractCombinations(elems);
+      const { sets, combinations } = UpSetJS.extractFromExpression(mappedData);
 
-  container.innerHTML = "";
-  UpSetJS.render(container, {
-    sets,
-    combinations,
-    width: 330,
-    height: 280,
-    theme: 'dark',
-    onClick: (set) => {
-      if (!set) return;
-      
-      window.trame.state.set("upset_click", {
-        name: set.name,
-        size: set.cardinality,
-        ts: Date.now(),
+      // Render
+      this.$refs.container.innerHTML = "";
+      UpSetJS.render(this.$refs.container, {
+        sets,
+        combinations,
+        width: 330,
+        height: 340,
+        theme: 'dark',
+        color: '#FFFFFF',
+        textColor: '#FFFFFF',
+        selectionColor: '#FFFFFF',
+        notMemberColor: '#4A4A4A',
+        fontSizes: {
+          axisTick: '12px',
+          setLabel: '12px',
+          setSize: '12px',
+          intersectionLabel: '12px',
+          barLabel: '0px',
+          chartLabel: '0px',
+        },
+        widthRatios: [0.18, 0.35],
+        heightRatios: [0.5],
+        exportButtons: false,
+        onClick: (clickedItem) => {
+          if (!clickedItem) {
+            this.$emit('click', null);
+            return;
+          }
+
+          const setNames = clickedItem.sets
+            ? Array.from(clickedItem.sets).map(s => s.name)
+            : [clickedItem.name];
+
+          this.$emit('click', {
+            name: clickedItem.name,
+            sets: setNames,
+            size: clickedItem.cardinality,
+            ts: Date.now()
+          });
+        }
       });
-    },
-  });
-})();
+    }
+  }
+});

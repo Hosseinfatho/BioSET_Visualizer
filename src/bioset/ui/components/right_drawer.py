@@ -124,5 +124,54 @@ def right_drawer(state, ctrl):
         
         # UpSet plot container
         with html.Div(classes="px-4 py-3"):
-            html.Div("Marker Combinations", classes="text-overline mb-3 text-center", style="color: white;")
-            html.Div(id="upset-container", style="width: 100%; height: 300px;")
+            html.Div("Marker Combinations", classes="text-overline mb-2 text-center", style="color: white;")
+ 
+            with vuetify.VBtnToggle(
+                v_model=("upset_view_mode", "global"),
+                mandatory=True,
+                dense=True,
+                classes="mb-2 d-flex justify-center",
+                style="background: transparent;",
+            ):
+                vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
+                vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
+            
+            # Vue component for UpSet plot
+            vuetify.Template(
+                """
+                <upset-plot
+                    :data="upset_data"
+                    :data-local="upset_data_local"
+                    :view-mode="upset_view_mode"
+                    @click="trigger('upset_click', $event)"
+                />
+                """
+            )
+        
+        vuetify.VDivider()
+        
+        # Bar chart container
+        with html.Div(classes="px-4 py-3"):
+            html.Div("Channel Frequencies", classes="text-overline mb-2 text-center", style="color: white;")
+  
+            with vuetify.VBtnToggle(
+                v_model=("bar_view_mode", "global"),
+                mandatory=True,
+                dense=True,
+                classes="mb-2 d-flex justify-center",
+                style="background: transparent;",
+            ):
+                vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
+                vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
+            
+            # Vue component for Bar chart
+            vuetify.Template(
+                """
+                <bar-plot
+                    :data="bar_data"
+                    :data-local="bar_data_local"
+                    :view-mode="bar_view_mode"
+                    @click="trigger('bar_click', $event)"
+                />
+                """
+            )

@@ -9,3 +9,4 @@ def _read_js(filename: str) -> str:
 # regsiter js files here
 def register_scripts(client):
     client.Script(_read_js("upset.js"))
+    client.Script(_read_js("bar.js"))
