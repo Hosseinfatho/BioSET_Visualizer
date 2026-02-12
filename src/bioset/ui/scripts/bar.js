@@ -1,12 +1,16 @@
 
 // Bar Plot Component
 Vue.component('bar-plot', {
-    props: ['data', 'dataLocal', 'viewMode'],
+    props: ['data', 'dataLocal', 'channelData', 'viewMode'],
     template: '<div ref="container"></div>',
     watch: {
         data: 'render',
         dataLocal: 'render',
-        viewMode: 'render'
+        viewMode: 'render',
+        channelData: {
+            handler: 'render',
+            deep: true
+        }
     },
     mounted() {
         this.render();
@@ -63,7 +67,15 @@ Vue.component('bar-plot', {
                 .attr("y", d => y(d.count))
                 .attr("height", d => y(0) - y(d.count))
                 .attr("width", x.bandwidth())
-                .attr("fill", "#FFFFFF")
+                .attr("fill", d => {
+                    if (this.channelData) {
+                        const channel = this.channelData.find(c => c.name === d.name);
+                        if (channel) {
+                            return channel.color
+                        };
+                    }
+                    return "#FFFFFF";
+                })
                 .attr("cursor", "pointer")
                 .on("click", (event, d) => {
                     this.$emit('click', {
