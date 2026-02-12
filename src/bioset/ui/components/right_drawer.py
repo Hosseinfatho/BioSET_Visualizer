@@ -7,7 +7,7 @@ def right_drawer(state, ctrl):
         
     with vuetify.VNavigationDrawer(
         v_model=("right_drawer_open",),
-        #v_if="analysis_loaded",
+        v_if="analysis_loaded",
         app=True,
         right=True,
         width=350,
@@ -141,7 +141,8 @@ def right_drawer(state, ctrl):
                 """
                 <upset-plot
                     :data="upset_data"
-                    :data-local="upset_data_local"
+                    :dataLocal="upset_data_local"
+                    :channelData="channels"
                     :view-mode="upset_view_mode"
                     @click="trigger('upset_click', $event)"
                 />
@@ -169,7 +170,8 @@ def right_drawer(state, ctrl):
                 """
                 <bar-plot
                     :data="bar_data"
-                    :data-local="bar_data_local"
+                    :dataLocal="bar_data_local"
+                    :channelData="channels"
                     :view-mode="bar_view_mode"
                     @click="trigger('bar_click', $event)"
                 />

@@ -1,12 +1,16 @@
 
 // UpSet Plot Component
 Vue.component('upset-plot', {
-  props: ['data', 'dataLocal', 'viewMode'],
+  props: ['data', 'dataLocal', 'channelData', 'viewMode'],
   template: '<div ref="container"></div>',
   watch: {
     data: 'render',
     dataLocal: 'render',
-    viewMode: 'render'
+    viewMode: 'render',
+    channelData: {
+      handler: 'render',
+      deep: true
+    }
   },
   mounted() {
     this.render();
@@ -27,6 +31,16 @@ Vue.component('upset-plot', {
       }));
 
       const { sets, combinations } = UpSetJS.extractFromExpression(mappedData);
+
+      if (this.channelData && this.channelData.length > 0) {
+        sets.forEach(set => {
+          const channel = this.channelData.find(c => c.name === set.name);
+          if (!channel) {
+            return;
+          }
+          set.color = channel.color;
+        });
+      }
 
       // Render
       this.$refs.container.innerHTML = "";
