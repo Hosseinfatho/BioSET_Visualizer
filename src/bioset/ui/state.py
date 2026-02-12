@@ -96,6 +96,13 @@ def init_state(state):
     state.setdefault("heatmap_visible", True)
     state.setdefault("heatmap_color", "#FFFFFF")  # White
     state.setdefault("heatmap_tile_count", 0)
+    
+    # Chatbot state
+    state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
+    state.setdefault("chatbot_authenticated", False)
+    state.setdefault("chatbot_messages", [])  # List of {role: str, content: str}
+    state.setdefault("chatbot_input", "")
+    state.setdefault("chatbot_loading", False)
 
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""

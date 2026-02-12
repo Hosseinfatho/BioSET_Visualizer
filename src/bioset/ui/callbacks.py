@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .state import get_channel_color
+from bioset.llm import BiomniClient
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -583,8 +584,196 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
-
+    _refs["biomni_client"] = None
     
+    def _get_biomni_client():
+        """Get or create Biomni client."""
+        if _refs["biomni_client"] is None:
+            _refs["biomni_client"] = BiomniClient()
+        return _refs["biomni_client"]
+    
+    def chatbot_login():
+        """Handle chatbot login/authentication with Biomni."""
+        print("[callbacks] Chatbot login requested")
+        state.chatbot_loading = True
+        
+        try:
+            client = _get_biomni_client()
+            
+            # Attempt login (credentials from environment variables)
+            client.login()
+            
+            state.chatbot_authenticated = True
+            state.chatbot_messages = []
+            print("[callbacks] Chatbot authenticated successfully")
+            
+        except ValueError as e:
+            # Missing credentials
+            error_msg = str(e)
+            print(f"[callbacks] Login error: {error_msg}")
+            state.chatbot_authenticated = False
+            state.chatbot_messages = [
+                {"role": "error", "content": f"Login failed: {error_msg}"}
+            ]
+            
+        except Exception as e:
+            # API error
+            error_msg = f"Authentication failed: {str(e)}"
+            print(f"[callbacks] Login error: {error_msg}")
+            state.chatbot_authenticated = False
+            state.chatbot_messages = [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+    
+    def chatbot_send_message():
+        """Send a message to the Biomni chatbot and get response."""
+        if not state.chatbot_input or not state.chatbot_input.strip():
+            return
+        
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot send message - not authenticated")
+            return
+        
+        user_message = state.chatbot_input.strip()
+        print(f"[callbacks] Chatbot user message: {user_message}")
+        
+        # Add user message to chat
+        state.chatbot_messages = state.chatbot_messages + [
+            {"role": "user", "content": user_message}
+        ]
+        
+        # Clear input
+        state.chatbot_input = ""
+        
+        # Set loading state
+        state.chatbot_loading = True
+        
+        try:
+            client = _get_biomni_client()
+            
+            # Gather current visualization state
+            state_info = {
+                "data_loaded": state.data_loaded,
+                "total_channels": len(state.channels) if state.channels else 0,
+            }
+            
+            # ALL available channels
+            if state.channels:
+                all_channel_names = [ch["name"] for ch in state.channels]
+                state_info["available_channels"] = all_channel_names
+            
+            # Active channels with names and colors
+            if state.active_channels:
+                active_channel_names = []
+                channel_colors = {}
+                
+                for ch_id in state.active_channels:
+                    for ch in state.channels:
+                        if ch["id"] == ch_id:
+                            active_channel_names.append(ch["name"])
+                            channel_colors[ch["name"]] = ch.get("color", "#FFFFFF")
+                            break
+                
+                state_info["active_channels"] = active_channel_names
+                state_info["channel_colors"] = channel_colors
+            
+            # Analysis settings
+            if state.analysis_loaded:
+                state_info["dilation"] = state.current_dilation
+                state_info["hierarchy_level"] = state.current_hierarchy_level
+                state_info["heatmap_tile_count"] = state.heatmap_tile_count
+                
+                if state.analysis_channels:
+                    state_info["analysis_channels"] = state.analysis_channels
+            
+            # Capture screenshot of current view
+            screenshot_base64 = capture_screenshot()
+            
+            # Generate response from Biomni with state context and screenshot
+            response_text = client.generate_response(
+                user_message, 
+                state_info=state_info,
+                screenshot=screenshot_base64  # Pass screenshot
+            )
+            
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "assistant", "content": response_text}
+            ]
+            
+            print(f"[callbacks] Chatbot response received ({len(response_text)} chars)")
+            
+        except Exception as e:
+            error_msg = f"Error: {str(e)}"
+            print(f"[callbacks] Chatbot error: {error_msg}")
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+    
+    def chatbot_clear():
+        """Clear the chatbot conversation history."""
+        print("[callbacks] Clearing chatbot messages")
+        state.chatbot_messages = []
+        state.chatbot_input = ""
+        
+    def capture_screenshot():
+        """Capture current VTK view as base64-encoded PNG."""
+        try:
+            import vtk
+            import base64
+            
+            streamer = _refs.get("streamer")
+            if not streamer or not hasattr(streamer, 'renderer'):
+                print("[callbacks] No renderer available for screenshot")
+                return None
+            
+            # Get render window
+            render_window = streamer.renderer.GetRenderWindow()
+            render_window.Render()
+            
+            # Create window to image filter
+            window_to_image = vtk.vtkWindowToImageFilter()
+            window_to_image.SetInput(render_window)
+            window_to_image.SetScale(1)
+            window_to_image.SetInputBufferTypeToRGB()
+            window_to_image.ReadFrontBufferOff()
+            window_to_image.Update()
+            
+            # Write to PNG in memory
+            writer = vtk.vtkPNGWriter()
+            writer.SetWriteToMemory(True)
+            writer.SetInputConnection(window_to_image.GetOutputPort())
+            writer.Write()
+            
+            # Get the vtkUnsignedCharArray result
+            result = writer.GetResult()
+            
+            if result and result.GetNumberOfTuples() > 0:
+                # Convert VTK array to bytes using numpy
+                from vtk.util.numpy_support import vtk_to_numpy
+                
+                # Convert to numpy array, then to bytes
+                numpy_array = vtk_to_numpy(result)
+                png_bytes = numpy_array.tobytes()
+                
+                # Encode to base64
+                base64_image = base64.b64encode(png_bytes).decode('utf-8')
+                
+                print(f"[callbacks] Screenshot captured ({len(png_bytes)} bytes)")
+                return base64_image
+            else:
+                print("[callbacks] Failed to capture screenshot - no data in result")
+                return None
+                
+        except Exception as e:
+            print(f"[callbacks] Screenshot capture failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
@@ -605,4 +794,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_upset_data_local = update_upset_data_local
     ctrl.update_bar_data = update_bar_data
     ctrl.update_bar_data_local = update_bar_data_local
+    ctrl.chatbot_login = chatbot_login
+    ctrl.chatbot_send_message = chatbot_send_message
+    ctrl.chatbot_clear = chatbot_clear
 
