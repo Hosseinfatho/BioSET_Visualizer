@@ -96,6 +96,18 @@ def init_state(state):
     state.setdefault("heatmap_visible", True)
     state.setdefault("heatmap_color", "#FFFFFF")  # White
     state.setdefault("heatmap_tile_count", 0)
+
+    # UpSet Plot filtering
+    state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
+    state.setdefault("upset_search", "")
+    state.setdefault("upset_filtered_channels", []) # Channels shown in filter list
+    state.setdefault("upset_filter_dialog", False)
+
+    # Bar Plot filtering
+    state.setdefault("bar_selected_channels", [])  # Channels to include in Bar
+    state.setdefault("bar_search", "")
+    state.setdefault("bar_filtered_channels", []) # Channels shown in filter list
+    state.setdefault("bar_filter_dialog", False)
     
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
@@ -122,6 +134,7 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_background_color'):
             ctrl.update_background_color(bg_color)
     
+
     @state.change("active_channels")
     def on_active_channels_change(active_channels, **kwargs):
         print(f"[state] Active channels changed: {active_channels}")
@@ -163,4 +176,38 @@ def register_state_change_handlers(state, ctrl):
     def on_bar_data_change(bar_data, **kwargs):
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
+
+    @state.change("upset_selected_channels")
+    def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
+        print(f"[state] UpSet selected channels changed: {len(upset_selected_channels)} channels")
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data()
+
+    @state.change("bar_selected_channels")
+    def on_bar_selected_channels_change(bar_selected_channels, **kwargs):
+        print(f"[state] Bar selected channels changed: {len(bar_selected_channels)} channels")
+        if hasattr(ctrl, 'update_bar_data'):
+            ctrl.update_bar_data()
+
+    def _filter_channels(channels, search_term):
+        if not search_term:
+            return channels
+        search_term = search_term.lower()
+        return [c for c in channels if search_term in c.lower()]
+
+    @state.change("upset_search")
+    def on_upset_search_change(upset_search, **kwargs):
+        state.upset_filtered_channels = _filter_channels(state.analysis_channels, upset_search)
+
+    @state.change("bar_search")
+    def on_bar_search_change(bar_search, **kwargs):
+        state.bar_filtered_channels = _filter_channels(state.analysis_channels, bar_search)
+
+    @state.change("analysis_channels")
+    def on_analysis_channels_change(analysis_channels, **kwargs):
+        # Reset filtered lists when analysis changes
+        state.upset_filtered_channels = list(analysis_channels)
+        state.bar_filtered_channels = list(analysis_channels)
+        state.upset_search = ""
+        state.bar_search = ""
         

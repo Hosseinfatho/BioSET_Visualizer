@@ -126,15 +126,66 @@ def right_drawer(state, ctrl):
         with html.Div(classes="px-4 py-3"):
             html.Div("Marker Combinations", classes="text-overline mb-2 text-center", style="color: white;")
  
-            with vuetify.VBtnToggle(
-                v_model=("upset_view_mode", "global"),
-                mandatory=True,
-                dense=True,
-                classes="mb-2 d-flex justify-center",
-                style="background: transparent;",
-            ):
-                vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
-                vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
+            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                with vuetify.VBtnToggle(
+                    v_model=("upset_view_mode", "global"),
+                    mandatory=True,
+                    dense=True,
+                    classes="mr-2",
+                    style="background: transparent;",
+                ):
+                    vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
+                
+                # UpSet Filter button
+                with vuetify.VBtn(icon=True, small=True, click="upset_filter_dialog = true"):
+                    vuetify.VIcon("mdi-filter-variant", small=True)
+
+            # UpSet Filter Dialog
+            with vuetify.VDialog(v_model=("upset_filter_dialog",), max_width="600px", scrollable=True):
+                with vuetify.VCard(classes="grey darken-4 white--text"):
+                    vuetify.VCardTitle("Select channels for UpSet plot", classes="headline grey darken-3")
+                    vuetify.VDivider()
+                    
+                    with vuetify.VCardText():
+                        with html.Div(classes="d-flex justify-space-between my-2"):
+                            # Search bar
+                            vuetify.VTextField(
+                                v_model=("upset_search",),
+                                label="Search channels...",
+                                prepend_inner_icon="mdi-magnify",
+                                clearable=True,
+                                dense=True,
+                                hide_details=True,
+                                classes="ma-1",
+                                dark=True,
+                            )
+
+                            vuetify.VBtn("Select All", text=True, color="white", classes="ma-1", 
+                                    click="upset_selected_channels = analysis_channels")
+                            vuetify.VBtn("Deselect All", text=True, color="white", classes="ma-1", 
+                                    click="upset_selected_channels = []")
+                            
+                        
+                        vuetify.VDivider(classes="mb-2")
+                        
+                        # Use checkboxes directly
+                        with html.Div():
+                            vuetify.VCheckbox(
+                                v_for=("channel in upset_filtered_channels",),
+                                key="channel",
+                                v_model=("upset_selected_channels",),
+                                label=("channel",),
+                                value=("channel",),
+                                dense=True,
+                                hide_details=True,
+                                dark=True,
+                            )
+
+                    vuetify.VDivider()
+                    with vuetify.VCardActions(classes="grey darken-3"):
+                        vuetify.VSpacer()
+                        vuetify.VBtn("Close", color="surface-variant", click="upset_filter_dialog = false")
             
             # Vue component for UpSet plot
             vuetify.Template(
@@ -155,16 +206,67 @@ def right_drawer(state, ctrl):
         with html.Div(classes="px-4 py-3"):
             html.Div("Channel Frequencies", classes="text-overline mb-2 text-center", style="color: white;")
   
-            with vuetify.VBtnToggle(
-                v_model=("bar_view_mode", "global"),
-                mandatory=True,
-                dense=True,
-                classes="mb-2 d-flex justify-center",
-                style="background: transparent;",
-            ):
-                vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
-                vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
-            
+            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                with vuetify.VBtnToggle(
+                    v_model=("bar_view_mode", "global"),
+                    mandatory=True,
+                    dense=True,
+                    classes="mr-2",
+                    style="background: transparent;",
+                ):
+                    vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
+
+                # Bar Filter button
+                with vuetify.VBtn(icon=True, small=True, click="bar_filter_dialog = true"):
+                    vuetify.VIcon("mdi-filter-variant", small=True)
+
+            # Bar Filter Dialog
+            with vuetify.VDialog(v_model=("bar_filter_dialog",), max_width="600px", scrollable=True):
+                with vuetify.VCard(classes="grey darken-4 white--text"):
+                    vuetify.VCardTitle("Select channels for Bar plot", classes="headline grey darken-3")
+                    vuetify.VDivider()
+                    
+                    with vuetify.VCardText():
+                        with html.Div(classes="d-flex justify-space-between my-2"):
+                            # Search bar
+                            vuetify.VTextField(
+                                v_model=("bar_search",),
+                                label="Search channels...",
+                                prepend_inner_icon="mdi-magnify",
+                                clearable=True,
+                                dense=True,
+                                hide_details=True,
+                                classes="ma-1",
+                                dark=True,
+                            )
+
+                    
+                            vuetify.VBtn("Select All", text=True, color="white", classes="ma-1", 
+                                click="bar_selected_channels = analysis_channels")
+                            vuetify.VBtn("Deselect All", text=True, color="white", classes="ma-1",
+                                click="bar_selected_channels = []")
+                        
+                        vuetify.VDivider(classes="mb-2")
+                        
+                        # Use checkboxes directly
+                        with html.Div():
+                            vuetify.VCheckbox(
+                                v_for=("channel in bar_filtered_channels",),
+                                key="channel",
+                                v_model=("bar_selected_channels",),
+                                label=("channel",),
+                                value=("channel",),
+                                dense=True,
+                                hide_details=True,
+                                dark=True,
+                            )
+
+                    vuetify.VDivider()
+                    with vuetify.VCardActions(classes="grey darken-3"):
+                        vuetify.VSpacer()
+                        vuetify.VBtn("Close", color="surface-variant", click="bar_filter_dialog = false")
+
             # Vue component for Bar chart
             vuetify.Template(
                 """
