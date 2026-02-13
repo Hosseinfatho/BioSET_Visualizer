@@ -202,6 +202,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 mid_idx = len(metadata.hierarchy_levels) // 2
                 state.current_hierarchy_level = metadata.hierarchy_levels[mid_idx]["level"]
             
+            # Initialize plot channel selections with all channels
+            state.upset_selected_channels = [ch for ch in state.analysis_channels]
+            state.bar_selected_channels = [ch for ch in state.analysis_channels]
+            
             state.analysis_loaded = True
             state.right_drawer_open = True  
             
@@ -320,6 +324,29 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
     
+    def _filter_combinations_by_channel_selection(combinations, selected_channels):
+        """
+        Filter combinations to only include selected channels and re-aggregate counts.
+        Returns a list of dicts: [{'channels': [...], 'count': ...}]
+        """
+        if len(selected_channels) == 0:
+            return combinations
+
+        filtered_combinations = []
+
+        for combo in combinations:
+            skip_combination = False
+            for ch in combo.channels:
+                if ch not in selected_channels:
+                    skip_combination = True
+
+            if skip_combination:
+                continue
+
+            filtered_combinations.append(combo)
+
+        return filtered_combinations
+
     def update_upset_data():
         """Update UpSet plot data based on current analysis settings."""
         loader = _refs.get("analysis_loader")
@@ -337,17 +364,18 @@ def register_callbacks(ctrl, state, view, streamer=None):
             limit=1000,  # Get all combinations
             min_channels=2,
         )
+        
+        # Filter and aggregate logic moved to helper
+        all_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
 
-        # Transform to format expected by UpSetJS: {channels: [...], count: int}
-        all_data = [
-            {"channels": combo.channels, "count": combo.total_count}
-            for combo in combinations
-        ]
-        
+        mapped_combinations = []
+        for combination in all_data:
+            mapped_combinations.append({"channels": combination.channels, "count": combination.total_count})
+
         # Store all combinations
-        state.upset_data = all_data
+        state.upset_data = mapped_combinations
         
-        print(f"[callbacks] UpSet data updated: {len(all_data)} total")
+        print(f"[callbacks] UpSet data updated: {len(mapped_combinations)} total")
 
     def update_upset_data_local():
         """Update local UpSet data filtered by active channels."""
@@ -369,25 +397,40 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] UpSet local data cleared (no active channels)")
             return
         
+        # Filter active channels by upset_selected_channels as well
+        active_and_selected = [name for name in active_channel_names if name in selected_channels]
+        
+        if not active_and_selected:
+            state.upset_data_local = []
+            print("[callbacks] UpSet local data cleared (no active channels in selected channels)")
+            return
+
         print(f"[callbacks] Updating UpSet local data for channels: {active_channel_names}")
         
         # Use get_filtered_combinations with exact_match=False (at least one channel)
-        combinations = loader.get_filtered_combinations(
-            channel_filter=active_channel_names,
-            dilation=state.current_dilation,
-            hierarchy_level=state.current_hierarchy_level,
-            limit=50,
-            exact_match=False,
-        )
-        
-        # Transform to format expected by UpSetJS
-        local_data = [
-            {"channels": combo.channels, "count": combo.total_count}
-            for combo in combinations
-        ]
-        
-        state.upset_data_local = local_data
-        print(f"[callbacks] UpSet local data updated: {len(local_data)} combinations")
+        try:
+            combinations = loader.get_filtered_combinations(
+                channel_filter=active_channel_names, # Use original active selection for DB query
+                dilation=state.current_dilation,
+                hierarchy_level=state.current_hierarchy_level,
+                limit=1000, # Increased limit to allow for post-filtering
+                exact_match=False,
+            )
+            
+            # Post-filter and aggregate
+            local_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
+
+            mapped_combinations = []
+            for combination in local_data:
+                mapped_combinations.append({"channels": combination.channels, "count": combination.total_count})
+
+            # Store all combinations
+            state.upset_data_local = mapped_combinations
+
+            print(f"[callbacks] UpSet local data updated: {len(mapped_combinations)} combinations")
+        except Exception as e:
+            print(f"[callbacks] Error updating local upset data: {e}")
+            state.upset_data_local = []
     
     def update_bar_data():
         """Update bar chart data based on current analysis settings."""
@@ -407,14 +450,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
             limit=1000,
             min_channels=1,
         )
-        
+
         # Compute per-channel frequencies
         from collections import Counter
         channel_counter = Counter()
-        for combo in combinations:
+        for combo in combinations:             
             for channel in combo.channels:
-                channel_counter[channel] += combo.total_count
-        
+                if channel in state.bar_selected_channels:
+                    channel_counter[channel] += combo.total_count
+
         all_bar_data = channel_counter.most_common()
         state.bar_data = all_bar_data
         
@@ -434,10 +478,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Bar local data cleared (no active channels)")
             return
         
-        # Filter bar_data to only include active channels
-        all_bar_data = state.bar_data or []
+        # Filter bar_data to only include active channels (AND selected channels)        
         local_bar_data = [
-            (name, count) for name, count in all_bar_data if name in active_channel_names
+            (name, count) for name, count in state.bar_data 
+            if name in active_channel_names and name in state.bar_selected_channels
         ]
         
         state.bar_data_local = local_bar_data
