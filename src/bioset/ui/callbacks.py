@@ -329,38 +329,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
         Filter combinations to only include selected channels and re-aggregate counts.
         Returns a list of dicts: [{'channels': [...], 'count': ...}]
         """
-        if not combinations:
-            return []
-        
-        # Maps tuple(sorted_channels) -> total_count
-        aggregated = {}
-        
+        if len(selected_channels) == 0:
+            return combinations
+
+        filtered_combinations = []
+
         for combo in combinations:
-            # Filter channels in this combination
-            filtered_channels = [ch for ch in combo.channels if ch in selected_channels]
-            
-            if not filtered_channels:
+            skip_combination = False
+            for ch in combo.channels:
+                if ch not in selected_channels:
+                    skip_combination = True
+
+            if skip_combination:
                 continue
-                
-            # Sort to ensure consistent key
-            filtered_channels.sort()
-            key = tuple(filtered_channels)
-            
-            if key in aggregated:
-                aggregated[key] += combo.total_count
-            else:
-                aggregated[key] = combo.total_count
-                
-        # Convert back to list format
-        result = [
-            {"channels": list(channels), "count": count}
-            for channels, count in aggregated.items()
-        ]
-        
-        # Sort by count descending
-        result.sort(key=lambda x: x["count"], reverse=True)
-        
-        return result
+
+            filtered_combinations.append(combo)
+
+        return filtered_combinations
 
     def update_upset_data():
         """Update UpSet plot data based on current analysis settings."""
@@ -382,11 +367,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         # Filter and aggregate logic moved to helper
         all_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
-        
+
+        mapped_combinations = []
+        for combination in all_data:
+            mapped_combinations.append({"channels": combination.channels, "count": combination.total_count})
+
         # Store all combinations
-        state.upset_data = all_data
+        state.upset_data = mapped_combinations
         
-        print(f"[callbacks] UpSet data updated: {len(all_data)} total")
+        print(f"[callbacks] UpSet data updated: {len(mapped_combinations)} total")
 
     def update_upset_data_local():
         """Update local UpSet data filtered by active channels."""
@@ -430,9 +419,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             # Post-filter and aggregate
             local_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
-            
-            state.upset_data_local = local_data
-            print(f"[callbacks] UpSet local data updated: {len(local_data)} combinations")
+
+            mapped_combinations = []
+            for combination in local_data:
+                mapped_combinations.append({"channels": combination.channels, "count": combination.total_count})
+
+            # Store all combinations
+            state.upset_data_local = mapped_combinations
+
+            print(f"[callbacks] UpSet local data updated: {len(mapped_combinations)} combinations")
         except Exception as e:
             print(f"[callbacks] Error updating local upset data: {e}")
             state.upset_data_local = []
@@ -463,7 +458,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             for channel in combo.channels:
                 if channel in state.bar_selected_channels:
                     channel_counter[channel] += combo.total_count
-        
+
         all_bar_data = channel_counter.most_common()
         state.bar_data = all_bar_data
         
