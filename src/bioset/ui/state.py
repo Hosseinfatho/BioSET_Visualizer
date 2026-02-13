@@ -102,12 +102,14 @@ def init_state(state):
     state.setdefault("upset_search", "")
     state.setdefault("upset_filtered_channels", []) # Channels shown in filter list
     state.setdefault("upset_filter_dialog", False)
+    state.setdefault("upset_expanded", False)
 
     # Bar Plot filtering
     state.setdefault("bar_selected_channels", [])  # Channels to include in Bar
     state.setdefault("bar_search", "")
     state.setdefault("bar_filtered_channels", []) # Channels shown in filter list
     state.setdefault("bar_filter_dialog", False)
+    state.setdefault("bar_expanded", False)
     
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open

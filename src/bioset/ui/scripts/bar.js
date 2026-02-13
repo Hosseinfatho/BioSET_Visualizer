@@ -1,7 +1,24 @@
 
 // Bar Plot Component
 Vue.component('bar-plot', {
-    props: ['data', 'dataLocal', 'channelData', 'viewMode'],
+    props: {
+        data: Array,
+        dataLocal: Array,
+        channelData: Array,
+        viewMode: String,
+        limit: {
+            type: Number,
+            default: 10
+        },
+        width: {
+            type: Number,
+            default: 330
+        },
+        height: {
+            type: Number,
+            default: 280
+        }
+    },
     template: '<div ref="container"></div>',
     watch: {
         data: 'render',
@@ -25,7 +42,7 @@ Vue.component('bar-plot', {
             // Determine data
             const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
             // Limit items
-            const renderData = sourceData.slice(0, 10);
+            const renderData = sourceData.slice(0, this.limit);
 
             if (renderData.length === 0) {
                 container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel data available</div>';
@@ -33,8 +50,8 @@ Vue.component('bar-plot', {
             }
 
             // Constants
-            const width = 330;
-            const height = 280;
+            const width = this.width;
+            const height = this.height;
             const marginTop = 30;
             const marginRight = 10;
             const marginBottom = 120;
