@@ -2,6 +2,7 @@
 *.tiff
 .git
 .vscode
+.idea
 
 *.egg-info/
 build/
