@@ -1,7 +1,24 @@
 
 // UpSet Plot Component
 Vue.component('upset-plot', {
-  props: ['data', 'dataLocal', 'channelData', 'viewMode'],
+  props: {
+    data: Array,
+    dataLocal: Array,
+    channelData: Array,
+    viewMode: String,
+    limit: {
+      type: Number,
+      default: 7
+    },
+    width: {
+      type: Number,
+      default: 330
+    },
+    height: {
+      type: Number,
+      default: 340
+    }
+  },
   template: '<div ref="container"></div>',
   watch: {
     data: 'render',
@@ -22,7 +39,7 @@ Vue.component('upset-plot', {
       // Determine which data to use
       const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
       // Safety slice
-      const renderData = sourceData.slice(0, 7);
+      const renderData = sourceData.slice(0, this.limit);
 
       // Transform data as expected by UpSetJS
       const mappedData = renderData.map(item => ({
@@ -47,8 +64,8 @@ Vue.component('upset-plot', {
       UpSetJS.render(this.$refs.container, {
         sets,
         combinations,
-        width: 330,
-        height: 340,
+        width: this.width,
+        height: this.height,
         theme: 'dark',
         color: '#FFFFFF',
         textColor: '#FFFFFF',

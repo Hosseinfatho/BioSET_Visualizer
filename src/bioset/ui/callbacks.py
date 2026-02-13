@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from .state import get_channel_color
 from bioset.llm import BiomniClient
+from .state import get_channel_color
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -398,7 +398,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return
         
         # Filter active channels by upset_selected_channels as well
-        active_and_selected = [name for name in active_channel_names if name in selected_channels]
+        active_and_selected = [name for name in active_channel_names if name in state.upset_selected_channels]
         
         if not active_and_selected:
             state.upset_data_local = []

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from trame.widgets import html, vuetify
+
 from .chatbot import chatbot_section
+
 
 def right_drawer(state, ctrl):
         
@@ -141,6 +143,34 @@ def right_drawer(state, ctrl):
                 with vuetify.VBtn(icon=True, small=True, click="upset_filter_dialog = true"):
                     vuetify.VIcon("mdi-filter-variant", small=True)
 
+                # UpSet Expand button
+                with vuetify.VBtn(icon=True, small=True, click="upset_expanded = true"):
+                    vuetify.VIcon("mdi-arrow-expand-all", small=True)
+
+            # UpSet Expand Dialog
+            with vuetify.VDialog(v_model=("upset_expanded",), width="auto"):
+                with vuetify.VCard(classes="grey darken-4 white--text", style="overflow: hidden;"):
+                    with vuetify.VCardTitle(classes="headline grey darken-3"):
+                        html.Span("Marker Combinations (Expanded)")
+                        vuetify.VSpacer()
+                        vuetify.VBtn("Close", color="surface-variant", click="upset_expanded = false")
+
+                    with vuetify.VCardText(classes="pa-4"):
+                        vuetify.Template(
+                            """
+                            <upset-plot
+                                :data="upset_data"
+                                :dataLocal="upset_data_local"
+                                :channelData="channels"
+                                :view-mode="upset_view_mode"
+                                :limit="40"
+                                :width="1200"
+                                :height="800"
+                                @click="trigger('upset_click', $event)"
+                            />
+                            """
+                        )
+
             # UpSet Filter Dialog
             with vuetify.VDialog(v_model=("upset_filter_dialog",), max_width="600px", scrollable=True):
                 with vuetify.VCard(classes="grey darken-4 white--text"):
@@ -220,6 +250,34 @@ def right_drawer(state, ctrl):
                 # Bar Filter button
                 with vuetify.VBtn(icon=True, small=True, click="bar_filter_dialog = true"):
                     vuetify.VIcon("mdi-filter-variant", small=True)
+
+                # Bar Expand button
+                with vuetify.VBtn(icon=True, small=True, click="bar_expanded = true"):
+                    vuetify.VIcon("mdi-arrow-expand-all", small=True)
+
+            # Bar Expand Dialog
+            with vuetify.VDialog(v_model=("bar_expanded",), width="auto"):
+                with vuetify.VCard(classes="grey darken-4 white--text", style="overflow: hidden;"):
+                    with vuetify.VCardTitle(classes="headline grey darken-3"):
+                        html.Span("Channel Frequencies (Expanded)")
+                        vuetify.VSpacer()
+                        vuetify.VBtn("Close", color="surface-variant", click="bar_expanded = false")
+
+                    with vuetify.VCardText(classes="pa-4"):
+                        vuetify.Template(
+                            """
+                            <bar-plot
+                                :data="bar_data"
+                                :dataLocal="bar_data_local"
+                                :channelData="channels"
+                                :view-mode="bar_view_mode"
+                                :limit="50"
+                                :width="1200"
+                                :height="700"
+                                @click="trigger('bar_click', $event)"
+                            />
+                            """
+                        )
 
             # Bar Filter Dialog
             with vuetify.VDialog(v_model=("bar_filter_dialog",), max_width="600px", scrollable=True):
