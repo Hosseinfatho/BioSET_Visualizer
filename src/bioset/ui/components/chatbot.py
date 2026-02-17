@@ -13,6 +13,7 @@ def chatbot_section(state, ctrl):
         v_model=("chatbot_panel_open",),
         accordion=True,
         flat=True,
+        dark=True
     ):
         with vuetify.VExpansionPanel():
             # Panel Header
@@ -34,19 +35,18 @@ def chatbot_section(state, ctrl):
                     # Authentication status
                     with html.Div(v_if="!chatbot_authenticated", classes="mb-3"):
                         with vuetify.VAlert(
-                            type="info",
                             dense=True,
                             text=True,
-                            color="blue",
                         ):
-                            html.Span("Please authenticate to use the AI assistant", classes="text-caption")
+                            with html.Div(classes="d-flex align-center"):
+                                vuetify.VIcon("mdi-exclamation", small=True, classes="mr-1")
+                                html.Span("Please authenticate to use the AI assistant", classes="text-caption")
                         
                         vuetify.VBtn(
                             "Login",
                             click=ctrl.chatbot_login,
                             block=True,
                             small=True,
-                            color="primary",
                         )
                     
                     # Chat interface (when authenticated)
@@ -81,7 +81,7 @@ def chatbot_section(state, ctrl):
                                 ):
                                     with vuetify.VCard(
                                         classes="pa-2",
-                                        color="primary",
+                                        color="#616161",
                                         dark=True,
                                         style="max-width: 80%;",
                                     ):
@@ -97,7 +97,8 @@ def chatbot_section(state, ctrl):
                                 ):
                                     with vuetify.VCard(
                                         classes="pa-2",
-                                        outlined=True,
+                                        color="#303030",
+                                        dark=True,
                                         style="max-width: 80%;",
                                     ):
                                         html.Div(
@@ -134,7 +135,6 @@ def chatbot_section(state, ctrl):
                                             indeterminate=True,
                                             size=16,
                                             width=2,
-                                            color="primary",
                                         )
                                         html.Span(
                                             "Thinking...",
