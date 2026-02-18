@@ -147,6 +147,39 @@ def right_drawer(state, ctrl):
                 with vuetify.VBtn(icon=True, small=True, click="upset_expanded = true"):
                     vuetify.VIcon("mdi-arrow-expand-all", small=True)
 
+            # Pagination Controls (Offset based)
+            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                with vuetify.VBtn(
+                        icon=True,
+                        small=True,
+                        disabled=("upset_offset <= 0",),
+                        click="upset_offset = 0"
+                ):
+                    vuetify.VIcon("mdi-skip-backward", small=True)
+
+                with vuetify.VBtn(
+                        icon=True,
+                        small=True,
+                        disabled=("upset_offset <= 0",),
+                        click="upset_offset = Math.max(0, upset_offset - 1)"
+                ):
+                    vuetify.VIcon("mdi-chevron-left", small=True)
+
+                html.Span(
+                    "{{ upset_offset + 1 }} - {{ Math.min(upset_offset + upset_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)) }}",
+                    classes="text-caption mx-2",
+                    style="color: white; min-width: 50px; text-align: center;"
+                )
+
+                with vuetify.VBtn(
+                        icon=True,
+                        small=True,
+                        disabled=(
+                                "upset_offset + upset_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)",),
+                        click="upset_offset = upset_offset + 1"
+                ):
+                    vuetify.VIcon("mdi-chevron-right", small=True)
+
             # UpSet Expand Dialog
             with vuetify.VDialog(v_model=("upset_expanded",), width="auto"):
                 with vuetify.VCard(classes="grey darken-4 white--text", style="overflow: hidden;"):
@@ -156,6 +189,45 @@ def right_drawer(state, ctrl):
                         vuetify.VBtn("Close", color="surface-variant", click="upset_expanded = false")
 
                     with vuetify.VCardText(classes="pa-4"):
+                        # Expanded Pagination Controls
+                        with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                            with vuetify.VBtn(
+                                    icon=True,
+                                    small=True,
+                                    color="white",
+                                    dark=True,
+                                    disabled=("upset_expanded_offset <= 0",),
+                                    click="upset_expanded_offset = 0"
+                            ):
+                                vuetify.VIcon("mdi-skip-backward", small=True)
+
+                            with vuetify.VBtn(
+                                    icon=True,
+                                    small=True,
+                                    color="white",
+                                    dark=True,
+                                    disabled=("upset_expanded_offset <= 0",),
+                                    click="upset_expanded_offset = Math.max(0, upset_expanded_offset - 1)"
+                            ):
+                                vuetify.VIcon("mdi-chevron-left", small=True)
+
+                            html.Span(
+                                "{{ upset_expanded_offset + 1 }} - {{ Math.min(upset_expanded_offset + upset_expanded_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)) }}",
+                                classes="text-caption mx-2",
+                                style="color: white; min-width: 50px; text-align: center;"
+                            )
+
+                            with vuetify.VBtn(
+                                    icon=True,
+                                    small=True,
+                                    color="white",
+                                    dark=True,
+                                    disabled=(
+                                            "upset_expanded_offset + upset_expanded_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)",),
+                                    click="upset_expanded_offset = upset_expanded_offset + 1"
+                            ):
+                                vuetify.VIcon("mdi-chevron-right", small=True)
+
                         vuetify.Template(
                             """
                             <upset-plot
@@ -163,7 +235,8 @@ def right_drawer(state, ctrl):
                                 :dataLocal="upset_data_local"
                                 :channelData="channels"
                                 :view-mode="upset_view_mode"
-                                :limit="40"
+                                :offset="upset_expanded_offset"
+                                :limit="upset_expanded_limit"
                                 :width="1200"
                                 :height="800"
                                 @click="trigger('upset_click', $event)"
@@ -225,6 +298,8 @@ def right_drawer(state, ctrl):
                     :dataLocal="upset_data_local"
                     :channelData="channels"
                     :view-mode="upset_view_mode"
+                    :offset="upset_offset"
+                    :limit="upset_limit"
                     @click="trigger('upset_click', $event)"
                 />
                 """
@@ -255,6 +330,39 @@ def right_drawer(state, ctrl):
                 with vuetify.VBtn(icon=True, small=True, click="bar_expanded = true"):
                     vuetify.VIcon("mdi-arrow-expand-all", small=True)
 
+            # Pagination Controls (Offset based) - Bar Chart
+            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                with vuetify.VBtn(
+                        icon=True,
+                        small=True,
+                        disabled=("bar_offset <= 0",),
+                        click="bar_offset = 0"
+                ):
+                    vuetify.VIcon("mdi-skip-backward", small=True)
+
+                with vuetify.VBtn(
+                        icon=True,
+                        small=True,
+                        disabled=("bar_offset <= 0",),
+                        click="bar_offset = Math.max(0, bar_offset - 1)"
+                ):
+                    vuetify.VIcon("mdi-chevron-left", small=True)
+
+                html.Span(
+                    "{{ bar_offset + 1 }} - {{ Math.min(bar_offset + bar_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)) }}",
+                    classes="text-caption mx-2",
+                    style="color: white; min-width: 50px; text-align: center;"
+                )
+
+                with vuetify.VBtn(
+                        icon=True,
+                        small=True,
+                        disabled=(
+                                "bar_offset + bar_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)",),
+                        click="bar_offset = bar_offset + 1"
+                ):
+                    vuetify.VIcon("mdi-chevron-right", small=True)
+
             # Bar Expand Dialog
             with vuetify.VDialog(v_model=("bar_expanded",), width="auto"):
                 with vuetify.VCard(classes="grey darken-4 white--text", style="overflow: hidden;"):
@@ -264,6 +372,45 @@ def right_drawer(state, ctrl):
                         vuetify.VBtn("Close", color="surface-variant", click="bar_expanded = false")
 
                     with vuetify.VCardText(classes="pa-4"):
+                        # Expanded Pagination Controls
+                        with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                            with vuetify.VBtn(
+                                    icon=True,
+                                    small=True,
+                                    color="white",
+                                    dark=True,
+                                    disabled=("bar_expanded_offset <= 0",),
+                                    click="bar_expanded_offset = 0"
+                            ):
+                                vuetify.VIcon("mdi-skip-backward", small=True)
+
+                            with vuetify.VBtn(
+                                    icon=True,
+                                    small=True,
+                                    color="white",
+                                    dark=True,
+                                    disabled=("bar_expanded_offset <= 0",),
+                                    click="bar_expanded_offset = Math.max(0, bar_expanded_offset - 1)"
+                            ):
+                                vuetify.VIcon("mdi-chevron-left", small=True)
+
+                            html.Span(
+                                "{{ bar_expanded_offset + 1 }} - {{ Math.min(bar_expanded_offset + bar_expanded_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)) }}",
+                                classes="text-caption mx-2",
+                                style="color: white; min-width: 50px; text-align: center;"
+                            )
+
+                            with vuetify.VBtn(
+                                    icon=True,
+                                    small=True,
+                                    color="white",
+                                    dark=True,
+                                    disabled=(
+                                            "bar_expanded_offset + bar_expanded_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)",),
+                                    click="bar_expanded_offset = bar_expanded_offset + 1"
+                            ):
+                                vuetify.VIcon("mdi-chevron-right", small=True)
+
                         vuetify.Template(
                             """
                             <bar-plot
@@ -271,7 +418,8 @@ def right_drawer(state, ctrl):
                                 :dataLocal="bar_data_local"
                                 :channelData="channels"
                                 :view-mode="bar_view_mode"
-                                :limit="50"
+                                :offset="bar_expanded_offset"
+                                :limit="bar_expanded_limit"
                                 :width="1200"
                                 :height="700"
                                 @click="trigger('bar_click', $event)"
@@ -333,6 +481,8 @@ def right_drawer(state, ctrl):
                     :dataLocal="bar_data_local"
                     :channelData="channels"
                     :view-mode="bar_view_mode"
+                    :offset="bar_offset"
+                    :limit="bar_limit"
                     @click="trigger('bar_click', $event)"
                 />
                 """

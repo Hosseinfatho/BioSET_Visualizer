@@ -6,6 +6,10 @@ Vue.component('upset-plot', {
     dataLocal: Array,
     channelData: Array,
     viewMode: String,
+    offset: {
+      type: Number,
+      default: 0
+    },
     limit: {
       type: Number,
       default: 7
@@ -19,11 +23,13 @@ Vue.component('upset-plot', {
       default: 340
     }
   },
-  template: '<div ref="container"></div>',
+  template: '<div class="plot" ref="container"></div>',
   watch: {
     data: 'render',
     dataLocal: 'render',
     viewMode: 'render',
+    offset: 'render',
+    limit: 'render',
     channelData: {
       handler: 'render',
       deep: true
@@ -35,13 +41,14 @@ Vue.component('upset-plot', {
   methods: {
     render() {
       if (!this.$refs.container || !window.UpSetJS) return;
-
-      // Determine which data to use
       const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
-      // Safety slice
-      const renderData = sourceData.slice(0, this.limit);
 
-      // Transform data as expected by UpSetJS
+      const maxCount = sourceData.length > 0 ? Math.max(...sourceData.map(d => d.count)) : 0;
+
+      const start = this.offset;
+      const end = start + this.limit;
+      const renderData = sourceData.slice(start, end);
+
       const mappedData = renderData.map(item => ({
         sets: item.channels,
         cardinality: item.count
@@ -80,8 +87,9 @@ Vue.component('upset-plot', {
           chartLabel: '0px',
         },
         widthRatios: [0.18, 0.35],
-        heightRatios: [0.5],
+        heightRatios: [0.4],
         exportButtons: false,
+        yDomain: [0, maxCount],
         onClick: (clickedItem) => {
           if (!clickedItem) {
             this.$emit('click', null);

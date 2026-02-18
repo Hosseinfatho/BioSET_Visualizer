@@ -6,6 +6,10 @@ Vue.component('bar-plot', {
         dataLocal: Array,
         channelData: Array,
         viewMode: String,
+        offset: {
+            type: Number,
+            default: 0
+        },
         limit: {
             type: Number,
             default: 10
@@ -19,11 +23,13 @@ Vue.component('bar-plot', {
             default: 280
         }
     },
-    template: '<div ref="container"></div>',
+    template: '<div class="plot" ref="container"></div>',
     watch: {
         data: 'render',
         dataLocal: 'render',
         viewMode: 'render',
+        offset: 'render',
+        limit: 'render',
         channelData: {
             handler: 'render',
             deep: true
@@ -38,11 +44,13 @@ Vue.component('bar-plot', {
 
             const container = this.$refs.container;
             d3.select(container).selectAll("*").remove();
-
-            // Determine data
             const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
-            // Limit items
-            const renderData = sourceData.slice(0, this.limit);
+
+            const maxCount = sourceData.length > 0 ? d3.max(sourceData, d => d[1]) : 0;
+
+            const start = this.offset;
+            const end = start + this.limit;
+            const renderData = sourceData.slice(start, end);
 
             if (renderData.length === 0) {
                 container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel data available</div>';
@@ -55,7 +63,7 @@ Vue.component('bar-plot', {
             const marginTop = 30;
             const marginRight = 10;
             const marginBottom = 120;
-            const marginLeft = 80;
+            const marginLeft = 100;
 
             const chartData = renderData.map(d => ({ name: d[0], count: d[1] }));
 
@@ -66,7 +74,7 @@ Vue.component('bar-plot', {
                 .padding(0.1);
 
             const y = d3.scaleLinear()
-                .domain([0, d3.max(chartData, d => d.count)])
+                .domain([0, maxCount])
                 .range([height - marginBottom, marginTop]);
 
             const svg = d3.select(container)
@@ -120,7 +128,7 @@ Vue.component('bar-plot', {
             // Y-axis
             svg.append("g")
                 .attr("transform", `translate(${marginLeft},0)`)
-                .call(d3.axisLeft(y).tickFormat(d3.format(".2e")))
+                .call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".2e")))
                 .call(g => g.select(".domain").remove())
                 .selectAll("text")
                 .attr("fill", "white")
