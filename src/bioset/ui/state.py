@@ -53,13 +53,23 @@ def init_state(state):
     
     # UpSet plot
     state.setdefault("upset_click", None)
-    state.setdefault("upset_data", [])  # All combinations (global)
-    state.setdefault("upset_data_local", [])  # Combinations filtered by active_channels
-    state.setdefault("upset_selection", None)  # Currently selected set/combination
-    
-    # Bar chart - per-channel frequencies
-    state.setdefault("bar_data", [])  # All channels [[channel_name, count], ...] (global)
-    state.setdefault("bar_data_local", [])  # Channels filtered to active_channels only
+    state.setdefault("upset_data", [])
+    state.setdefault("upset_data_local", [])
+    state.setdefault("upset_selection", None)
+    state.setdefault("upset_offset", 0)
+    state.setdefault("upset_limit", 7)
+
+    # Bar chart
+    state.setdefault("bar_data", [])
+    state.setdefault("bar_data_local", [])
+    state.setdefault("bar_offset", 0)
+    state.setdefault("bar_limit", 10)
+
+    # Expanded View States
+    state.setdefault("upset_expanded_offset", 0)
+    state.setdefault("upset_expanded_limit", 40)
+    state.setdefault("bar_expanded_offset", 0)
+    state.setdefault("bar_expanded_limit", 50)
     
     # View mode toggles
     state.setdefault("upset_view_mode", "global")  # "global" or "local"
@@ -171,13 +181,27 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("upset_data")
     def on_upset_data_change(upset_data, **kwargs):
+        state.upset_offset = 0
+        state.upset_expanded_offset = 0
         if hasattr(ctrl, 'update_upset_data_local'):
             ctrl.update_upset_data_local()
 
+    @state.change("upset_view_mode")
+    def on_upset_view_mode_change(upset_view_mode, **kwargs):
+        state.upset_offset = 0
+        state.upset_expanded_offset = 0
+
     @state.change("bar_data")
     def on_bar_data_change(bar_data, **kwargs):
+        state.bar_offset = 0
+        state.bar_expanded_offset = 0
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
+
+    @state.change("bar_view_mode")
+    def on_bar_view_mode_change(bar_view_mode, **kwargs):
+        state.bar_offset = 0
+        state.bar_expanded_offset = 0
 
     @state.change("upset_selected_channels")
     def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
