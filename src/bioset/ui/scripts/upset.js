@@ -91,21 +91,23 @@ Vue.component('upset-plot', {
         exportButtons: false,
         yDomain: [0, maxCount],
         onClick: (clickedItem) => {
-          if (!clickedItem) {
-            this.$emit('click', null);
-            return;
-          }
+          setTimeout(() => {
+            if (!clickedItem) {
+              this.$emit('click', null);
+              return;
+            }
 
-          const setNames = clickedItem.sets
-            ? Array.from(clickedItem.sets).map(s => s.name)
-            : [clickedItem.name];
+            const setNames = clickedItem.sets
+              ? Array.from(clickedItem.sets).map(s => s.name)
+              : [clickedItem.name];
 
-          this.$emit('click', {
-            name: clickedItem.name,
-            sets: setNames,
-            size: clickedItem.cardinality,
-            ts: Date.now()
-          });
+            this.$emit('click', {
+              name: clickedItem.name,
+              sets: setNames,
+              size: clickedItem.cardinality,
+              ts: Date.now()
+            });
+          }, 0);
         }
       });
     }
