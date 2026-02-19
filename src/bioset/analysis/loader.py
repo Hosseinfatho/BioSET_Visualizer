@@ -13,31 +13,37 @@ from typing import Optional
 class AnalysisMetadata:
     channels: list[str]
     hierarchy_levels: list[dict]
-    dilation_amounts: list[int]
+    dilation_amounts: list[float]
     volume_bounds: dict
 
 
 @dataclass
 class TileData:
-    """Spatial tile with overlap count."""
+    """Spatial tile with overlap/voxel data."""
     x0: int
     x1: int
     y0: int
     y1: int
-    count: int
+    count: int  # raw voxel/intersection count
+    active_fraction: float = 0.0  # fraction of tile volume occupied
 
 
 @dataclass
 class CombinationData:
-    """A biomarker combination with its overlap data."""
+    """A biomarker combination with its aggregated overlap data."""
     channels: list[str]
-    total_count: int
+    total_count: int  # aggregated intersection count across all tiles
+    iou: float = 0.0  # aggregated IoU (sum_inter / sum_union)
+    overlap_coeff: float = 0.0
     tiles: list[TileData] = field(default_factory=list)
 
 
 class AnalysisLoader:
     """
-    Loader and query interface for .bioset analysis files.
+    Loader and query interface for .bioset analysis files (new schema).
+    
+    The new schema stores per-tile rows in `combinations` (1:1 with `tiles`),
+    plus a `channel_stats` table for single-channel per-tile statistics.
     
     Usage:
         loader = AnalysisLoader()
@@ -47,12 +53,17 @@ class AnalysisLoader:
         print(loader.metadata.channels)
         print(loader.metadata.dilation_amounts)
         
-        # Query combinations
-        top_combos = loader.get_top_combinations(dilation=0, hierarchy_level=2, limit=50)
+        # Get top combinations by aggregated IoU
+        top_combos = loader.get_top_combinations(dilation=2.0, hierarchy_level=0, limit=50)
         
-        # Get tiles for heatmap
-        tiles = loader.get_combination_tiles(["Hoechst", "MART1"], dilation=0, hierarchy_level=1)
+        # Get coverage percentages per channel
+        coverage = loader.get_channel_coverage(dilation=0.0, hierarchy_level=0)
+        
+        # Get tiles with active fraction for heatmaps
+        tiles = loader.get_combination_tiles(["CD8", "MART1"], dilation=2.0, hierarchy_level=0)
     """
+    
+    TILE_SIZES = {0: 128, 1: 256, 2: 512, 3: 1024}
     
     def __init__(self):
         self._conn: Optional[sqlite3.Connection] = None
@@ -60,10 +71,35 @@ class AnalysisLoader:
         self._temp_dir: Optional[str] = None
         self.metadata: Optional[AnalysisMetadata] = None
         self._loaded = False
+        self._total_tiles_cache: dict[int, int] = {}  # level -> total tile count
     
     @property
     def is_loaded(self) -> bool:
         return self._loaded and self._conn is not None
+    
+    def _open_and_load_metadata(self):
+        """Open the decompressed DB and load metadata."""
+        self._conn = sqlite3.connect(self._db_path)
+        self._conn.row_factory = sqlite3.Row
+        
+        cursor = self._conn.execute("SELECT key, value FROM metadata")
+        meta_dict = {row["key"]: json.loads(row["value"]) for row in cursor}
+        
+        self.metadata = AnalysisMetadata(
+            channels=meta_dict.get("channels", []),
+            hierarchy_levels=meta_dict.get("hierarchy_levels", []),
+            dilation_amounts=meta_dict.get("dilation_amounts", []),
+            volume_bounds=meta_dict.get("volume_bounds", {}),
+        )
+        
+        self._loaded = True
+        self._total_tiles_cache.clear()
+        
+        print(f"[analysis] Loaded: {len(self.metadata.channels)} channels, "
+              f"{len(self.metadata.dilation_amounts)} dilations, "
+              f"{len(self.metadata.hierarchy_levels)} hierarchy levels")
+        
+        return self.metadata
     
     def load(self, file_path: str) -> AnalysisMetadata:
         """
@@ -75,10 +111,8 @@ class AnalysisLoader:
         Returns:
             AnalysisMetadata with channels, hierarchy levels, etc.
         """
-        # Close any existing connection
         self.close()
         
-        # Decompress to temp file
         self._temp_dir = tempfile.mkdtemp(prefix="bioset_analysis_")
         self._db_path = Path(self._temp_dir) / "analysis.db"
         
@@ -88,28 +122,7 @@ class AnalysisLoader:
             with open(self._db_path, 'wb') as f_out:
                 f_out.write(f_in.read())
         
-        # Open connection
-        self._conn = sqlite3.connect(self._db_path)
-        self._conn.row_factory = sqlite3.Row
-        
-        # Load metadata
-        cursor = self._conn.execute("SELECT key, value FROM metadata")
-        meta_dict = {row["key"]: json.loads(row["value"]) for row in cursor}
-        
-        self.metadata = AnalysisMetadata(
-            channels=meta_dict.get("channels", []),
-            hierarchy_levels=meta_dict.get("hierarchy_levels", []),
-            dilation_amounts=meta_dict.get("dilation_amounts", []),
-            volume_bounds=meta_dict.get("volume_bounds", {}),
-        )
-        
-        self._loaded = True
-        
-        print(f"[analysis] Loaded: {len(self.metadata.channels)} channels, "
-              f"{len(self.metadata.dilation_amounts)} dilations, "
-              f"{len(self.metadata.hierarchy_levels)} hierarchy levels")
-        
-        return self.metadata
+        return self._open_and_load_metadata()
     
     def load_from_bytes(self, data: bytes) -> AnalysisMetadata:
         """
@@ -121,111 +134,186 @@ class AnalysisLoader:
         Returns:
             AnalysisMetadata
         """
-        # Close any existing connection
         self.close()
         
-        # Write to temp file and decompress
         self._temp_dir = tempfile.mkdtemp(prefix="bioset_analysis_")
         compressed_path = Path(self._temp_dir) / "uploaded.bioset"
         self._db_path = Path(self._temp_dir) / "analysis.db"
         
-        # Write compressed data
         with open(compressed_path, 'wb') as f:
             f.write(data)
         
         print(f"[analysis] Loading from uploaded bytes ({len(data)} bytes)...")
         
-        # Decompress
         with gzip.open(compressed_path, 'rb') as f_in:
             with open(self._db_path, 'wb') as f_out:
                 f_out.write(f_in.read())
         
-        # Open connection
-        self._conn = sqlite3.connect(self._db_path)
-        self._conn.row_factory = sqlite3.Row
+        return self._open_and_load_metadata()
+    
+    # ──────────────────────────────────────────────
+    # Tile geometry helpers
+    # ──────────────────────────────────────────────
+    
+    def get_tile_size(self, level: int) -> int:
+        """Get tile edge length in voxels for a hierarchy level."""
+        return self.TILE_SIZES.get(level, 128)
+    
+    def _get_z_depth(self) -> int:
+        """Get Z depth in voxels from volume_bounds."""
+        if not self.metadata or not self.metadata.volume_bounds:
+            return 1
+        z_bounds = self.metadata.volume_bounds.get("z", [0, 1])
+        return max(1, z_bounds[1] - z_bounds[0])
+    
+    def _tile_volume(self, level: int, tile_x_span: int = 1, tile_y_span: int = 1) -> int:
+        """Total voxels in a tile: tile_width * tile_height * z_depth."""
+        ts = self.get_tile_size(level)
+        return (tile_x_span * ts) * (tile_y_span * ts) * self._get_z_depth()
+    
+    def _get_total_tiles(self, hierarchy_level: int, dilation: float = 0.0) -> int:
+        """
+        Get the total number of distinct tiles at a hierarchy level.
+        Uses channel_stats as the canonical source (always has data at dilation=0.0).
+        """
+        cache_key = hierarchy_level
+        if cache_key in self._total_tiles_cache:
+            return self._total_tiles_cache[cache_key]
         
-        # Load metadata
-        cursor = self._conn.execute("SELECT key, value FROM metadata")
-        meta_dict = {row["key"]: json.loads(row["value"]) for row in cursor}
+        # Try channel_stats first (most reliable — every tile should appear)
+        cursor = self._conn.execute('''
+            SELECT COUNT(DISTINCT tile_x0 || ',' || tile_y0) as n
+            FROM channel_stats
+            WHERE hierarchy_level = ?
+        ''', (hierarchy_level,))
+        row = cursor.fetchone()
+        total = row["n"] if row and row["n"] else 0
         
-        self.metadata = AnalysisMetadata(
-            channels=meta_dict.get("channels", []),
-            hierarchy_levels=meta_dict.get("hierarchy_levels", []),
-            dilation_amounts=meta_dict.get("dilation_amounts", []),
-            volume_bounds=meta_dict.get("volume_bounds", {}),
-        )
+        if total == 0:
+            # Fallback: count from combinations/tiles
+            cursor = self._conn.execute('''
+                SELECT COUNT(DISTINCT t.tile_x0 || ',' || t.tile_y0) as n
+                FROM combinations c
+                JOIN tiles t ON c.id = t.combination_id
+                WHERE c.hierarchy_level = ?
+            ''', (hierarchy_level,))
+            row = cursor.fetchone()
+            total = row["n"] if row and row["n"] else 0
         
-        self._loaded = True
-        
-        print(f"[analysis] Loaded: {len(self.metadata.channels)} channels, "
-              f"{len(self.metadata.dilation_amounts)} dilations, "
-              f"{len(self.metadata.hierarchy_levels)} hierarchy levels")
-        
-        return self.metadata
+        self._total_tiles_cache[cache_key] = total
+        return total
+    
+    # ──────────────────────────────────────────────
+    # UpSet plot: aggregated IoU across tiles
+    # ──────────────────────────────────────────────
     
     def get_top_combinations(
         self,
-        dilation: int,
+        dilation: float,
         hierarchy_level: int,
         limit: int = 50,
-        min_channels: int = 1,
+        min_channels: int = 2,
     ) -> list[CombinationData]:
-        """Get top N combinations by total overlap count."""
+        """
+        Get top N combinations by aggregated IoU.
+        
+        Aggregates across all tiles:
+          global_iou = SUM(total_count) / SUM(total_union)
+          
+        Sorted by global_iou DESC.
+        Self-pairs (e.g. CD8|CD8) are excluded.
+        """
         if not self.is_loaded:
             return []
         
         cursor = self._conn.execute('''
-            SELECT channels, total_count 
-            FROM combinations 
+            SELECT 
+                channels,
+                SUM(total_count) as sum_inter,
+                SUM(total_union) as sum_union,
+                SUM(total_count) as agg_count
+            FROM combinations
             WHERE dilation = ? AND hierarchy_level = ? AND channel_count >= ?
-            ORDER BY total_count DESC 
+            GROUP BY channels
+            HAVING sum_union > 0
+            ORDER BY CAST(SUM(total_count) AS REAL) / SUM(total_union) DESC
             LIMIT ?
-        ''', (dilation, hierarchy_level, min_channels, limit))
+        ''', (dilation, hierarchy_level, min_channels, limit * 2))
+        # fetch extra to account for self-pair filtering
         
         results = []
         for row in cursor:
             channels_str = row["channels"]
             channels = channels_str.split("|") if channels_str else []
+            
+            # Skip self-pairs
+            if len(channels) != len(set(channels)):
+                continue
+            
+            sum_inter = row["sum_inter"] or 0
+            sum_union = row["sum_union"] or 1
+            agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
+            
             results.append(CombinationData(
                 channels=channels,
-                total_count=row["total_count"],
+                total_count=row["agg_count"] or 0,
+                iou=agg_iou,
             ))
+            
+            if len(results) >= limit:
+                break
         
         return results
     
     def get_filtered_combinations(
         self,
         channel_filter: list[str],
-        dilation: int,
+        dilation: float,
         hierarchy_level: int,
         limit: int = 50,
         exact_match: bool = False,
     ) -> list[CombinationData]:
-        # combinations containing specified channels.
+        """
+        Get combinations containing specified channels, aggregated by IoU.
+        """
         if not self.is_loaded or not channel_filter:
             return []
         
         if exact_match:
-            channels_str = "|".join(sorted(channel_filter))
+            channels_str = "|".join(sorted(
+                channel_filter,
+                key=lambda c: self.metadata.channels.index(c) if c in self.metadata.channels else 999
+            ))
             cursor = self._conn.execute('''
-                SELECT channels, total_count 
-                FROM combinations 
+                SELECT 
+                    channels,
+                    SUM(total_count) as sum_inter,
+                    SUM(total_union) as sum_union,
+                    SUM(total_count) as agg_count
+                FROM combinations
                 WHERE channels = ? AND dilation = ? AND hierarchy_level = ?
+                GROUP BY channels
+                HAVING sum_union > 0
             ''', (channels_str, dilation, hierarchy_level))
         else:
             query = '''
-                SELECT channels, total_count 
-                FROM combinations 
+                SELECT 
+                    channels,
+                    SUM(total_count) as sum_inter,
+                    SUM(total_union) as sum_union,
+                    SUM(total_count) as agg_count
+                FROM combinations
                 WHERE dilation = ? AND hierarchy_level = ?
             '''
             params = [dilation, hierarchy_level]
             
             for ch in channel_filter:
-                query += " AND channels LIKE ?"
-                params.append(f"%{ch}%")
+                query += " AND (channels = ? OR channels LIKE ? OR channels LIKE ? OR channels LIKE ?)"
+                params.extend([ch, f"{ch}|%", f"%|{ch}", f"%|{ch}|%"])
             
-            query += " ORDER BY total_count DESC LIMIT ?"
-            params.append(limit)
+            query += " GROUP BY channels HAVING sum_union > 0"
+            query += " ORDER BY CAST(SUM(total_count) AS REAL) / SUM(total_union) DESC LIMIT ?"
+            params.append(limit * 2)
             
             cursor = self._conn.execute(query, params)
         
@@ -233,99 +321,319 @@ class AnalysisLoader:
         for row in cursor:
             channels_str = row["channels"]
             channels = channels_str.split("|") if channels_str else []
+            
+            # Skip self-pairs
+            if len(channels) != len(set(channels)):
+                continue
+            
+            sum_inter = row["sum_inter"] or 0
+            sum_union = row["sum_union"] or 1
+            agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
+            
             results.append(CombinationData(
                 channels=channels,
-                total_count=row["total_count"],
+                total_count=row["agg_count"] or 0,
+                iou=agg_iou,
             ))
+            
+            if len(results) >= limit:
+                break
         
         return results
+    
+    # ──────────────────────────────────────────────
+    # Bar chart: coverage percentage
+    # ──────────────────────────────────────────────
+    
+    def get_channel_coverage(
+        self,
+        dilation: float,
+        hierarchy_level: int,
+    ) -> list[tuple[str, float]]:
+        """
+        Get coverage percentage for each channel.
+        
+        Coverage = (# tiles where channel has voxel_count > 0) / (total # tiles) * 100
+        
+        Uses the `channel_stats` table. Falls back to dilation=0.0 if
+        no data exists at the requested dilation.
+        
+        Returns:
+            List of (channel_name, coverage_pct) sorted descending by coverage.
+        """
+        if not self.is_loaded:
+            return []
+        
+        total_tiles = self._get_total_tiles(hierarchy_level, dilation)
+        if total_tiles == 0:
+            return []
+        
+        # Try the requested dilation first
+        cursor = self._conn.execute('''
+            SELECT 
+                channel,
+                COUNT(*) as tiles_with_signal
+            FROM channel_stats
+            WHERE dilation = ? AND hierarchy_level = ? AND voxel_count > 0
+            GROUP BY channel
+            ORDER BY tiles_with_signal DESC
+        ''', (dilation, hierarchy_level))
+        
+        rows = cursor.fetchall()
+        
+        # Fallback to dilation=0.0 if no results
+        if not rows and dilation != 0.0:
+            cursor = self._conn.execute('''
+                SELECT 
+                    channel,
+                    COUNT(*) as tiles_with_signal
+                FROM channel_stats
+                WHERE dilation = 0.0 AND hierarchy_level = ? AND voxel_count > 0
+                GROUP BY channel
+                ORDER BY tiles_with_signal DESC
+            ''', (hierarchy_level,))
+            rows = cursor.fetchall()
+        
+        results = []
+        for row in rows:
+            coverage_pct = (row["tiles_with_signal"] / total_tiles) * 100.0
+            results.append((row["channel"], coverage_pct))
+        
+        return results
+    
+    # ──────────────────────────────────────────────
+    # Heatmap: tiles with active fraction
+    # ──────────────────────────────────────────────
     
     def get_combination_tiles(
         self,
         channels: list[str],
-        dilation: int,
+        dilation: float,
         hierarchy_level: int,
     ) -> list[TileData]:
-        # tiles for a specific combination.
+        """
+        Get tiles for a specific channel or combination with active fraction.
+        
+        For a single channel, queries `channel_stats`.
+        For multi-channel combinations, queries `combinations` JOIN `tiles`.
+        
+        active_fraction = voxel_count / tile_volume (for single channel)
+                        = inter_count / tile_volume (for combinations)
+        """
         if not self.is_loaded:
             return []
         
-        channels_str = "|".join(sorted(channels))
+        tile_size = self.get_tile_size(hierarchy_level)
+        z_depth = self._get_z_depth()
         
+        if len(channels) == 1:
+            return self._get_single_channel_tiles(
+                channels[0], dilation, hierarchy_level, tile_size, z_depth
+            )
+        else:
+            return self._get_multi_channel_tiles(
+                channels, dilation, hierarchy_level, tile_size, z_depth
+            )
+    
+    def _get_single_channel_tiles(
+        self,
+        channel: str,
+        dilation: float,
+        hierarchy_level: int,
+        tile_size: int,
+        z_depth: int,
+    ) -> list[TileData]:
+        """Get tiles from channel_stats for a single channel."""
         cursor = self._conn.execute('''
-            SELECT t.tile_x0, t.tile_x1, t.tile_y0, t.tile_y1, t.count
-            FROM combinations c
-            JOIN tiles t ON c.id = t.combination_id
-            WHERE c.channels = ? AND c.dilation = ? AND c.hierarchy_level = ?
-            ORDER BY t.count DESC
-        ''', (channels_str, dilation, hierarchy_level))
+            SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
+            FROM channel_stats
+            WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
+            ORDER BY voxel_count DESC
+        ''', (channel, dilation, hierarchy_level))
         
-        return [
-            TileData(
+        rows = cursor.fetchall()
+        
+        # Fallback to dilation=0.0
+        if not rows and dilation != 0.0:
+            cursor = self._conn.execute('''
+                SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
+                FROM channel_stats
+                WHERE channel = ? AND dilation = 0.0 AND hierarchy_level = ?
+                ORDER BY voxel_count DESC
+            ''', (channel, hierarchy_level))
+            rows = cursor.fetchall()
+        
+        results = []
+        for row in rows:
+            x_span = max(1, row["tile_x1"] - row["tile_x0"])
+            y_span = max(1, row["tile_y1"] - row["tile_y0"])
+            tile_vol = (x_span * tile_size) * (y_span * tile_size) * z_depth
+            voxel_count = row["voxel_count"] or 0
+            active_frac = voxel_count / tile_vol if tile_vol > 0 else 0.0
+            
+            results.append(TileData(
                 x0=row["tile_x0"],
                 x1=row["tile_x1"],
                 y0=row["tile_y0"],
                 y1=row["tile_y1"],
-                count=row["count"],
-            )
-            for row in cursor
-        ]
+                count=voxel_count,
+                active_fraction=active_frac,
+            ))
+        
+        return results
+    
+    def _get_multi_channel_tiles(
+        self,
+        channels: list[str],
+        dilation: float,
+        hierarchy_level: int,
+        tile_size: int,
+        z_depth: int,
+    ) -> list[TileData]:
+        """Get tiles from combinations+tiles for multi-channel overlaps."""
+        # Sort channels by metadata index order
+        channel_order = self.metadata.channels if self.metadata else []
+        sorted_channels = sorted(
+            channels,
+            key=lambda c: channel_order.index(c) if c in channel_order else 999
+        )
+        channels_str = "|".join(sorted_channels)
+        
+        cursor = self._conn.execute('''
+            SELECT t.tile_x0, t.tile_x1, t.tile_y0, t.tile_y1, t.inter_count
+            FROM combinations c
+            JOIN tiles t ON c.id = t.combination_id
+            WHERE c.channels = ? AND c.dilation = ? AND c.hierarchy_level = ?
+            ORDER BY t.inter_count DESC
+        ''', (channels_str, dilation, hierarchy_level))
+        
+        results = []
+        for row in cursor:
+            x_span = max(1, row["tile_x1"] - row["tile_x0"])
+            y_span = max(1, row["tile_y1"] - row["tile_y0"])
+            tile_vol = (x_span * tile_size) * (y_span * tile_size) * z_depth
+            inter_count = row["inter_count"] or 0
+            active_frac = inter_count / tile_vol if tile_vol > 0 else 0.0
+            
+            results.append(TileData(
+                x0=row["tile_x0"],
+                x1=row["tile_x1"],
+                y0=row["tile_y0"],
+                y1=row["tile_y1"],
+                count=inter_count,
+                active_fraction=active_frac,
+            ))
+        
+        return results
+    
+    # ──────────────────────────────────────────────
+    # Tile-level queries (for local plots / drill-down)
+    # ──────────────────────────────────────────────
     
     def get_tile_combinations(
         self,
         tile_x0: int,
         tile_y0: int,
-        dilation: int,
+        dilation: float,
         hierarchy_level: int,
         limit: int = 20,
     ) -> list[CombinationData]:
-        # combinations present in a specific tile.
+        """Get combinations present in a specific tile."""
         if not self.is_loaded:
             return []
         
         cursor = self._conn.execute('''
-            SELECT c.channels, t.count
+            SELECT c.channels, c.iou, c.overlap_coeff, t.inter_count
             FROM combinations c
             JOIN tiles t ON c.id = t.combination_id
             WHERE t.tile_x0 = ? AND t.tile_y0 = ?
               AND c.dilation = ? AND c.hierarchy_level = ?
-            ORDER BY t.count DESC
+              AND c.channel_count >= 2
+            ORDER BY c.iou DESC
             LIMIT ?
         ''', (tile_x0, tile_y0, dilation, hierarchy_level, limit))
         
-        return [
-            CombinationData(
-                channels=row["channels"].split("|") if row["channels"] else [],
-                total_count=row["count"],
-            )
-            for row in cursor
-        ]
+        results = []
+        for row in cursor:
+            channels = row["channels"].split("|") if row["channels"] else []
+            if len(channels) != len(set(channels)):
+                continue
+            results.append(CombinationData(
+                channels=channels,
+                total_count=row["inter_count"] or 0,
+                iou=row["iou"] or 0.0,
+                overlap_coeff=row["overlap_coeff"] or 0.0,
+            ))
+        
+        return results
+    
+    # ──────────────────────────────────────────────
+    # Dilation curve
+    # ──────────────────────────────────────────────
     
     def get_dilation_curve(
         self,
         channels: list[str],
         hierarchy_level: int,
     ) -> list[dict]:
-        # overlap counts across all dilations for a combination.
+        """Get aggregated IoU across all dilations for a combination."""
         if not self.is_loaded:
             return []
         
-        channels_str = "|".join(sorted(channels))
+        channel_order = self.metadata.channels if self.metadata else []
+        sorted_channels = sorted(
+            channels,
+            key=lambda c: channel_order.index(c) if c in channel_order else 999
+        )
+        channels_str = "|".join(sorted_channels)
         
         cursor = self._conn.execute('''
-            SELECT dilation, total_count
+            SELECT 
+                dilation,
+                SUM(total_count) as sum_inter,
+                SUM(total_union) as sum_union
             FROM combinations
             WHERE channels = ? AND hierarchy_level = ?
+            GROUP BY dilation
             ORDER BY dilation
         ''', (channels_str, hierarchy_level))
         
-        return [
-            {"dilation": row["dilation"], "count": row["total_count"]}
-            for row in cursor
-        ]
+        results = []
+        for row in cursor:
+            sum_inter = row["sum_inter"] or 0
+            sum_union = row["sum_union"] or 1
+            agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
+            results.append({
+                "dilation": row["dilation"],
+                "count": sum_inter,
+                "iou": agg_iou,
+            })
+        
+        return results
+    
+    # ──────────────────────────────────────────────
+    # Channel voxel totals (for reference)
+    # ──────────────────────────────────────────────
+    
+    def get_channel_total_voxels(
+        self, channel: str, dilation: float, level: int
+    ) -> int:
+        """Get total voxels for a single channel across all tiles."""
+        if not self.is_loaded:
+            return 0
+        cursor = self._conn.execute('''
+            SELECT SUM(voxel_count) as total
+            FROM channel_stats
+            WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
+        ''', (channel, dilation, level))
+        row = cursor.fetchone()
+        return row["total"] if row and row["total"] else 0
+    
+    # ──────────────────────────────────────────────
+    # Cleanup
+    # ──────────────────────────────────────────────
     
     def close(self):
-        # close db
         if self._conn:
             self._conn.close()
             self._conn = None
@@ -338,6 +646,7 @@ class AnalysisLoader:
         
         self._loaded = False
         self.metadata = None
+        self._total_tiles_cache.clear()
     
     def __del__(self):
         self.close()

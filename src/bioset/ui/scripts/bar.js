@@ -65,7 +65,7 @@ Vue.component('bar-plot', {
             const marginBottom = 120;
             const marginLeft = 100;
 
-            const chartData = renderData.map(d => ({ name: d[0], count: d[1] }));
+            const chartData = renderData.map(d => ({ name: d[0], pct: d[1] }));
 
             // Scales
             const x = d3.scaleBand()
@@ -74,7 +74,7 @@ Vue.component('bar-plot', {
                 .padding(0.1);
 
             const y = d3.scaleLinear()
-                .domain([0, maxCount])
+                .domain([0, 100])
                 .range([height - marginBottom, marginTop]);
 
             const svg = d3.select(container)
@@ -89,8 +89,8 @@ Vue.component('bar-plot', {
                 .data(chartData)
                 .join("rect")
                 .attr("x", d => x(d.name))
-                .attr("y", d => y(d.count))
-                .attr("height", d => y(0) - y(d.count))
+                .attr("y", d => y(d.pct))
+                .attr("height", d => y(0) - y(d.pct))
                 .attr("width", x.bandwidth())
                 .attr("fill", d => {
                     if (this.channelData) {
@@ -105,7 +105,7 @@ Vue.component('bar-plot', {
                 .on("click", (event, d) => {
                     this.$emit('click', {
                         name: d.name,
-                        count: d.count,
+                        pct: d.pct,
                         ts: Date.now()
                     });
                 });
@@ -128,7 +128,7 @@ Vue.component('bar-plot', {
             // Y-axis
             svg.append("g")
                 .attr("transform", `translate(${marginLeft},0)`)
-                .call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".2e")))
+                .call(d3.axisLeft(y).ticks(5).tickFormat(d => d + "%"))
                 .call(g => g.select(".domain").remove())
                 .selectAll("text")
                 .attr("fill", "white")

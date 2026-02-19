@@ -1,10 +1,3 @@
-"""
-Heatmap visualization using VTK cubes for spatial tiles.
-
-This module renders analysis results as semi-transparent cubes
-positioned at tile locations, with opacity based on overlap counts.
-"""
-
 from __future__ import annotations
 
 from typing import Dict, Optional, Tuple, List
@@ -25,8 +18,12 @@ class HeatmapConfig:
     z_height: float = 1.0  # todo, data and meta data decide?
     z_offset: float = 0.0    
     edge_visibility: bool = True
-    edge_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)
-    edge_opacity: float = 0.3
+    edge_color: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    edge_opacity: float = 1.0
+    edge_width: float = 5.0
+    percentile_cutoff: float = 0.7  # Only show tiles above this active_fraction percentile
+    opacity_scale: str = 'exponential'  # 'linear' or 'exponential'
+    gamma: float = 8.0  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
 
 
 class HeatmapRenderer:    
@@ -54,10 +51,16 @@ class HeatmapRenderer:
         self._current_tiles = tiles
         self._current_spacing = spacing
         
-        counts = [t.count for t in tiles]
-        min_count = min(counts)
-        max_count = max(counts)
-        count_range = max_count - min_count if max_count > min_count else 1
+        fractions = [t.active_fraction for t in tiles]
+        fractions_sorted = sorted(fractions)
+        cutoff_idx = max(0, int(len(fractions_sorted) * self.config.percentile_cutoff))
+        cutoff_value = fractions_sorted[cutoff_idx]
+        tiles = [t for t in tiles if t.active_fraction >= cutoff_value and t.active_fraction > 0]
+
+        if not tiles:
+            return
+        max_frac = max(fractions) if fractions else 1.0
+        scale = max_frac if max_frac > 0 else 1.0
         
         sx, sy, sz = spacing
         base_color = color if color else self.config.base_color
@@ -71,9 +74,17 @@ class HeatmapRenderer:
             y_size = (tile.y1 - tile.y0) * sy
             z_size = self.config.z_height
             
-            normalized = (tile.count - min_count) / count_range
-            opacity = self.config.min_opacity + normalized * (self.config.max_opacity - self.config.min_opacity)
+            # Map active_fraction to opacity
+            if self.config.opacity_scale == 'linear':
+                normalized = tile.active_fraction / scale
+            elif self.config.opacity_scale == 'exponential':
+                min_frac = min(fractions)
+                frac_range = scale - min_frac if scale > min_frac else 1.0
+                normalized = (tile.active_fraction - min_frac) / frac_range
+                normalized = normalized ** self.config.gamma
             
+            opacity = self.config.min_opacity + normalized * (self.config.max_opacity - self.config.min_opacity)
+
             actor = self._create_cube_actor(
                 center=(x_center, y_center, z_center),
                 size=(x_size, y_size, z_size),
@@ -105,6 +116,7 @@ class HeatmapRenderer:
         
         actor = vtkActor()
         actor.SetMapper(mapper)
+        actor.SetScale(128,128,1.0) #TOD
         
         prop = actor.GetProperty()
         prop.SetColor(*color)
@@ -113,7 +125,7 @@ class HeatmapRenderer:
         if self.config.edge_visibility:
             prop.EdgeVisibilityOn()
             prop.SetEdgeColor(*self.config.edge_color)
-            prop.SetLineWidth(1.0)
+            prop.SetLineWidth(self.config.edge_width)
         
         return actor
     
