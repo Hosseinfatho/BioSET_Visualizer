@@ -20,7 +20,7 @@ class HeatmapConfig:
     edge_visibility: bool = True
     edge_color: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     edge_opacity: float = 1.0
-    edge_width: float = 5.0
+    edge_width: float = 1.0
     percentile_cutoff: float = 0.7  # Only show tiles above this active_fraction percentile
     opacity_scale: str = 'exponential'  # 'linear' or 'exponential'
     gamma: float = 8.0  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
@@ -123,7 +123,7 @@ class HeatmapRenderer:
         prop.SetOpacity(opacity)
         
         if self.config.edge_visibility:
-            prop.EdgeVisibilityOn()
+            prop.EdgeVisibilityOff()
             prop.SetEdgeColor(*self.config.edge_color)
             prop.SetLineWidth(self.config.edge_width)
         
