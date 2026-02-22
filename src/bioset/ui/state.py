@@ -54,14 +54,18 @@ def init_state(state):
     state.setdefault("lineage_selected_name", "Name")
     state.setdefault("lineage_form_dialog", False)
     state.setdefault("lineage_form_name", "")
-    state.setdefault("lineage_form_user", "")
-    state.setdefault("lineage_form_region", "")
     state.setdefault("lineage_form_description", "")
     state.setdefault("lineage_form_new_comment", "")
-    state.setdefault("lineage_display_snapshot", None)  # loaded snapshot for display
+    state.setdefault("lineage_display_snapshot", None)
+    state.setdefault("lineage_current_view_index", 0)
+    state.setdefault("lineage_form_minimized", False)
     state.setdefault("lineage_dataset_id", "default")   # per-dataset folder under recordings
-    state.setdefault("lineage_edit_description", "")  # editable when snapshot opened
-    state.setdefault("lineage_edit_comment", "")       # editable when snapshot opened
+    state.setdefault("lineage_edit_title", "")
+    state.setdefault("lineage_edit_description", "")
+    state.setdefault("lineage_edit_comment", "")
+    state.setdefault("lineage_export_screenshot_dialog", False)
+    state.setdefault("lineage_export_screenshot_name", "")
+    state.setdefault("lineage_export_screenshot_caption", "")
     
     # Right drawer
     state.setdefault("right_drawer_open", False)

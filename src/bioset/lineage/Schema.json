@@ -38,6 +38,29 @@
         "roi": { "type": "object" }
       }
     },
+    "views": {
+      "type": "array",
+      "description": "Multiple views: each can have different camera, channels, active_channels, filter range (TF), background, notes, comments.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "camera": {
+            "type": "object",
+            "properties": {
+              "position": { "type": "array", "items": { "type": "number" } },
+              "focalPoint": { "type": "array", "items": { "type": "number" } },
+              "viewUp": { "type": "array", "items": { "type": "number" } }
+            }
+          },
+          "notes": { "type": "string" },
+          "comments": { "type": "array" },
+          "channels": { "type": "array", "description": "Active channels: id, name, color, range (filter/transfer function)." },
+          "active_channels": { "type": "array" },
+          "background": { "type": "string" },
+          "viewport": { "type": "object", "properties": { "width": { "type": "integer" }, "height": { "type": "integer" } } }
+        }
+      }
+    },
     "groups": { "type": "array", "items": { "type": "string" } },
     "meta": {
       "type": "object",

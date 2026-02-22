@@ -22,6 +22,25 @@ def _recordings_dir(dataset_id: str) -> Path:
     return RECORDINGS_BASE / safe_id
 
 
+def screenshot_dir(dataset_id: str = DEFAULT_DATASET) -> Path:
+    """Folder for screenshots: recordings/<dataset_id>/Screenshot/."""
+    return _recordings_dir(dataset_id) / "Screenshot"
+
+
+def save_screenshot(png_bytes: bytes, filename: str, dataset_id: str = DEFAULT_DATASET) -> Path:
+    """Save PNG bytes to recordings/<dataset_id>/Screenshot/<filename>.png. Returns path."""
+    folder = screenshot_dir(dataset_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    name = (filename or "screenshot").strip() or "screenshot"
+    name = re.sub(r'[^\w\s\-.]', '', name)
+    name = re.sub(r'[\s\-]+', '_', name).strip('_') or "screenshot"
+    if not name.lower().endswith(".png"):
+        name += ".png"
+    path = folder / name
+    path.write_bytes(png_bytes)
+    return path
+
+
 def _safe_filename(name: str) -> str:
     """Safe filename from snapshot title (same ID/name as user set for the area)."""
     s = re.sub(r'[^\w\s\-]', '', name)
@@ -70,6 +89,16 @@ def load_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> Optio
     return None
 
 
+def delete_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> bool:
+    """Remove snapshot file by title/name. Returns True if deleted."""
+    rec = _recordings_dir(dataset_id)
+    path = rec / _safe_filename(name)
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
 def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -> None:
     """Save one snapshot to recordings/<dataset_id>/<name>.json (same ID as user set)."""
     rec = _recordings_dir(dataset_id)
@@ -78,7 +107,6 @@ def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -
     path = rec / _safe_filename(title)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(snapshot, f, indent=2, ensure_ascii=False)
-    print(f"[lineage] Saved to {path}")
 
 
 def snapshot_names(dataset_id: str = DEFAULT_DATASET) -> List[str]:
