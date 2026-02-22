@@ -96,3 +96,46 @@ def settings_section(state, ctrl):
                             html.Span("Reset camera position")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Reset Camera")
+                
+                # Lineage
+                with vuetify.VListItem(
+                    class_=("lineage_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                    link=True,
+                    ripple=True,
+                    click="lineage_open = !lineage_open",
+                ):
+                    with vuetify.VListItemIcon():
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon("mdi-book-open-variant", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Lineage")
+                    with vuetify.VListItemContent(v_if="!drawer_mini"):
+                        vuetify.VListItemTitle("Lineage", classes="text-overline")
+                with vuetify.VExpandTransition():
+                    with html.Div(v_show=("lineage_open", False)):
+                        with vuetify.VListItem(class_="nav-item nav-item--nested", style="flex-wrap: wrap;"):
+                            with vuetify.VListItemContent(v_if="!drawer_mini", style="width: 100%;"):
+                                html.Span("Name", classes="text-caption d-block mb-1")
+                                vuetify.VAutocomplete(
+                                    v_model=("lineage_selected_name", "Name"),
+                                    items=("lineage_snapshot_names", []),
+                                    dense=True,
+                                    hide_details=True,
+                                    placeholder="Name",
+                                    style="max-width: 100%;",
+                                )
+                        with vuetify.VListItem(class_="nav-item nav-item--nested", style="flex-wrap: wrap;"):
+                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; gap: 4px; flex-wrap: wrap;"):
+                                with vuetify.VBtn(
+                                    small=True,
+                                    color="primary",
+                                    disabled=("!lineage_selected_name || !String(lineage_selected_name).trim()",),
+                                    click=ctrl.lineage_open_snapshot,
+                                ):
+                                    html.Span("Open")
+                                with vuetify.VBtn(
+                                    small=True,
+                                    color="secondary",
+                                    click=ctrl.lineage_open_new_form,
+                                ):
+                                    html.Span("New")

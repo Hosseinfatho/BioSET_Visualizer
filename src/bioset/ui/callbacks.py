@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import uuid
+from datetime import datetime
+
 from bioset.llm import BiomniClient
+from bioset.lineage.snapshot_io import load_snapshots, load_snapshot_by_name, save_snapshot, snapshot_names
 from .state import get_channel_color
 
 
@@ -90,6 +95,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
             initial_visible = channels if len(channels) < state.default_num_channels else [ch["id"] for ch in channels[:state.default_num_channels]]
             state.visible_channel_ids = initial_visible
             state.data_loaded = True
+            # Per-dataset folder for lineage recordings (one folder per dataset link)
+            try:
+                url = getattr(state, "zarr_url", "") or ""
+                state.lineage_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
+            except Exception:
+                state.lineage_dataset_id = "default"
             
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
@@ -809,6 +820,293 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print("[callbacks] Clearing chatbot messages")
         state.chatbot_messages = []
         state.chatbot_input = ""
+
+    # ---- Lineage (view snapshots, per-dataset recordings) ----
+    def _lineage_dataset_id():
+        return getattr(state, "lineage_dataset_id", None) or "default"
+
+    def lineage_refresh_names():
+        """Load snapshot names for current dataset into dropdown."""
+        dataset_id = _lineage_dataset_id()
+        names = snapshot_names(dataset_id)
+        state.lineage_snapshot_names = names
+        print(f"[callbacks] Lineage: loaded {len(names)} names for dataset {dataset_id}")
+
+    def lineage_open_snapshot():
+        """Open selected snapshot: restore camera, channels, colors, LOD, TF; show description/comment."""
+        name = getattr(state, "lineage_selected_name", None) or "Name"
+        if not name or not str(name).strip():
+            print("[callbacks] Lineage: no name selected")
+            return
+        dataset_id = _lineage_dataset_id()
+        snap = load_snapshot_by_name(name, dataset_id)
+        if not snap:
+            print(f"[callbacks] Lineage: snapshot not found: {name}")
+            return
+        streamer = _refs.get("streamer")
+        # Restore UI state
+        # Restore exact channels list (names and ranges) so UI shows saved state
+        if "channels" in snap and snap["channels"]:
+            state.channels = [{**c, "id": c.get("id"), "name": c.get("name") or f"Channel {c.get('id')}", "color": c.get("color", "#FFFFFF"), "range": c.get("range", [0, 100])} for c in snap["channels"]]
+        if "active_channels" in snap:
+            state.active_channels = list(snap["active_channels"])
+            # Ensure restored channels appear in the channel list (visible)
+            visible = list(getattr(state, "visible_channel_ids", []) or [])
+            for ch_id in state.active_channels:
+                if ch_id not in visible:
+                    visible.append(ch_id)
+            state.visible_channel_ids = visible
+        if "background" in snap:
+            state.bg_color = snap["background"]
+            if hasattr(ctrl, "update_background_color"):
+                ctrl.update_background_color(snap["background"])
+        lod = snap.get("optional_LOD") or {}
+        comp = lod.get("component")
+        roi = lod.get("roi")
+        has_lod = comp is not None and isinstance(roi, dict)
+        if streamer and has_lod and state.active_channels:
+            # Restore at exact LOD: deactivate all, then load each channel at saved comp/roi
+            for ch_id in list(streamer.get_active_channels()):
+                streamer.deactivate_channel(ch_id)
+            for ch_id in state.active_channels:
+                ch_id = int(ch_id)
+                color_hex = "#FFFFFF"
+                for ch in state.channels:
+                    if ch.get("id") == ch_id:
+                        color_hex = ch.get("color") or color_hex
+                        break
+                streamer.load_channel_at_lod(
+                    ch_id, color_hex, comp, roi,
+                    reset_camera=False,
+                )
+            # Apply saved transfer function ranges after load
+            from bioset.scene.volumes import build_tf_with_range
+            for ch in state.channels:
+                ch_id = ch.get("id")
+                if ch_id is None or ch_id not in state.active_channels:
+                    continue
+                rng = ch.get("range")
+                if rng and ch_id in getattr(streamer, "_channel_data_range", {}):
+                    data_range = streamer._channel_data_range[ch_id]
+                    tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
+                    color_tf, opacity_tf = build_tf_with_range(data_range, tuple(rng), tint)
+                    streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
+                    if ch_id in streamer.volumes:
+                        prop = streamer.volumes[ch_id].GetProperty()
+                        prop.SetColor(color_tf)
+                        prop.SetScalarOpacity(opacity_tf)
+        else:
+            if hasattr(ctrl, "update_active_channels"):
+                ctrl.update_active_channels(state.active_channels)
+            if streamer:
+                for ch in state.channels:
+                    ch_id = ch.get("id")
+                    if ch_id is None:
+                        continue
+                    if ch_id in state.active_channels and ch.get("color"):
+                        streamer._channel_colors[ch_id] = streamer._hex_to_rgb(ch["color"])
+                    if ch_id in state.active_channels and ch.get("range") and ch_id in getattr(streamer, "_channel_data_range", {}):
+                        from bioset.scene.volumes import build_tf_with_range
+                        rng = tuple(ch["range"])
+                        color_tf, opacity_tf = build_tf_with_range(
+                            streamer._channel_data_range[ch_id], rng, streamer._channel_colors.get(ch_id, (1, 1, 1))
+                        )
+                        streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
+                        if ch_id in streamer.volumes:
+                            prop = streamer.volumes[ch_id].GetProperty()
+                            prop.SetColor(color_tf)
+                            prop.SetScalarOpacity(opacity_tf)
+        if streamer and hasattr(streamer, "renderer") and streamer.renderer and "camera" in snap:
+            cam = streamer.renderer.GetActiveCamera()
+            c = snap["camera"]
+            if c and "position" in c and len(c["position"]) >= 3:
+                cam.SetPosition(c["position"][:3])
+            if c and "focalPoint" in c and len(c["focalPoint"]) >= 3:
+                cam.SetFocalPoint(c["focalPoint"][:3])
+            if c and "viewUp" in c and len(c["viewUp"]) >= 3:
+                cam.SetViewUp(c["viewUp"][:3])
+            streamer.renderer.ResetCameraClippingRange()
+        if _refs.get("view"):
+            _refs["view"].update()
+        state.lineage_edit_description = snap.get("description") or ""
+        state.lineage_edit_comment = ""
+        state.lineage_display_snapshot = {
+            "title": snap.get("title"),
+            "user": snap.get("user"),
+            "description": snap.get("description"),
+            "comments": snap.get("comments", []),
+            "created": snap.get("created"),
+            "updated": snap.get("updated"),
+            "agreements": snap.get("agreements", 0),
+            "disagreements": snap.get("disagreements", 0),
+        }
+        print(f"[callbacks] Lineage: opened snapshot '{name}'")
+
+    def lineage_open_new_form():
+        """Open the new-snapshot form (bottom-left). Optionally refresh names."""
+        lineage_refresh_names()
+        state.lineage_form_name = getattr(state, "lineage_selected_name", "Name") or "Name"
+        state.lineage_form_user = ""
+        state.lineage_form_region = ""
+        state.lineage_form_description = ""
+        state.lineage_form_new_comment = ""
+        state.lineage_form_dialog = True
+        print("[callbacks] Lineage: opened new snapshot form")
+
+    def lineage_save_snapshot():
+        """Capture current view + form fields; save to lineage JSON (one file per name); close form."""
+        streamer = _refs.get("streamer")
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        camera = {}
+        if streamer and hasattr(streamer, "renderer") and streamer.renderer:
+            cam = streamer.renderer.GetActiveCamera()
+            camera["position"] = list(cam.GetPosition())
+            camera["focalPoint"] = list(cam.GetFocalPoint())
+            camera["viewUp"] = list(cam.GetViewUp())
+        optional_lod = None
+        if streamer and getattr(streamer, "state", None):
+            for ch_id in state.active_channels:
+                if ch_id in streamer.state:
+                    st = streamer.state[ch_id]
+                    optional_lod = {
+                        "component": st.component,
+                        "roi": {"x0": st.roi.x0, "x1": st.roi.x1, "y0": st.roi.y0, "y1": st.roi.y1},
+                    }
+                    break
+        form_name = (getattr(state, "lineage_form_name", None) or getattr(state, "lineage_selected_name", None) or "").strip()
+        title = form_name or "Unnamed"
+        comments = []
+        # Save channels with exact name and range from current list
+        channels_data = []
+        for ch in (state.channels or []):
+            c = dict(ch) if isinstance(ch, dict) else {}
+            channels_data.append({
+                "id": c.get("id"),
+                "name": c.get("name") or f"Channel {c.get('id', '')}",
+                "color": c.get("color", "#FFFFFF"),
+                "range": c.get("range", [0, 100]),
+            })
+        snapshot = {
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "created": now,
+            "updated": now,
+            "user": getattr(state, "lineage_form_user", "") or "",
+            "region": getattr(state, "lineage_form_region", "") or "",
+            "description": getattr(state, "lineage_form_description", "") or "",
+            "comments": comments,
+            "camera": camera,
+            "channels": channels_data,
+            "active_channels": list(state.active_channels) if state.active_channels else [],
+            "background": getattr(state, "bg_color", "#000000") or "#000000",
+        }
+        if optional_lod:
+            snapshot["optional_LOD"] = optional_lod
+        snapshot["agreements"] = 0
+        snapshot["disagreements"] = 0
+        dataset_id = _lineage_dataset_id()
+        save_snapshot(snapshot, dataset_id)
+        lineage_refresh_names()
+        state.lineage_selected_name = title
+        state.lineage_form_dialog = False
+        state.lineage_edit_description = snapshot["description"]
+        state.lineage_edit_comment = ""
+        state.lineage_display_snapshot = {
+            "title": title,
+            "user": snapshot["user"],
+            "description": snapshot["description"],
+            "comments": snapshot["comments"],
+            "created": snapshot["created"],
+            "updated": snapshot["updated"],
+            "agreements": 0,
+            "disagreements": 0,
+        }
+        if _refs.get("view"):
+            _refs["view"].update()
+        print(f"[callbacks] Lineage: saved snapshot '{title}'")
+
+    def lineage_agree():
+        """Increment agreements for the currently displayed snapshot and save."""
+        disp = getattr(state, "lineage_display_snapshot", None)
+        if not disp or not disp.get("title"):
+            print("[callbacks] Lineage: no snapshot displayed to agree")
+            return
+        title = disp["title"]
+        dataset_id = _lineage_dataset_id()
+        snap = load_snapshot_by_name(title, dataset_id)
+        if not snap:
+            print(f"[callbacks] Lineage: snapshot not found: {title}")
+            return
+        snap["agreements"] = snap.get("agreements", 0) + 1
+        save_snapshot(snap, dataset_id)
+        state.lineage_display_snapshot = {**disp, "agreements": snap["agreements"]}
+        print(f"[callbacks] Lineage: agreements = {snap['agreements']} for '{title}'")
+
+    def lineage_disagree():
+        """Increment disagreements for the currently displayed snapshot and save."""
+        disp = getattr(state, "lineage_display_snapshot", None)
+        if not disp or not disp.get("title"):
+            return
+        title = disp["title"]
+        dataset_id = _lineage_dataset_id()
+        snap = load_snapshot_by_name(title, dataset_id)
+        if not snap:
+            return
+        snap["disagreements"] = snap.get("disagreements", 0) + 1
+        save_snapshot(snap, dataset_id)
+        state.lineage_display_snapshot = {**disp, "disagreements": snap["disagreements"]}
+
+    def lineage_comment():
+        """Append current comment to the displayed snapshot and save."""
+        disp = getattr(state, "lineage_display_snapshot", None)
+        if not disp or not disp.get("title"):
+            return
+        new_comment = (getattr(state, "lineage_edit_comment", "") or "").strip()
+        if not new_comment:
+            return
+        title = disp["title"]
+        dataset_id = _lineage_dataset_id()
+        snap = load_snapshot_by_name(title, dataset_id)
+        if not snap:
+            return
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        snap["updated"] = now
+        snap.setdefault("comments", []).append({"date": now, "text": new_comment})
+        save_snapshot(snap, dataset_id)
+        state.lineage_display_snapshot = {**disp, "comments": snap["comments"], "updated": now}
+        state.lineage_edit_comment = ""
+
+    def lineage_update_snapshot():
+        """Update description and append comment for the currently displayed snapshot."""
+        disp = getattr(state, "lineage_display_snapshot", None)
+        if not disp or not disp.get("title"):
+            print("[callbacks] Lineage: no snapshot displayed to update")
+            return
+        title = disp["title"]
+        dataset_id = _lineage_dataset_id()
+        snap = load_snapshot_by_name(title, dataset_id)
+        if not snap:
+            print(f"[callbacks] Lineage: snapshot not found: {title}")
+            return
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        snap["updated"] = now
+        snap["description"] = getattr(state, "lineage_edit_description", "") or ""
+        new_comment = (getattr(state, "lineage_edit_comment", "") or "").strip()
+        if new_comment:
+            snap.setdefault("comments", []).append({"date": now, "text": new_comment})
+        save_snapshot(snap, dataset_id)
+        state.lineage_display_snapshot = {
+            "title": snap.get("title"),
+            "user": snap.get("user"),
+            "description": snap.get("description"),
+            "comments": snap.get("comments", []),
+            "created": snap.get("created"),
+            "updated": snap.get("updated"),
+            "agreements": snap.get("agreements", 0),
+            "disagreements": snap.get("disagreements", 0),
+        }
+        state.lineage_edit_comment = ""
+        print(f"[callbacks] Lineage: updated '{title}'")
         
     def capture_screenshot():
         """Capture current VTK view as base64-encoded PNG."""
@@ -889,4 +1187,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_clear = chatbot_clear
     ctrl.set_mesh_manager = set_mesh_manager
+    ctrl.lineage_refresh_names = lineage_refresh_names
+    ctrl.lineage_open_snapshot = lineage_open_snapshot
+    ctrl.lineage_open_new_form = lineage_open_new_form
+    ctrl.lineage_save_snapshot = lineage_save_snapshot
+    ctrl.lineage_agree = lineage_agree
+    ctrl.lineage_disagree = lineage_disagree
+    ctrl.lineage_comment = lineage_comment
+    ctrl.lineage_update_snapshot = lineage_update_snapshot
 

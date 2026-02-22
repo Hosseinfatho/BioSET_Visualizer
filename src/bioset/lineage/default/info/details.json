@@ -1,0 +1,1497 @@
+{
+  "snapshots": [
+    {
+      "id": "6fd361eb-bffd-4ddf-8d75-30ea1861ae3d",
+      "title": "Name",
+      "created": "2026-02-22T04:22:24Z",
+      "updated": "2026-02-22T04:22:24Z",
+      "user": "Hossein",
+      "region": "MX1",
+      "description": "interaction between MX1 and 5'hmc",
+      "comments": [],
+      "camera": {
+        "position": [
+          740.9124988901652,
+          344.6579093007881,
+          87.60652171421498
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          -0.02341255006433801,
+          0.8613100221880031,
+          0.5075400458860232
+        ]
+      },
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF0000",
+          "color_dialog": false,
+          "range": [
+            0,
+            23
+          ]
+        },
+        {
+          "id": 1,
+          "name": "5'hmC",
+          "color": "#00FF00",
+          "color_dialog": false,
+          "range": [
+            0,
+            28
+          ]
+        },
+        {
+          "id": 2,
+          "name": "MX1",
+          "color": "#0000FF",
+          "color_dialog": false,
+          "range": [
+            0,
+            31
+          ]
+        },
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 4,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 5,
+          "name": "CD3E (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 6,
+          "name": "MHC-I",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 7,
+          "name": "SOX10",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 9,
+          "name": "S100B",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 10,
+          "name": "MITF",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 11,
+          "name": "GranzymeB (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 13,
+          "name": "pan-cytokeratin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 14,
+          "name": "lamin-ABC",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 15,
+          "name": "PDL1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 17,
+          "name": "PD1 (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 18,
+          "name": "S100A",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 20,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 21,
+          "name": "CD206",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 22,
+          "name": "pMLC2",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 23,
+          "name": "CD11b (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 26,
+          "name": "LAG3",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 27,
+          "name": "CD20",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 28,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 29,
+          "name": "PRAME",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 30,
+          "name": "CD163",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 31,
+          "name": "IRF1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 32,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 33,
+          "name": "B-catenin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 34,
+          "name": "CD3E",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 36,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 37,
+          "name": "CD11b",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 38,
+          "name": "FOXP3",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 39,
+          "name": "PD1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 40,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 41,
+          "name": "Ki67",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 42,
+          "name": "CD11c",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 43,
+          "name": "COX-IV",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 44,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 45,
+          "name": "LysozymeC",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 46,
+          "name": "SOX9",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 47,
+          "name": "PMEL",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 48,
+          "name": "CD103",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 49,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 50,
+          "name": "CyclinD1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 51,
+          "name": "BAF1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 53,
+          "name": "B-actin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Mast cell tryptase",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 55,
+          "name": "CD15",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Podoplanin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 57,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 58,
+          "name": "B-tubulin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 59,
+          "name": "Catalase",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 60,
+          "name": "y-H2AX",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 61,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 62,
+          "name": "E-cadherin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 63,
+          "name": "Vimentin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 64,
+          "name": "Neurofilament L (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 65,
+          "name": "GranzymeB",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 66,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 67,
+          "name": "MHC-II",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 68,
+          "name": "H3K27me3",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 69,
+          "name": "Collagen (SHG)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        1,
+        2
+      ],
+      "background": "#000000",
+      "optional_LOD": {
+        "component": 0,
+        "roi": {
+          "x0": 5021,
+          "x1": 6128,
+          "y0": 2505,
+          "y1": 3201
+        }
+      }
+    },
+    {
+      "id": "5c5e9bb6-89c1-4241-b675-3c86de15a0f0",
+      "title": "Name",
+      "created": "2026-02-22T04:37:24Z",
+      "updated": "2026-02-22T04:37:24Z",
+      "user": "H",
+      "region": "D1",
+      "description": "interaction",
+      "comments": [
+        {
+          "date": "2026-02-22T04:37:24Z",
+          "text": "not clear"
+        }
+      ],
+      "camera": {
+        "position": [
+          757.1199999999999,
+          380.8,
+          155.25532650792692
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF0000",
+          "color_dialog": false,
+          "range": [
+            0,
+            42
+          ]
+        },
+        {
+          "id": 1,
+          "name": "5'hmC",
+          "color": "#00FF00",
+          "color_dialog": false,
+          "range": [
+            0,
+            43
+          ]
+        },
+        {
+          "id": 2,
+          "name": "MX1",
+          "color": "#0000FF",
+          "color_dialog": false,
+          "range": [
+            0,
+            46
+          ]
+        },
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 4,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 5,
+          "name": "CD3E (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 6,
+          "name": "MHC-I",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 7,
+          "name": "SOX10",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 9,
+          "name": "S100B",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 10,
+          "name": "MITF",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 11,
+          "name": "GranzymeB (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 12,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 13,
+          "name": "pan-cytokeratin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 14,
+          "name": "lamin-ABC",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 15,
+          "name": "PDL1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 16,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 17,
+          "name": "PD1 (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 18,
+          "name": "S100A",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 20,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 21,
+          "name": "CD206",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 22,
+          "name": "pMLC2",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 23,
+          "name": "CD11b (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 26,
+          "name": "LAG3",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 27,
+          "name": "CD20",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 28,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 29,
+          "name": "PRAME",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 30,
+          "name": "CD163",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 31,
+          "name": "IRF1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 32,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 33,
+          "name": "B-catenin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 34,
+          "name": "CD3E",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 36,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 37,
+          "name": "CD11b",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 38,
+          "name": "FOXP3",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 39,
+          "name": "PD1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 40,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 41,
+          "name": "Ki67",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 42,
+          "name": "CD11c",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 43,
+          "name": "COX-IV",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 44,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 45,
+          "name": "LysozymeC",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 46,
+          "name": "SOX9",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 47,
+          "name": "PMEL",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 48,
+          "name": "CD103",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 49,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 50,
+          "name": "CyclinD1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 51,
+          "name": "BAF1",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 52,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 53,
+          "name": "B-actin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 54,
+          "name": "Mast cell tryptase",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 55,
+          "name": "CD15",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 56,
+          "name": "Podoplanin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 57,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 58,
+          "name": "B-tubulin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 59,
+          "name": "Catalase",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 60,
+          "name": "y-H2AX",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 61,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 62,
+          "name": "E-cadherin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 63,
+          "name": "Vimentin",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 64,
+          "name": "Neurofilament L (do not use)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 65,
+          "name": "GranzymeB",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 66,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 67,
+          "name": "MHC-II",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 68,
+          "name": "H3K27me3",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        },
+        {
+          "id": 69,
+          "name": "Collagen (SHG)",
+          "color": "#FFFFFF",
+          "color_dialog": false,
+          "range": [
+            0,
+            100
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        1,
+        2
+      ],
+      "background": "#000000",
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2254,
+          "x1": 3153,
+          "y0": 1138,
+          "y1": 1582
+        }
+      }
+    }
+  ]
+}

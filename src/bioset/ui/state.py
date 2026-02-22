@@ -48,6 +48,21 @@ def init_state(state):
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)
     
+    # Lineage (view snapshots: name, open, new form)
+    state.setdefault("lineage_open", False)
+    state.setdefault("lineage_snapshot_names", [])
+    state.setdefault("lineage_selected_name", "Name")
+    state.setdefault("lineage_form_dialog", False)
+    state.setdefault("lineage_form_name", "")
+    state.setdefault("lineage_form_user", "")
+    state.setdefault("lineage_form_region", "")
+    state.setdefault("lineage_form_description", "")
+    state.setdefault("lineage_form_new_comment", "")
+    state.setdefault("lineage_display_snapshot", None)  # loaded snapshot for display
+    state.setdefault("lineage_dataset_id", "default")   # per-dataset folder under recordings
+    state.setdefault("lineage_edit_description", "")  # editable when snapshot opened
+    state.setdefault("lineage_edit_comment", "")       # editable when snapshot opened
+    
     # Right drawer
     state.setdefault("right_drawer_open", False)
     
@@ -228,6 +243,11 @@ def register_state_change_handlers(state, ctrl):
     @state.change("bar_search")
     def on_bar_search_change(bar_search, **kwargs):
         state.bar_filtered_channels = _filter_channels(state.analysis_channels, bar_search)
+
+    @state.change("lineage_open")
+    def on_lineage_open_change(lineage_open, **kwargs):
+        if lineage_open and hasattr(ctrl, "lineage_refresh_names"):
+            ctrl.lineage_refresh_names()
 
     @state.change("analysis_channels")
     def on_analysis_channels_change(analysis_channels, **kwargs):

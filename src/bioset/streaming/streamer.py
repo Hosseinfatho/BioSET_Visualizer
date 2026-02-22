@@ -346,6 +346,25 @@ class VolumeStreamer:
         
         print(f"[stream] Channel {channel_id} displayed")
 
+    def load_channel_at_lod(
+        self,
+        channel_id: int,
+        color_hex: str,
+        component: int,
+        roi_dict: dict,
+        reset_camera: bool = False,
+    ) -> None:
+        """Load one channel at exact LOD (component and roi). Used when restoring a lineage snapshot."""
+        roi = ROI(
+            x0=int(roi_dict.get("x0", 0)),
+            x1=int(roi_dict.get("x1", 1)),
+            y0=int(roi_dict.get("y0", 0)),
+            y1=int(roi_dict.get("y1", 1)),
+        )
+        self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
+        self._active_channels.add(channel_id)
+        self._load_and_display_channel(channel_id, component, roi, reset_camera=reset_camera)
+
     def get_active_channels(self) -> set[int]:
         """Return the set of currently active channel IDs."""
         return self._active_channels.copy()
