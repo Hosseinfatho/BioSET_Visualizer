@@ -113,29 +113,28 @@ def settings_section(state, ctrl):
                         vuetify.VListItemTitle("Lineage", classes="text-overline")
                 with vuetify.VExpandTransition():
                     with html.Div(v_show=("lineage_open", False)):
-                        with vuetify.VListItem(class_="nav-item nav-item--nested", style="flex-wrap: wrap;"):
-                            with vuetify.VListItemContent(v_if="!drawer_mini", style="width: 100%;"):
-                                html.Span("Name", classes="text-caption d-block mb-1")
+                        with vuetify.VListItem(class_="nav-item nav-item--nested"):
+                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;"):
                                 vuetify.VAutocomplete(
                                     v_model=("lineage_selected_name", "Name"),
                                     items=("lineage_snapshot_names", []),
                                     dense=True,
                                     hide_details=True,
-                                    placeholder="Name",
-                                    style="max-width: 100%;",
+                                    placeholder="Select...",
+                                    style="flex: 0.4 1 0; min-width: 0;",
                                 )
-                        with vuetify.VListItem(class_="nav-item nav-item--nested", style="flex-wrap: wrap;"):
-                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; gap: 4px; flex-wrap: wrap;"):
                                 with vuetify.VBtn(
-                                    small=True,
+                                    x_small=True,
                                     color="primary",
                                     disabled=("!lineage_selected_name || !String(lineage_selected_name).trim()",),
                                     click=ctrl.lineage_open_snapshot,
+                                    style="flex: 0.3 1 0; min-width: 0;",
                                 ):
                                     html.Span("Open")
                                 with vuetify.VBtn(
-                                    small=True,
+                                    x_small=True,
                                     color="secondary",
                                     click=ctrl.lineage_open_new_form,
+                                    style="flex: 0.3 1 0; min-width: 0;",
                                 ):
                                     html.Span("New")

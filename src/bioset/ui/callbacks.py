@@ -822,6 +822,16 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.chatbot_input = ""
 
     # ---- Lineage (view snapshots, per-dataset recordings) ----
+    def _lineage_updated_short(updated_iso: str) -> str:
+        """Format ISO date to 'd, m, y' e.g. '22, 2, 2026'."""
+        if not updated_iso:
+            return ""
+        try:
+            dt = datetime.fromisoformat(updated_iso.replace("Z", "+00:00"))
+            return f"{dt.day}, {dt.month}, {dt.year}"
+        except Exception:
+            return updated_iso[:10] if len(updated_iso) >= 10 else updated_iso
+
     def _lineage_dataset_id():
         return getattr(state, "lineage_dataset_id", None) or "default"
 
@@ -845,9 +855,20 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return
         streamer = _refs.get("streamer")
         # Restore UI state
-        # Restore exact channels list (names and ranges) so UI shows saved state
+        # Restore exact channels list (names and ranges) so UI and range filter show saved state
         if "channels" in snap and snap["channels"]:
-            state.channels = [{**c, "id": c.get("id"), "name": c.get("name") or f"Channel {c.get('id')}", "color": c.get("color", "#FFFFFF"), "range": c.get("range", [0, 100])} for c in snap["channels"]]
+            restored = []
+            for c in snap["channels"]:
+                r = c.get("range")
+                if not r or not isinstance(r, (list, tuple)) or len(r) < 2:
+                    r = [0, 100]
+                restored.append({
+                    "id": c.get("id"),
+                    "name": c.get("name") or f"Channel {c.get('id')}",
+                    "color": c.get("color", "#FFFFFF"),
+                    "range": [float(r[0]), float(r[1])],
+                })
+            state.channels = restored
         if "active_channels" in snap:
             state.active_channels = list(snap["active_channels"])
             # Ensure restored channels appear in the channel list (visible)
@@ -886,10 +907,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 if ch_id is None or ch_id not in state.active_channels:
                     continue
                 rng = ch.get("range")
-                if rng and ch_id in getattr(streamer, "_channel_data_range", {}):
+                if rng is not None and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
                     data_range = streamer._channel_data_range[ch_id]
                     tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
-                    color_tf, opacity_tf = build_tf_with_range(data_range, tuple(rng), tint)
+                    color_tf, opacity_tf = build_tf_with_range(data_range, (float(rng[0]), float(rng[1])), tint)
                     streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
                     if ch_id in streamer.volumes:
                         prop = streamer.volumes[ch_id].GetProperty()
@@ -905,9 +926,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
                         continue
                     if ch_id in state.active_channels and ch.get("color"):
                         streamer._channel_colors[ch_id] = streamer._hex_to_rgb(ch["color"])
-                    if ch_id in state.active_channels and ch.get("range") and ch_id in getattr(streamer, "_channel_data_range", {}):
+                    if ch_id in state.active_channels and ch.get("range") is not None and len(ch.get("range", [])) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
                         from bioset.scene.volumes import build_tf_with_range
-                        rng = tuple(ch["range"])
+                        rng = (float(ch["range"][0]), float(ch["range"][1]))
                         color_tf, opacity_tf = build_tf_with_range(
                             streamer._channel_data_range[ch_id], rng, streamer._channel_colors.get(ch_id, (1, 1, 1))
                         )
@@ -937,6 +958,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             "comments": snap.get("comments", []),
             "created": snap.get("created"),
             "updated": snap.get("updated"),
+            "updated_short": _lineage_updated_short(snap.get("updated") or ""),
             "agreements": snap.get("agreements", 0),
             "disagreements": snap.get("disagreements", 0),
         }
@@ -976,15 +998,20 @@ def register_callbacks(ctrl, state, view, streamer=None):
         form_name = (getattr(state, "lineage_form_name", None) or getattr(state, "lineage_selected_name", None) or "").strip()
         title = form_name or "Unnamed"
         comments = []
+        if getattr(state, "lineage_form_new_comment", "").strip():
+            comments.append({"date": now, "text": state.lineage_form_new_comment})
         # Save channels with exact name and range from current list
         channels_data = []
         for ch in (state.channels or []):
             c = dict(ch) if isinstance(ch, dict) else {}
+            r = c.get("range")
+            if not r or not isinstance(r, (list, tuple)) or len(r) < 2:
+                r = [0, 100]
             channels_data.append({
                 "id": c.get("id"),
                 "name": c.get("name") or f"Channel {c.get('id', '')}",
                 "color": c.get("color", "#FFFFFF"),
-                "range": c.get("range", [0, 100]),
+                "range": [float(r[0]), float(r[1])],
             })
         snapshot = {
             "id": str(uuid.uuid4()),
@@ -1018,6 +1045,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             "comments": snapshot["comments"],
             "created": snapshot["created"],
             "updated": snapshot["updated"],
+            "updated_short": _lineage_updated_short(snapshot["updated"]),
             "agreements": 0,
             "disagreements": 0,
         }
@@ -1073,7 +1101,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         snap["updated"] = now
         snap.setdefault("comments", []).append({"date": now, "text": new_comment})
         save_snapshot(snap, dataset_id)
-        state.lineage_display_snapshot = {**disp, "comments": snap["comments"], "updated": now}
+        state.lineage_display_snapshot = {**disp, "comments": snap["comments"], "updated": now, "updated_short": _lineage_updated_short(now)}
         state.lineage_edit_comment = ""
 
     def lineage_update_snapshot():
@@ -1102,6 +1130,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             "comments": snap.get("comments", []),
             "created": snap.get("created"),
             "updated": snap.get("updated"),
+            "updated_short": _lineage_updated_short(snap.get("updated") or ""),
             "agreements": snap.get("agreements", 0),
             "disagreements": snap.get("disagreements", 0),
         }

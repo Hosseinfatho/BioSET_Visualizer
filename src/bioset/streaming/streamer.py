@@ -457,15 +457,37 @@ class VolumeStreamer:
         self.mappers[ch] = mapper
         return vol, mapper
 
+    # OpenGL 3D texture limit (avoid "Invalid texture dimensions" / MAX_3D_TEXTURE_SIZE 2048)
+    MAX_TEXTURE_DIM = 2048
+
     def _create_vtk_image(
         self,
         np_vol_zyx: np.ndarray,
         spacing: SpacingConfig,
         origin_xyz: Tuple[float, float, float],
     ) -> vtkImageData:
-        """Create vtkImageData from numpy array"""
+        """Create vtkImageData from numpy array. Downsample if any dimension exceeds MAX_TEXTURE_DIM."""
         np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)
         z, y, x = np_vol_zyx.shape
+        sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
+
+        if max(x, y, z) > self.MAX_TEXTURE_DIM:
+            scale = self.MAX_TEXTURE_DIM / max(x, y, z)
+            oz, oy, ox = z, y, x
+            nz = max(1, int(round(z * scale)))
+            ny = max(1, int(round(y * scale)))
+            nx = max(1, int(round(x * scale)))
+            iz = np.linspace(0, z - 1, nz).round().astype(np.intp)
+            iy = np.linspace(0, y - 1, ny).round().astype(np.intp)
+            ix = np.linspace(0, x - 1, nx).round().astype(np.intp)
+            np_vol_zyx = np_vol_zyx[np.ix_(iz, iy, ix)]
+            z, y, x = nz, ny, nx
+            spacing = SpacingConfig(
+                sx=sx * (ox / nx) if nx else sx,
+                sy=sy * (oy / ny) if ny else sy,
+                sz=sz * (oz / nz) if nz else sz,
+            )
+            print(f"[stream] Downsampled volume to ({z},{y},{x}) for OpenGL 2048 limit")
 
         vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)
         vtk_arr.SetName("scalars")
