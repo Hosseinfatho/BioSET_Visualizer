@@ -1,0 +1,355 @@
+{
+  "id": "c9b0365f-4bfc-4a99-8cbc-1913a1e29bb5",
+  "title": "B-cell",
+  "created": "2026-02-23T18:18:01Z",
+  "updated": "2026-02-23T18:19:38Z",
+  "notes": "interaction in Cd4 and CD31",
+  "camera": {
+    "position": [
+      757.1199999999999,
+      380.8,
+      214.76934154025585
+    ],
+    "focalPoint": [
+      757.1199999999999,
+      380.8,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 19,
+      "name": "CD31",
+      "color": "#FF0000",
+      "range": [
+        6.0,
+        34.0
+      ]
+    },
+    {
+      "id": 25,
+      "name": "CD4",
+      "color": "#00FF00",
+      "range": [
+        3.0,
+        33.0
+      ]
+    },
+    {
+      "id": 27,
+      "name": "CD20",
+      "color": "#0000FF",
+      "range": [
+        6.0,
+        30.0
+      ]
+    },
+    {
+      "id": 37,
+      "name": "CD11b",
+      "color": "#FF00FF",
+      "range": [
+        7.0,
+        32.0
+      ]
+    },
+    {
+      "id": 42,
+      "name": "CD11c",
+      "color": "#FFFF00",
+      "range": [
+        4.0,
+        38.0
+      ]
+    }
+  ],
+  "active_channels": [
+    19,
+    25,
+    27,
+    37,
+    42
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1536,
+    "height": 695
+  },
+  "agreements": 3,
+  "disagreements": 1,
+  "comments": [
+    {
+      "date": "2026-02-23T18:18:24Z",
+      "text": "this view shouw close interaction between different CD31 and Cd4"
+    }
+  ],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          757.1199999999999,
+          380.8,
+          214.76934154025585
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "interaction in Cd4 and CD31",
+      "comments": [
+        {
+          "date": "2026-02-23T18:18:24Z",
+          "text": "this view shouw close interaction between different CD31 and Cd4"
+        }
+      ],
+      "channels": [
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#FF0000",
+          "range": [
+            6.0,
+            34.0
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#00FF00",
+          "range": [
+            3.0,
+            33.0
+          ]
+        },
+        {
+          "id": 27,
+          "name": "CD20",
+          "color": "#0000FF",
+          "range": [
+            6.0,
+            30.0
+          ]
+        },
+        {
+          "id": 37,
+          "name": "CD11b",
+          "color": "#FF00FF",
+          "range": [
+            7.0,
+            32.0
+          ]
+        },
+        {
+          "id": 42,
+          "name": "CD11c",
+          "color": "#FFFF00",
+          "range": [
+            4.0,
+            38.0
+          ]
+        }
+      ],
+      "active_channels": [
+        19,
+        25,
+        27,
+        37,
+        42
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2049,
+          "x1": 3358,
+          "y0": 1055,
+          "y1": 1665
+        }
+      }
+    },
+    {
+      "camera": {
+        "position": [
+          790.4174802598492,
+          516.0827866658944,
+          152.87571377198051
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          -0.1374495941366788,
+          0.6925959027655716,
+          -0.7081091190939469
+        ]
+      },
+      "notes": "this view show some exisiting of CD20 ",
+      "comments": [],
+      "channels": [
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#FF0000",
+          "range": [
+            6.0,
+            34.0
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#00FF00",
+          "range": [
+            3.0,
+            33.0
+          ]
+        },
+        {
+          "id": 27,
+          "name": "CD20",
+          "color": "#0000FF",
+          "range": [
+            6.0,
+            30.0
+          ]
+        },
+        {
+          "id": 37,
+          "name": "CD11b",
+          "color": "#FF00FF",
+          "range": [
+            7.0,
+            32.0
+          ]
+        },
+        {
+          "id": 42,
+          "name": "CD11c",
+          "color": "#FFFF00",
+          "range": [
+            4.0,
+            38.0
+          ]
+        }
+      ],
+      "active_channels": [
+        19,
+        25,
+        27,
+        37,
+        42
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2049,
+          "x1": 3358,
+          "y0": 1055,
+          "y1": 1665
+        }
+      }
+    },
+    {
+      "camera": {
+        "position": [
+          662.0895340772978,
+          489.92191364311657,
+          146.6504048232636
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          -0.03949246898383807,
+          0.7224162121494909,
+          -0.690329748248721
+        ]
+      },
+      "notes": "better interaction shown in less channels between CD20 and CD31",
+      "comments": [],
+      "channels": [
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#FF0000",
+          "range": [
+            6.0,
+            34.0
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#00FF00",
+          "range": [
+            3.0,
+            33.0
+          ]
+        },
+        {
+          "id": 27,
+          "name": "CD20",
+          "color": "#0000FF",
+          "range": [
+            6.0,
+            30.0
+          ]
+        }
+      ],
+      "active_channels": [
+        19,
+        25,
+        27
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2049,
+          "x1": 3358,
+          "y0": 1055,
+          "y1": 1665
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 2049,
+      "x1": 3358,
+      "y0": 1055,
+      "y1": 1665
+    }
+  },
+  "description": "interaction in Cd4 and CD31"
+}

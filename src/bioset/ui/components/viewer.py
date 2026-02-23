@@ -27,7 +27,7 @@ def viewer(ctrl, render_window):
             click="right_drawer_open = true",
         ):
             vuetify.VIcon("mdi-chart-box-outline")
-        
+
         def _on_ready(**_):
             render_window.Render()
             view.update()

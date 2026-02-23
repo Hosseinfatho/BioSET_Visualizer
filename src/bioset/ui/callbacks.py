@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import time
 import uuid
 from datetime import datetime
 
 from bioset.llm import BiomniClient
 from bioset.lineage.snapshot_io import load_snapshots, load_snapshot_by_name, save_snapshot, snapshot_names, delete_snapshot_by_name, save_screenshot
+from bioset.NOV import get_nov_sphere_points, camera_position_from_sphere, view_up_for_sphere_point
+from bioset.NOV.scoring import compute_view_score, normalize_scores
+from bioset.streaming.lod import compute_visible_xy_roi_vox, camera_distance_to_focal, choose_component, scale_roi_to_component
 from .state import get_channel_color
 
 
@@ -163,6 +168,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.heatmap_tile_count = 0
         
         state.right_drawer_open = False
+
+        # Reset NOV so only "NOV" is shown (no arrows / <n/8>)
+        state.nov_panel_visible = False
+        state.nov_candidates = []
+        state.nov_current_index = 0
+        state.nov_view_index_display = "0/18"
+        state.nov_score_display = 0.0
     
         if _refs["view"]:
             _refs["view"].update()
@@ -887,12 +899,24 @@ def register_callbacks(ctrl, state, view, streamer=None):
         has_lod = comp_target is not None and isinstance(roi, dict)
         if streamer and has_lod and state.active_channels:
             max_comp = getattr(streamer.cfg, "max_component", 6)
-            # Progressive LOD: show comp+2 first (fast), then comp+1, then comp (smooth preview)
-            comps = []
-            for c in (min(comp_target + 2, max_comp), min(comp_target + 1, max_comp), comp_target):
-                if c not in comps:
-                    comps.append(c)
-            for comp in comps:
+            min_comp = getattr(streamer.cfg, "min_component", 0)
+            comp_target = max(min_comp, min(max_comp, int(comp_target)))
+            # Progressive LOD: start 3 steps before target, then improve step by step to final resolution (e.g. comp=0 → start at 3, then 2, 1, 0)
+            start_comp = min(comp_target + 3, max_comp)
+            comps = list(range(start_comp, comp_target - 1, -1))
+            if not comps:
+                comps = [comp_target]
+
+            def _roi_for_comp(comp):
+                if comp == comp_target:
+                    return roi
+                try:
+                    zdim, ydim, xdim = streamer._dims_for_component(comp)
+                    return scale_roi_to_component(roi, comp_target, comp, x_dim=xdim, y_dim=ydim)
+                except Exception:
+                    return scale_roi_to_component(roi, comp_target, comp)
+
+            def _load_one_step(comp):
                 for ch_id in list(streamer.get_active_channels()):
                     streamer.deactivate_channel(ch_id)
                 for ch_id in state.active_channels:
@@ -903,25 +927,83 @@ def register_callbacks(ctrl, state, view, streamer=None):
                             color_hex = ch.get("color") or color_hex
                             break
                     streamer.load_channel_at_lod(
-                        ch_id, color_hex, comp, roi,
+                        ch_id, color_hex, comp, _roi_for_comp(comp),
                         reset_camera=False,
                     )
-            # Apply saved transfer function ranges after load
-            from bioset.scene.volumes import build_tf_with_range
-            for ch in state.channels:
-                ch_id = ch.get("id")
-                if ch_id is None or ch_id not in state.active_channels:
-                    continue
-                rng = ch.get("range")
-                if rng is not None and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
-                    data_range = streamer._channel_data_range[ch_id]
-                    tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
-                    color_tf, opacity_tf = build_tf_with_range(data_range, (float(rng[0]), float(rng[1])), tint)
-                    streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
-                    if ch_id in streamer.volumes:
-                        prop = streamer.volumes[ch_id].GetProperty()
-                        prop.SetColor(color_tf)
-                        prop.SetScalarOpacity(opacity_tf)
+
+            # First step synchronously so user sees something immediately (low-res)
+            _load_one_step(comps[0])
+            remaining = comps[1:]
+
+            async def _progressive_upgrade():
+                for comp in remaining:
+                    await asyncio.sleep(0.06)
+                    _load_one_step(comp)
+                    if _refs.get("view"):
+                        _refs["view"].update()
+                # Apply saved transfer function ranges after final load
+                from bioset.scene.volumes import build_tf_with_range
+                for ch in state.channels:
+                    ch_id = ch.get("id")
+                    if ch_id is None or ch_id not in state.active_channels:
+                        continue
+                    rng = ch.get("range")
+                    if rng is not None and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
+                        data_range = streamer._channel_data_range[ch_id]
+                        tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
+                        color_tf, opacity_tf = build_tf_with_range(data_range, (float(rng[0]), float(rng[1])), tint)
+                        streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
+                        if ch_id in streamer.volumes:
+                            prop = streamer.volumes[ch_id].GetProperty()
+                            prop.SetColor(color_tf)
+                            prop.SetScalarOpacity(opacity_tf)
+                if _refs.get("view"):
+                    _refs["view"].update()
+
+            if remaining:
+                try:
+                    asyncio.get_running_loop()
+                    asyncio.create_task(_progressive_upgrade())
+                except RuntimeError:
+                    # No event loop: run upgrades synchronously (no intermediate UI updates)
+                    for comp in remaining:
+                        _load_one_step(comp)
+                        if _refs.get("view"):
+                            _refs["view"].update()
+                    from bioset.scene.volumes import build_tf_with_range
+                    for ch in state.channels:
+                        ch_id = ch.get("id")
+                        if ch_id is None or ch_id not in state.active_channels:
+                            continue
+                        rng = ch.get("range")
+                        if rng is not None and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
+                            data_range = streamer._channel_data_range[ch_id]
+                            tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
+                            color_tf, opacity_tf = build_tf_with_range(data_range, (float(rng[0]), float(rng[1])), tint)
+                            streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
+                            if ch_id in streamer.volumes:
+                                prop = streamer.volumes[ch_id].GetProperty()
+                                prop.SetColor(color_tf)
+                                prop.SetScalarOpacity(opacity_tf)
+                    if _refs.get("view"):
+                        _refs["view"].update()
+            else:
+                # Only one step (e.g. saved was already max_comp): apply TF now
+                from bioset.scene.volumes import build_tf_with_range
+                for ch in state.channels:
+                    ch_id = ch.get("id")
+                    if ch_id is None or ch_id not in state.active_channels:
+                        continue
+                    rng = ch.get("range")
+                    if rng is not None and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
+                        data_range = streamer._channel_data_range[ch_id]
+                        tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
+                        color_tf, opacity_tf = build_tf_with_range(data_range, (float(rng[0]), float(rng[1])), tint)
+                        streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
+                        if ch_id in streamer.volumes:
+                            prop = streamer.volumes[ch_id].GetProperty()
+                            prop.SetColor(color_tf)
+                            prop.SetScalarOpacity(opacity_tf)
         else:
             if hasattr(ctrl, "update_active_channels"):
                 ctrl.update_active_channels(state.active_channels)
@@ -1429,6 +1511,146 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def _nov_apply_camera(camera_dict):
+        """Apply camera dict (position, focalPoint, viewUp) to streamer and refresh view."""
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
+            return
+        c = camera_dict.get("camera") or camera_dict
+        cam = streamer.renderer.GetActiveCamera()
+        if c.get("position") and len(c["position"]) >= 3:
+            cam.SetPosition(c["position"][:3])
+        if c.get("focalPoint") and len(c.get("focalPoint", [])) >= 3:
+            cam.SetFocalPoint(c["focalPoint"][:3])
+        if c.get("viewUp") and len(c.get("viewUp", [])) >= 3:
+            cam.SetViewUp(c["viewUp"][:3])
+        streamer.renderer.ResetCameraClippingRange()
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def nov_toggle():
+        """Compute 8 NOV candidates (sphere points), score by visible ROI, show panel and apply best view.
+        Uses current scene state: active channels, LOD component, and camera from streamer."""
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
+            state.nov_panel_visible = False
+            print("[NOV] Skipped: no streamer or renderer")
+            return
+        t0 = time.perf_counter()
+        cam = streamer.renderer.GetActiveCamera()
+        focal = list(cam.GetFocalPoint())
+        radius = camera_distance_to_focal(cam)
+        if radius < 1e-6:
+            radius = 1.0
+        points = get_nov_sphere_points()
+        n_points = len(points)
+        # Read LOD/component from current scene state (what is actually displayed)
+        active_channel_ids = list(streamer.get_active_channels()) if streamer else []
+        desired_comp = None
+        if active_channel_ids:
+            for ch_id in active_channel_ids:
+                st = getattr(streamer, "state", None) and streamer.state.get(ch_id)
+                if st is not None:
+                    desired_comp = st.component
+                    break
+        if desired_comp is None:
+            dist = radius
+            desired_comp = choose_component(
+                dist,
+                streamer.cfg.distance_rules,
+                min_component=streamer.cfg.min_component,
+                max_component=streamer.cfg.max_component,
+            )
+            print(f"[NOV] Start: focal={focal}, radius={radius:.1f}, {n_points} candidates (no scene state -> LOD from distance)")
+        else:
+            print(f"[NOV] Start: focal={focal}, radius={radius:.1f}, {n_points} candidates (scene state: comp={desired_comp}, active_channels={active_channel_ids})")
+        spacing = streamer._spacing_for_component(desired_comp)
+        zdim, ydim, xdim = streamer._dims_for_component(desired_comp)
+        bounds = streamer._volume_bounds_world(desired_comp)
+        margin = getattr(streamer.cfg, "roi_margin_vox", 16)
+        print(f"[NOV] LOD component={desired_comp}, dims=({xdim}, {ydim}, {zdim})")
+
+        raw_scores = []
+        candidates = []
+        for i, (theta_deg, phi_deg) in enumerate(points):
+            pos = camera_position_from_sphere(focal, radius, theta_deg, phi_deg)
+            view_up = view_up_for_sphere_point(theta_deg, phi_deg)
+            cam.SetPosition(pos)
+            cam.SetFocalPoint(focal)
+            cam.SetViewUp(view_up)
+            streamer.renderer.ResetCameraClippingRange()
+            # No Render() here: DisplayToWorld uses camera matrices only -> much faster
+            roi = compute_visible_xy_roi_vox(
+                streamer.renderer,
+                bounds_world=bounds,
+                sx=spacing.sx, sy=spacing.sy,
+                x_dim=xdim, y_dim=ydim,
+                margin_vox=margin,
+                display_samples=5,
+            )
+            area = (roi.x1 - roi.x0) * (roi.y1 - roi.y0)
+            total_xy = xdim * ydim
+            occlusion = max(0.0, float(total_xy) - area)
+            score_raw = compute_view_score(area, occlusion=occlusion, alpha=0.5, beta=0.5)
+            raw_scores.append(score_raw)
+            candidates.append({
+                "camera": {
+                    "position": pos,
+                    "focalPoint": focal,
+                    "viewUp": view_up,
+                },
+                "score_raw": score_raw,
+            })
+            print(f"[NOV]   candidate {i+1}/{n_points} theta={theta_deg} phi={phi_deg} -> roi=({roi.x0}:{roi.x1},{roi.y0}:{roi.y1}) area={area} occ={occlusion:.0f} score={score_raw:.2f}")
+        normed = normalize_scores(raw_scores)
+        for i, c in enumerate(candidates):
+            c["score_normalized"] = normed[i] if i < len(normed) else 0.0
+        candidates.sort(key=lambda x: x["score_normalized"], reverse=True)
+        best_score = candidates[0]["score_normalized"] if candidates else 0.0
+        state.nov_candidates = candidates
+        state.nov_current_index = 0
+        state.nov_score_display = candidates[0]["score_normalized"] if candidates else 0.0
+        state.nov_view_index_display = f"1/{len(candidates)}" if candidates else "0/18"
+        state.nov_panel_visible = True
+        if candidates:
+            _nov_apply_camera(candidates[0])
+        elapsed = time.perf_counter() - t0
+        print(f"[NOV] Done: best score={best_score:.2f}, applied view 1/{len(candidates)}, elapsed={elapsed:.2f}s")
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def nov_prev():
+        """Switch to previous NOV candidate and update score display."""
+        candidates = getattr(state, "nov_candidates", []) or []
+        if not candidates:
+            print("[NOV] Prev: no candidates")
+            return
+        idx = getattr(state, "nov_current_index", 0)
+        idx = (idx - 1) % len(candidates)
+        state.nov_current_index = idx
+        _nov_apply_camera(candidates[idx])
+        state.nov_score_display = candidates[idx]["score_normalized"]
+        state.nov_view_index_display = f"{idx + 1}/{len(candidates)}"
+        print(f"[NOV] Prev -> view {idx + 1}/{len(candidates)} score={candidates[idx]['score_normalized']:.2f}")
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def nov_next():
+        """Switch to next NOV candidate and update score display."""
+        candidates = getattr(state, "nov_candidates", []) or []
+        if not candidates:
+            print("[NOV] Next: no candidates")
+            return
+        idx = getattr(state, "nov_current_index", 0)
+        idx = (idx + 1) % len(candidates)
+        state.nov_current_index = idx
+        _nov_apply_camera(candidates[idx])
+        state.nov_score_display = candidates[idx]["score_normalized"]
+        state.nov_view_index_display = f"{idx + 1}/{len(candidates)}"
+        print(f"[NOV] Next -> view {idx + 1}/{len(candidates)} score={candidates[idx]['score_normalized']:.2f}")
+        if _refs.get("view"):
+            _refs["view"].update()
+
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
@@ -1468,4 +1690,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.lineage_disagree = lineage_disagree
     ctrl.lineage_comment = lineage_comment
     ctrl.lineage_update_snapshot = lineage_update_snapshot
+    ctrl.nov_toggle = nov_toggle
+    ctrl.nov_prev = nov_prev
+    ctrl.nov_next = nov_next
 

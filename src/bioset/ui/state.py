@@ -140,6 +140,14 @@ def init_state(state):
     state.setdefault("bar_filter_dialog", False)
     state.setdefault("bar_expanded", False)
     
+    # NOV (Next Best View)
+    state.setdefault("nov_open", False)
+    state.setdefault("nov_panel_visible", False)  # show score + next/prev after pressing NOV
+    state.setdefault("nov_current_index", 0)
+    state.setdefault("nov_candidates", [])  # list of {camera, score_normalized}
+    state.setdefault("nov_score_display", 0.0)  # 0--1 for current view
+    state.setdefault("nov_view_index_display", "0/18")  # e.g. "1/18"
+
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
     state.setdefault("chatbot_authenticated", False)

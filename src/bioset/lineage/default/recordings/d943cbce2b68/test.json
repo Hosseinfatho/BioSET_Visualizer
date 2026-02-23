@@ -1,0 +1,196 @@
+{
+  "id": "772b5c57-3835-432f-b040-f88df2b927e9",
+  "title": "test",
+  "created": "2026-02-23T19:26:30Z",
+  "updated": "2026-02-23T19:29:22Z",
+  "notes": "I can see good interaction between ...",
+  "camera": {
+    "position": [
+      757.5246005158924,
+      407.2160082708289,
+      110.5269915325459
+    ],
+    "focalPoint": [
+      757.1199999999999,
+      380.8,
+      27.020000000000003
+    ],
+    "viewUp": [
+      7.022784962008519e-05,
+      0.953433669955794,
+      -0.30160277197445523
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        42.0
+      ]
+    },
+    {
+      "id": 1,
+      "name": "5'hmC",
+      "color": "#00FF00",
+      "range": [
+        0.0,
+        35.0
+      ]
+    }
+  ],
+  "active_channels": [
+    0,
+    1
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1536,
+    "height": 695
+  },
+  "agreements": 1,
+  "disagreements": 0,
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          757.5246005158924,
+          407.2160082708289,
+          110.5269915325459
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          7.022784962008519e-05,
+          0.953433669955794,
+          -0.30160277197445523
+        ]
+      },
+      "notes": "I can see good interaction between ...",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            42.0
+          ]
+        },
+        {
+          "id": 1,
+          "name": "5'hmC",
+          "color": "#00FF00",
+          "range": [
+            0.0,
+            35.0
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        1
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": {
+        "component": 0,
+        "roi": {
+          "x0": 4906,
+          "x1": 5908,
+          "y0": 2484,
+          "y1": 2956
+        }
+      }
+    },
+    {
+      "camera": {
+        "position": [
+          764.872120448148,
+          442.43763417357445,
+          88.76215343993613
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          -0.017500320449481674,
+          0.7086949430358628,
+          -0.7052979629203254
+        ]
+      },
+      "notes": "this is another view for interaction with MX1",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF0000",
+          "range": [
+            7.0,
+            42.0
+          ]
+        },
+        {
+          "id": 1,
+          "name": "5'hmC",
+          "color": "#00FF00",
+          "range": [
+            4.0,
+            35.0
+          ]
+        },
+        {
+          "id": 2,
+          "name": "MX1",
+          "color": "#0000FF",
+          "range": [
+            3.0,
+            21.0
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        1,
+        2
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": {
+        "component": 0,
+        "roi": {
+          "x0": 4906,
+          "x1": 5908,
+          "y0": 2484,
+          "y1": 2956
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 0,
+    "roi": {
+      "x0": 4906,
+      "x1": 5908,
+      "y0": 2484,
+      "y1": 2956
+    }
+  },
+  "description": "I can see good interaction between ..."
+}
