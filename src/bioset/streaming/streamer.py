@@ -310,9 +310,20 @@ class VolumeStreamer:
         except Exception as e:
             print(f"[stream] Error loading channel {channel_id}: {e}")
             return
-        
-        origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
-        img = self._create_vtk_image(np_arr, spacing, origin_xyz)
+
+        if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
+            print(
+                f"[stream] Skipping channel {channel_id}: loaded shape {np_arr.shape} has zero size. "
+                "ROI may be out of bounds for this LOD."
+            )
+            return
+
+        try:
+            origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
+            img = self._create_vtk_image(np_arr, spacing, origin_xyz)
+        except ValueError as e:
+            print(f"[stream] Skipping channel {channel_id}: {e}")
+            return
         
         r0, r1 = img.GetScalarRange()
         self._channel_data_range[channel_id] = (r0, r1)
@@ -469,6 +480,11 @@ class VolumeStreamer:
         """Create vtkImageData from numpy array. Downsample if any dimension exceeds MAX_TEXTURE_DIM."""
         np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)
         z, y, x = np_vol_zyx.shape
+        if x <= 0 or y <= 0 or z <= 0:
+            raise ValueError(
+                f"Invalid volume shape ({z}, {y}, {x}): cannot create 3D texture. "
+                "ROI may be out of bounds for this LOD level."
+            )
         sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
 
         if max(x, y, z) > self.MAX_TEXTURE_DIM:
@@ -605,7 +621,14 @@ class VolumeStreamer:
         origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
 
         for ch, np_arr in loaded.channel_arrays.items():
-            img = self._create_vtk_image(np_arr, spacing, origin_xyz)
+            if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
+                print(f"[stream] Skipping channel {ch}: loaded shape {np_arr.shape} has zero size.")
+                continue
+            try:
+                img = self._create_vtk_image(np_arr, spacing, origin_xyz)
+            except ValueError as e:
+                print(f"[stream] Skipping channel {ch}: {e}")
+                continue
 
             vol, mapper = self._get_or_create_volume(ch)
             mapper.SetInputData(img)
