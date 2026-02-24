@@ -297,9 +297,25 @@ def right_drawer(state, ctrl):
                                     click="upset_selected_channels = analysis_channels")
                             vuetify.VBtn("Deselect All", text=True, color="white", classes="ma-1", 
                                     click="upset_selected_channels = []")
-                            
-                        
-                        vuetify.VDivider(classes="mb-2")
+
+                        vuetify.VDivider(classes="mb-3 mt-1")
+
+                        # Combination size limit
+                        with html.Div(classes="mb-4"):
+                            html.Div("Limit", classes="text-caption mb-2 text-left", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                for val in [1, 2, 3, 4, 5]:
+                                    vuetify.VBtn(
+                                        str(val),
+                                        click=f"upset_min_channels = {val}",
+                                        color=(f"upset_min_channels === {val} ? 'white' : 'grey darken-3'",),
+                                        dark=(f"upset_min_channels !== {val}",),
+                                        class_="flex-grow-1 rounded px-4",
+                                        elevation=0,
+                                        style="flex: 1;",
+                                    )
+
+                        vuetify.VDivider(classes="mb-3")
                         
                         # Use checkboxes directly
                         with html.Div():
