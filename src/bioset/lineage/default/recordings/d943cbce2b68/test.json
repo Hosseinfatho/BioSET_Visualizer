@@ -2,13 +2,13 @@
   "id": "772b5c57-3835-432f-b040-f88df2b927e9",
   "title": "test",
   "created": "2026-02-23T19:26:30Z",
-  "updated": "2026-02-24T03:38:31Z",
-  "notes": "I can see good interaction between ...",
+  "updated": "2026-02-24T16:30:53Z",
+  "notes": "this is another view for interaction with MX1",
   "camera": {
     "position": [
-      731.263742254176,
-      392.15114574200624,
-      212.63363278198298
+      778.8177763328072,
+      535.0653066664173,
+      253.49854464213922
     ],
     "focalPoint": [
       757.1199999999999,
@@ -16,9 +16,9 @@
       27.020000000000003
     ],
     "viewUp": [
-      0.0018581258685846551,
-      0.9981492940722722,
-      -0.0607826793690546
+      -0.0016516402609377742,
+      0.8265577241609174,
+      -0.562849536478776
     ]
   },
   "channels": [
@@ -27,7 +27,7 @@
       "name": "Hoechst",
       "color": "#FF0000",
       "range": [
-        0.0,
+        7.0,
         42.0
       ]
     },
@@ -36,19 +36,29 @@
       "name": "5'hmC",
       "color": "#00FF00",
       "range": [
-        0.0,
+        4.0,
         35.0
+      ]
+    },
+    {
+      "id": 2,
+      "name": "MX1",
+      "color": "#0000FF",
+      "range": [
+        3.0,
+        21.0
       ]
     }
   ],
   "active_channels": [
     0,
-    1
+    1,
+    2
   ],
   "background": "#000000",
   "viewport": {
-    "width": 1920,
-    "height": 911
+    "width": 1536,
+    "height": 695
   },
   "agreements": 1,
   "disagreements": 0,
@@ -57,9 +67,9 @@
     {
       "camera": {
         "position": [
-          731.263742254176,
-          392.15114574200624,
-          212.63363278198298
+          719.2638530343391,
+          397.4192124808713,
+          298.77691975610134
         ],
         "focalPoint": [
           757.1199999999999,
@@ -100,25 +110,27 @@
       ],
       "background": "#000000",
       "viewport": {
-        "width": 1920,
-        "height": 911
+        "width": 1536,
+        "height": 695
       },
       "optional_LOD": {
         "component": 1,
         "roi": {
-          "x0": 2290,
-          "x1": 3219,
-          "y0": 1109,
-          "y1": 1589
+          "x0": 2097,
+          "x1": 3451,
+          "y0": 1015,
+          "y1": 1679
         }
-      }
+      },
+      "agreements": 1,
+      "disagreements": 0
     },
     {
       "camera": {
         "position": [
-          786.5586645010147,
-          614.8688131987963,
-          261.4857249388669
+          778.8177763328072,
+          535.0653066664173,
+          253.49854464213922
         ],
         "focalPoint": [
           757.1199999999999,
@@ -126,9 +138,9 @@
           27.020000000000003
         ],
         "viewUp": [
-          -0.017500320449481674,
-          0.7086949430358628,
-          -0.7052979629203254
+          -0.0016516402609377742,
+          0.8265577241609174,
+          -0.562849536478776
         ]
       },
       "notes": "this is another view for interaction with MX1",
@@ -169,28 +181,30 @@
       ],
       "background": "#000000",
       "viewport": {
-        "width": 1920,
-        "height": 911
+        "width": 1536,
+        "height": 695
       },
       "optional_LOD": {
         "component": 2,
         "roi": {
-          "x0": 751,
-          "x1": 1821,
-          "y0": 228,
-          "y1": 903
+          "x0": 815,
+          "x1": 1801,
+          "y0": 355,
+          "y1": 881
         }
-      }
+      },
+      "agreements": 0,
+      "disagreements": 0
     }
   ],
   "optional_LOD": {
-    "component": 1,
+    "component": 2,
     "roi": {
-      "x0": 2290,
-      "x1": 3219,
-      "y0": 1109,
-      "y1": 1589
+      "x0": 815,
+      "x1": 1801,
+      "y0": 355,
+      "y1": 881
     }
   },
-  "description": "I can see good interaction between ..."
+  "description": "this is another view for interaction with MX1"
 }
