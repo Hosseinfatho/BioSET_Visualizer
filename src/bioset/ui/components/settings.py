@@ -113,15 +113,13 @@ def settings_section(state, ctrl):
                             ):
                                 with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_prev):
                                     vuetify.VIcon("mdi-chevron-left", small=True)
-                                html.Span("{{ nov_view_index_display || '0/10' }}", style="min-width: 3ch; font-size: 0.7em;")
+                                html.Span("{{ nov_view_index_display || '0/5' }}", style="min-width: 3ch; font-size: 0.7em;")
                                 with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_next):
                                     vuetify.VIcon("mdi-chevron-right", small=True)
                             with html.Div(
                                 v_show=("nov_panel_visible && nov_sphere_svg", False),
-                                style="margin-left: 3px; flex-shrink: 0; display: inline-flex; align-items: center; gap: 1px;",
+                                style="margin-left: 3px; flex-shrink: 0;",
                             ):
-                                html.Span("F", v_show=("nov_is_front", True), style="font-size: 0.65em; opacity: 0.8;")
-                                html.Span("B", v_show=("!nov_is_front", False), style="font-size: 0.65em; opacity: 0.8;")
                                 html.Div(v_html=("nov_sphere_svg", ""), style="flex-shrink: 0;")
                 # Lineage
                 with vuetify.VListItem(

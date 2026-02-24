@@ -146,10 +146,9 @@ def init_state(state):
     state.setdefault("nov_current_index", 0)
     state.setdefault("nov_candidates", [])  # list of {camera, score_normalized}
     state.setdefault("nov_score_display", 0.0)  # 0--1 for current view
-    state.setdefault("nov_view_index_display", "0/10")  # e.g. "1/10"
-    state.setdefault("nov_sphere_xy", [])  # [[x,y], ...] SVG coords for 18 positions on sphere
+    state.setdefault("nov_view_index_display", "0/5")  # 1/5=top (best), 5/5=lowest (worst)
+    state.setdefault("nov_sphere_xy", [])  # [[x,y], ...] SVG coords for 5 positions on sphere
     state.setdefault("nov_sphere_svg", "")  # full SVG string for sphere widget (built server-side)
-    state.setdefault("nov_is_front", True)  # True = show "F", False = show "B" (current view side)
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
@@ -188,6 +187,14 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_upset_data_local()
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
+        if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
+            ctrl.nov_recompute_scores_if_visible()
+
+    @state.change("channels")
+    def on_channels_change(channels, **kwargs):
+        """When channel list or per-channel range changes, update NOV scores if panel is open."""
+        if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
+            ctrl.nov_recompute_scores_if_visible()
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):

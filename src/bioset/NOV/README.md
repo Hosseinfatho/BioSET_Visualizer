@@ -1,7 +1,16 @@
 # NOV (Next Best View)
 
-We maximize **Score = α × Visible_ROI_Area − β × Occlusion** over 18 candidate camera positions on a sphere; the view with highest score is chosen first (**α = β = 0.5**). Occlusion = total XY voxel area minus visible area (hidden region). You can step through all candidates with the prev/next arrows in Settings.
+Scores five front viewpoints on a sphere around the focal point. Only channels currently visible in the scene are used. Views are ranked by a mesh-based visibility score.
 
-**Sphere (viewpoints):** Centered at the camera focal point, radius = camera distance. **Theta** in **3** steps (45°, 90°, 135°); **phi** in **6** steps (60°). Total **18** viewpoints—these are the candidate camera positions we score and sort.
+**Ranking:** **1/5** = highest score (best view), **5/5** = lowest score. Use the arrows to step through the list.
 
-**How we compute score:** (1) *Visible_ROI_Area*: for **each** of the 18 viewpoints we place the camera, then cast rays from a **5×5 grid** on the screen (25 rays per view) through the volume, intersect with front/back z-planes, get the visible XY rectangle in voxel space → area = width×height. (2) *Occlusion*: hidden voxel area = total volume XY area − visible ROI area; penalized with β=0.5.
+---
+
+**Plane:** For each candidate view, a *tangent plane* is placed at the focal point: it is perpendicular to the view direction (camera → focal) and is a square of side **2 × radius** (radius = distance from camera to focal). The plane is discretized into an **N×N mesh** (e.g. 100×100).
+
+**Projection:** The volume’s 3D bounding box (AABB) is projected orthographically onto this plane along the view direction. For each active channel, every mesh cell that lies inside the projected footprint is marked as “hit”. So each cell gets a count: how many channels project onto it.
+
+**Score:**  
+- **Visibility** (weight 0.8): fraction of mesh cells that are hit by at least one channel → higher is better.  
+- **Occlusion** (weight 0.2): fraction of cells hit by two or more channels → penalized.  
+- **Score = 0.8 × (filled / total) − 0.2 × (occluded / total)**. Views with more visible area and less overlap rank higher.
