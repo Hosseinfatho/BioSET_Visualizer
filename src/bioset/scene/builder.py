@@ -1,6 +1,7 @@
 # vtk_scene.py
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -57,13 +58,18 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         if not cfg.zarr_url:
             raise ValueError("cfg.zarr_url must be set for source='zarr_s3'")
 
-        streamer = VolumeStreamer(
-            cfg=cfg, renderer=renderer, render_window=render_window)
+        try:
+            streamer = VolumeStreamer(
+                cfg=cfg, renderer=renderer, render_window=render_window)
 
-        def _on_end_interaction(obj, evt):
-            streamer.on_interaction_end()
+            def _on_end_interaction(obj, evt):
+                streamer.on_interaction_end()
 
-        interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
+            interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
+        except Exception as e:
+            streamer = None
+            err = f"{type(e).__name__}: {e}"
+            print(f"[bioset] Could not connect to zarr URL (SSL/network?). App will start without data. Error: {err}", file=sys.stderr)
 
     else:
         spacing = SpacingConfig(
