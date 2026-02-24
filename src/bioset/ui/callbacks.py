@@ -1599,6 +1599,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_score_display = candidates[0]["score_normalized"] if candidates else 0.0
         state.nov_view_index_display = f"1/{len(candidates)}" if candidates else "0/18"
         state.nov_panel_visible = True
+        print("[NOV] Scores (max -> min):")
+        for rank, c in enumerate(candidates, 1):
+            print(f"[NOV]   #{rank}  score_raw={c['score_raw']:.2f}  score_norm={c['score_normalized']:.2f}")
         if candidates:
             _nov_apply_camera(candidates[0])
         elapsed = time.perf_counter() - t0
