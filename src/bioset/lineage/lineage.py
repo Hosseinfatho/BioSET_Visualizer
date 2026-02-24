@@ -16,6 +16,7 @@ from .snapshot_io import (
     save_screenshot,
 )
 from bioset.ui.state import get_channel_color
+from bioset.scene.volumes import build_tf_with_range
 
 
 def capture_screenshot_png_bytes(streamer):
@@ -104,6 +105,59 @@ def register_lineage_callbacks(ctrl, state, _refs):
                 }
         return sorted(by_id.values(), key=lambda c: (0 if c.get("id") is not None else 1, c.get("id") or 0))
 
+    def _normalize_channels(channels_list):
+        """Build list of channel dicts with id, name, color, range from view/snapshot channels."""
+        out = []
+        for c in channels_list or []:
+            r = c.get("range") or [0, 100]
+            if not isinstance(r, (list, tuple)) or len(r) < 2:
+                r = [0, 100]
+            out.append({
+                "id": c.get("id"),
+                "name": c.get("name") or f"Channel {c.get('id')}",
+                "color": c.get("color", "#FFFFFF"),
+                "range": [float(r[0]), float(r[1])],
+            })
+        return out
+
+    def _apply_camera(streamer, c):
+        """Apply camera dict (position, focalPoint, viewUp) to streamer and refresh view."""
+        if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer or not c:
+            return
+        cam = streamer.renderer.GetActiveCamera()
+        if c.get("position") and len(c.get("position", [])) >= 3:
+            cam.SetPosition(c["position"][:3])
+        if c.get("focalPoint") and len(c.get("focalPoint", [])) >= 3:
+            cam.SetFocalPoint(c["focalPoint"][:3])
+        if c.get("viewUp") and len(c.get("viewUp", [])) >= 3:
+            cam.SetViewUp(c["viewUp"][:3])
+        streamer.renderer.ResetCameraClippingRange()
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def _apply_channel_tfs_to_streamer(streamer):
+        """Update streamer TFs from state.channels for active_channels."""
+        if not streamer:
+            return
+        for ch in (state.channels or []):
+            ch_id = ch.get("id")
+            if ch_id is None or ch_id not in state.active_channels:
+                continue
+            if ch.get("color"):
+                streamer._channel_colors[ch_id] = streamer._hex_to_rgb(ch["color"])
+            rng = ch.get("range")
+            if rng and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
+                data_range = streamer._channel_data_range[ch_id]
+                tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
+                color_tf, opacity_tf = build_tf_with_range(
+                    data_range, (float(rng[0]), float(rng[1])), tint
+                )
+                streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
+                if ch_id in streamer.volumes:
+                    prop = streamer.volumes[ch_id].GetProperty()
+                    prop.SetColor(color_tf)
+                    prop.SetScalarOpacity(opacity_tf)
+
     def lineage_refresh_names():
         """Load snapshot names for current dataset into dropdown."""
         dataset_id = _lineage_dataset_id()
@@ -137,17 +191,7 @@ def register_lineage_callbacks(ctrl, state, _refs):
             }]
         state.lineage_current_view_index = 0
         v0 = views[0]
-        restored = []
-        for c in v0.get("channels") or []:
-            r = c.get("range") or [0, 100]
-            if not isinstance(r, (list, tuple)) or len(r) < 2:
-                r = [0, 100]
-            restored.append({
-                "id": c.get("id"),
-                "name": c.get("name") or f"Channel {c.get('id')}",
-                "color": c.get("color", "#FFFFFF"),
-                "range": [float(r[0]), float(r[1])],
-            })
+        restored = _normalize_channels(v0.get("channels"))
         state.channels = _lineage_merge_channels(restored, all_channels_before)
         state.active_channels = list(v0.get("active_channels") or [])
         visible = list(getattr(state, "visible_channel_ids", []) or [])
@@ -177,54 +221,12 @@ def register_lineage_callbacks(ctrl, state, _refs):
                         color_hex = ch.get("color") or color_hex
                         break
                 streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi, reset_camera=False)
-            from bioset.scene.volumes import build_tf_with_range
-            for ch in state.channels:
-                ch_id = ch.get("id")
-                if ch_id is None or ch_id not in state.active_channels:
-                    continue
-                rng = ch.get("range")
-                if rng is not None and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
-                    data_range = streamer._channel_data_range[ch_id]
-                    tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
-                    color_tf, opacity_tf = build_tf_with_range(data_range, (float(rng[0]), float(rng[1])), tint)
-                    streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
-                    if ch_id in streamer.volumes:
-                        prop = streamer.volumes[ch_id].GetProperty()
-                        prop.SetColor(color_tf)
-                        prop.SetScalarOpacity(opacity_tf)
+            _apply_channel_tfs_to_streamer(streamer)
         else:
             if hasattr(ctrl, "update_active_channels"):
                 ctrl.update_active_channels(state.active_channels)
-            if streamer:
-                for ch in state.channels:
-                    ch_id = ch.get("id")
-                    if ch_id is None:
-                        continue
-                    if ch_id in state.active_channels and ch.get("color"):
-                        streamer._channel_colors[ch_id] = streamer._hex_to_rgb(ch["color"])
-                    if ch_id in state.active_channels and ch.get("range") is not None and len(ch.get("range", [])) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
-                        from bioset.scene.volumes import build_tf_with_range
-                        rng = (float(ch["range"][0]), float(ch["range"][1]))
-                        color_tf, opacity_tf = build_tf_with_range(
-                            streamer._channel_data_range[ch_id], rng, streamer._channel_colors.get(ch_id, (1, 1, 1))
-                        )
-                        streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
-                        if ch_id in streamer.volumes:
-                            prop = streamer.volumes[ch_id].GetProperty()
-                            prop.SetColor(color_tf)
-                            prop.SetScalarOpacity(opacity_tf)
-        c = v0.get("camera") or {}
-        if streamer and hasattr(streamer, "renderer") and streamer.renderer and c:
-            cam = streamer.renderer.GetActiveCamera()
-            if c and "position" in c and len(c.get("position", [])) >= 3:
-                cam.SetPosition(c["position"][:3])
-            if c and "focalPoint" in c and len(c.get("focalPoint", [])) >= 3:
-                cam.SetFocalPoint(c["focalPoint"][:3])
-            if c and "viewUp" in c and len(c.get("viewUp", [])) >= 3:
-                cam.SetViewUp(c["viewUp"][:3])
-            streamer.renderer.ResetCameraClippingRange()
-        if _refs.get("view"):
-            _refs["view"].update()
+            _apply_channel_tfs_to_streamer(streamer)
+        _apply_camera(streamer, v0.get("camera") or {})
         state.lineage_edit_title = snap.get("title") or ""
         state.lineage_edit_description = v0.get("notes") or ""
         state.lineage_edit_comment = ""
@@ -243,28 +245,9 @@ def register_lineage_callbacks(ctrl, state, _refs):
     def _lineage_apply_view(v):
         """Apply view to scene: camera, channels, active_channels, background, TF. Updates state and streamer."""
         streamer = _refs.get("streamer")
-        c = v.get("camera") or {}
-        if streamer and hasattr(streamer, "renderer") and streamer.renderer and c:
-            cam = streamer.renderer.GetActiveCamera()
-            if c.get("position") and len(c["position"]) >= 3:
-                cam.SetPosition(c["position"][:3])
-            if c.get("focalPoint") and len(c["focalPoint"]) >= 3:
-                cam.SetFocalPoint(c["focalPoint"][:3])
-            if c.get("viewUp") and len(c["viewUp"]) >= 3:
-                cam.SetViewUp(c["viewUp"][:3])
-            streamer.renderer.ResetCameraClippingRange()
+        _apply_camera(streamer, v.get("camera") or {})
         if v.get("channels") is not None and v.get("active_channels") is not None:
-            restored = []
-            for ch in v.get("channels") or []:
-                r = ch.get("range") or [0, 100]
-                if not isinstance(r, (list, tuple)) or len(r) < 2:
-                    r = [0, 100]
-                restored.append({
-                    "id": ch.get("id"),
-                    "name": ch.get("name") or f"Channel {ch.get('id')}",
-                    "color": ch.get("color", "#FFFFFF"),
-                    "range": [float(r[0]), float(r[1])],
-                })
+            restored = _normalize_channels(v.get("channels"))
             state.channels = _lineage_merge_channels(restored, list(state.channels or []))
             state.active_channels = list(v.get("active_channels") or [])
             visible = list(getattr(state, "visible_channel_ids", []) or [])
@@ -274,24 +257,7 @@ def register_lineage_callbacks(ctrl, state, _refs):
             state.visible_channel_ids = visible
             if hasattr(ctrl, "update_active_channels"):
                 ctrl.update_active_channels(state.active_channels)
-            if streamer:
-                from bioset.scene.volumes import build_tf_with_range
-                for ch in state.channels:
-                    ch_id = ch.get("id")
-                    if ch_id is None or ch_id not in state.active_channels:
-                        continue
-                    if ch.get("color"):
-                        streamer._channel_colors[ch_id] = streamer._hex_to_rgb(ch["color"])
-                    rng = ch.get("range")
-                    if rng and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
-                        color_tf, opacity_tf = build_tf_with_range(
-                            streamer._channel_data_range[ch_id], (float(rng[0]), float(rng[1])),
-                            streamer._channel_colors.get(ch_id, (1, 1, 1)))
-                        streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
-                        if ch_id in streamer.volumes:
-                            prop = streamer.volumes[ch_id].GetProperty()
-                            prop.SetColor(color_tf)
-                            prop.SetScalarOpacity(opacity_tf)
+            _apply_channel_tfs_to_streamer(streamer)
         if v.get("background") and hasattr(ctrl, "update_background_color"):
             state.bg_color = v["background"]
             ctrl.update_background_color(v["background"])
@@ -405,20 +371,9 @@ def register_lineage_callbacks(ctrl, state, _refs):
                     }
                     break
         active = list(state.active_channels) if state.active_channels else []
-        channels_data = []
-        for ch in (state.channels or []):
-            c = dict(ch) if isinstance(ch, dict) else {}
-            if c.get("id") not in active:
-                continue
-            r = c.get("range") or [0, 100]
-            if not isinstance(r, (list, tuple)) or len(r) < 2:
-                r = [0, 100]
-            channels_data.append({
-                "id": c.get("id"),
-                "name": c.get("name") or f"Channel {c.get('id', '')}",
-                "color": c.get("color", "#FFFFFF"),
-                "range": [float(r[0]), float(r[1])],
-            })
+        channels_data = _normalize_channels(
+            [c for c in (state.channels or []) if isinstance(c, dict) and c.get("id") in active]
+        )
         viewport = {}
         if streamer and hasattr(streamer, "renderer") and streamer.renderer:
             rw = streamer.renderer.GetRenderWindow()
@@ -584,51 +539,35 @@ def register_lineage_callbacks(ctrl, state, _refs):
         state.lineage_edit_title = snap["title"]
         state.lineage_edit_comment = ""
 
-    def lineage_agree():
-        """Increment agreements for the current view and save."""
+    def _lineage_increment_feedback(field_name, require_title=True):
+        """Increment agreements or disagreements for the current view and save. field_name is 'agreements' or 'disagreements'."""
         disp = getattr(state, "lineage_display_snapshot", None)
         if not disp or not disp.get("title"):
-            print("[callbacks] Lineage: no snapshot displayed to agree")
+            if require_title:
+                print("[callbacks] Lineage: no snapshot displayed to agree")
             return
         idx = max(0, min(getattr(state, "lineage_current_view_index", 0), len(disp.get("views") or []) - 1))
         title = disp["title"]
         dataset_id = _lineage_dataset_id()
         snap = load_snapshot_by_name(title, dataset_id)
         if not snap:
-            print(f"[callbacks] Lineage: snapshot not found: {title}")
+            if require_title:
+                print(f"[callbacks] Lineage: snapshot not found: {title}")
             return
         views = list(snap.get("views") or [])
         if idx < len(views):
-            views[idx]["agreements"] = views[idx].get("agreements", 0) + 1
+            views[idx][field_name] = views[idx].get(field_name, 0) + 1
             snap["views"] = views
             save_snapshot(snap, dataset_id)
-            state.lineage_display_snapshot = {
-                **disp,
-                "views": views,
-                "agreements": views[idx]["agreements"],
-            }
+            state.lineage_display_snapshot = {**disp, "views": views, field_name: views[idx][field_name]}
+
+    def lineage_agree():
+        """Increment agreements for the current view and save."""
+        _lineage_increment_feedback("agreements", require_title=True)
 
     def lineage_disagree():
         """Increment disagreements for the current view and save."""
-        disp = getattr(state, "lineage_display_snapshot", None)
-        if not disp or not disp.get("title"):
-            return
-        idx = max(0, min(getattr(state, "lineage_current_view_index", 0), len(disp.get("views") or []) - 1))
-        title = disp["title"]
-        dataset_id = _lineage_dataset_id()
-        snap = load_snapshot_by_name(title, dataset_id)
-        if not snap:
-            return
-        views = list(snap.get("views") or [])
-        if idx < len(views):
-            views[idx]["disagreements"] = views[idx].get("disagreements", 0) + 1
-            snap["views"] = views
-            save_snapshot(snap, dataset_id)
-            state.lineage_display_snapshot = {
-                **disp,
-                "views": views,
-                "disagreements": views[idx]["disagreements"],
-            }
+        _lineage_increment_feedback("disagreements", require_title=False)
 
     def lineage_comment():
         """Append current comment to the current view and save."""

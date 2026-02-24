@@ -57,6 +57,27 @@ def register_nov_callbacks(ctrl, state, _refs):
     def _build_nov_sphere_svg(sphere_xy, current_index):
         return build_nov_sphere_svg(sphere_xy, current_index)
 
+    def _nov_get_scene_lod(streamer):
+        """Return (desired_comp, active_channel_ids) from streamer scene state or camera distance."""
+        active_channel_ids = list(streamer.get_active_channels()) if streamer else []
+        desired_comp = None
+        if active_channel_ids:
+            for ch_id in active_channel_ids:
+                st = getattr(streamer, "state", None) and streamer.state.get(ch_id)
+                if st is not None:
+                    desired_comp = st.component
+                    break
+        if desired_comp is None and streamer and getattr(streamer, "renderer", None):
+            cam = streamer.renderer.GetActiveCamera()
+            radius = camera_distance_to_focal(cam)
+            desired_comp = choose_component(
+                radius,
+                streamer.cfg.distance_rules,
+                min_component=streamer.cfg.min_component,
+                max_component=streamer.cfg.max_component,
+            )
+        return desired_comp, active_channel_ids
+
     def nov_toggle():
         """Compute 8 NOV candidates (sphere points), score by visible ROI, show panel and apply best view.
         Uses current scene state: active channels, LOD component, and camera from streamer."""
@@ -71,28 +92,13 @@ def register_nov_callbacks(ctrl, state, _refs):
         radius = camera_distance_to_focal(cam)
         if radius < 1e-6:
             radius = 1.0
+        desired_comp, active_channel_ids = _nov_get_scene_lod(streamer)
         points = get_nov_sphere_points()
         n_points = len(points)
-        active_channel_ids = list(streamer.get_active_channels()) if streamer else []
-        desired_comp = None
-        if active_channel_ids:
-            for ch_id in active_channel_ids:
-                st = getattr(streamer, "state", None) and streamer.state.get(ch_id)
-                if st is not None:
-                    desired_comp = st.component
-                    break
         if desired_comp is None:
-            dist = radius
-            desired_comp = choose_component(
-                dist,
-                streamer.cfg.distance_rules,
-                min_component=streamer.cfg.min_component,
-                max_component=streamer.cfg.max_component,
-            )
             print(f"[NOV] Start: focal={focal}, radius={radius:.1f}, {n_points} candidates (no scene state -> LOD from distance)")
         else:
             print(f"[NOV] Start: focal={focal}, radius={radius:.1f}, {n_points} candidates (scene state: comp={desired_comp}, active_channels={active_channel_ids})")
-        spacing = streamer._spacing_for_component(desired_comp)
         zdim, ydim, xdim = streamer._dims_for_component(desired_comp)
         bounds = streamer._volume_bounds_world(desired_comp)
         num_channels = max(1, len(active_channel_ids))
@@ -161,24 +167,8 @@ def register_nov_callbacks(ctrl, state, _refs):
         candidates = getattr(state, "nov_candidates", []) or []
         if not streamer or not candidates:
             return
-        active_channel_ids = list(streamer.get_active_channels()) if streamer else []
+        desired_comp, active_channel_ids = _nov_get_scene_lod(streamer)
         num_channels = max(1, len(active_channel_ids))
-        desired_comp = None
-        if active_channel_ids:
-            for ch_id in active_channel_ids:
-                st = getattr(streamer, "state", None) and streamer.state.get(ch_id)
-                if st is not None:
-                    desired_comp = st.component
-                    break
-        if desired_comp is None:
-            cam = streamer.renderer.GetActiveCamera()
-            radius = camera_distance_to_focal(cam)
-            desired_comp = choose_component(
-                radius,
-                streamer.cfg.distance_rules,
-                min_component=streamer.cfg.min_component,
-                max_component=streamer.cfg.max_component,
-            )
         bounds = streamer._volume_bounds_world(desired_comp)
         current_idx = getattr(state, "nov_current_index", 0)
         current_fixed = candidates[current_idx]["fixed_index"] if current_idx < len(candidates) else 0
@@ -219,41 +209,30 @@ def register_nov_callbacks(ctrl, state, _refs):
         if getattr(state, "nov_panel_visible", False):
             _nov_recompute_scores()
 
-    def nov_prev():
-        """Switch to previous NOV candidate and update score display."""
+    def _nov_switch(step, label):
+        """Switch to previous (step=-1) or next (step=+1) NOV candidate and update display."""
         candidates = getattr(state, "nov_candidates", []) or []
         if not candidates:
-            print("[NOV] Prev: no candidates")
+            print(f"[NOV] {label}: no candidates")
             return
-        idx = getattr(state, "nov_current_index", 0)
-        idx = (idx - 1) % len(candidates)
+        idx = (getattr(state, "nov_current_index", 0) + step) % len(candidates)
         state.nov_current_index = idx
         active_fixed = candidates[idx]["fixed_index"]
         state.nov_sphere_svg = _build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), active_fixed)
         _nov_apply_camera(candidates[idx])
         state.nov_score_display = candidates[idx]["score_normalized"]
         state.nov_view_index_display = f"{idx + 1}/{len(candidates)}"
-        print(f"[NOV] Prev -> view {idx + 1}/{len(candidates)} score={candidates[idx]['score_normalized']:.2f}")
+        print(f"[NOV] {label} -> view {idx + 1}/{len(candidates)} score={candidates[idx]['score_normalized']:.2f}")
         if _refs.get("view"):
             _refs["view"].update()
 
+    def nov_prev():
+        """Switch to previous NOV candidate and update score display."""
+        _nov_switch(-1, "Prev")
+
     def nov_next():
         """Switch to next NOV candidate and update score display."""
-        candidates = getattr(state, "nov_candidates", []) or []
-        if not candidates:
-            print("[NOV] Next: no candidates")
-            return
-        idx = getattr(state, "nov_current_index", 0)
-        idx = (idx + 1) % len(candidates)
-        state.nov_current_index = idx
-        active_fixed = candidates[idx]["fixed_index"]
-        state.nov_sphere_svg = _build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), active_fixed)
-        _nov_apply_camera(candidates[idx])
-        state.nov_score_display = candidates[idx]["score_normalized"]
-        state.nov_view_index_display = f"{idx + 1}/{len(candidates)}"
-        print(f"[NOV] Next -> view {idx + 1}/{len(candidates)} score={candidates[idx]['score_normalized']:.2f}")
-        if _refs.get("view"):
-            _refs["view"].update()
+        _nov_switch(1, "Next")
 
     # Attach to ctrl
     ctrl.nov_toggle = nov_toggle
