@@ -8,7 +8,8 @@ from .styles import register_styles
 from .scripts import register_scripts
 from .state import init_state, register_state_change_handlers
 from .callbacks import register_callbacks
-from .components import left_drawer, right_drawer, viewer, lineage_form_panel
+from .components import left_drawer, right_drawer, viewer
+from bioset.lineage import lineage_form_panel
 
 def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
