@@ -239,7 +239,7 @@ def right_drawer(state, ctrl):
                                 :limit="upset_expanded_limit"
                                 :width="1200"
                                 :height="800"
-                                @click="trigger('upset_click', $event)"
+                                @click="upset_click = $event"
                             />
                             """
                         )
@@ -300,7 +300,7 @@ def right_drawer(state, ctrl):
                     :view-mode="upset_view_mode"
                     :offset="upset_offset"
                     :limit="upset_limit"
-                    @click="trigger('upset_click', $event)"
+                    @click="upset_click = $event"
                 />
                 """
             )

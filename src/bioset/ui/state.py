@@ -139,7 +139,24 @@ def register_state_change_handlers(state, ctrl):
     def on_upset_click(upset_click, **kwargs):
         if upset_click:
             print(f"[state] UpSet clicked: {upset_click}")
-            # TODO: Handle selection - highlight in VTK view
+            set_names = upset_click.get("sets", [])
+
+            name_to_id = {ch["name"]: ch["id"] for ch in state.channels}
+            new_active = [name_to_id[name] for name in set_names if name in name_to_id]
+
+            if not new_active:
+                return
+
+            state.active_channels = new_active
+
+            visible = list(state.visible_channel_ids)
+            changed = False
+            for ch_id in new_active:
+                if ch_id not in visible:
+                    visible.append(ch_id)
+                    changed = True
+            if changed:
+                state.visible_channel_ids = visible
     
     @state.change("bg_color")
     def on_bg_color_change(bg_color, **kwargs):
