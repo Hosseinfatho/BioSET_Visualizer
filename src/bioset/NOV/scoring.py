@@ -1,5 +1,16 @@
 # scoring.py
-"""ROI-based viewpoint score: Score = alpha * Visible_ROI_Area - beta * Occlusion."""
+"""ROI-based viewpoint score for Next-Best-View (NOV).
+
+Two modes:
+- compute_view_score(area, occlusion, alpha, beta): raw formula
+  Score = max(0, alpha*area - beta*occlusion). Problem: area and occlusion are in
+  voxel² (millions), so with alpha=beta=0.5 the term is negative whenever
+  area < occlusion (typical for partial views), so score is always 0.
+
+- compute_view_score_fraction(area, total_xy): recommended for NOV
+  Score = area / total_xy (visible fraction in [0, 1]). Ranks views by how much
+  of the volume is visible; then normalize_scores() gives [0,1] relative to best.
+"""
 
 from __future__ import annotations
 
@@ -16,10 +27,21 @@ def compute_view_score(
     beta: float = 0.5,
 ) -> float:
     """
-    Score = alpha * Visible_ROI_Area - beta * Occlusion.
-    Default alpha=beta=0.5. Caller should normalize scores to [0, 1] across candidates if desired.
+    Score = max(0, alpha * Visible_ROI_Area - beta * Occlusion).
+    With raw voxel counts, this often gives 0 when area < occlusion. Prefer
+    compute_view_score_fraction() for NOV.
     """
     return max(0.0, alpha * visible_roi_area - beta * occlusion)
+
+
+def compute_view_score_fraction(visible_roi_area: float, total_xy_area: float) -> float:
+    """
+    Score = visible fraction = area / total_xy (in [0, 1]).
+    Use this for NOV so views are ranked by how much of the volume is visible.
+    """
+    if total_xy_area <= 0:
+        return 0.0
+    return float(visible_roi_area) / float(total_xy_area)
 
 
 def visible_roi_area_from_roi(roi: "ROI") -> float:

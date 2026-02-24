@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 import uuid
 from datetime import datetime
@@ -8,7 +9,7 @@ from datetime import datetime
 from bioset.llm import BiomniClient
 from bioset.lineage.snapshot_io import load_snapshots, load_snapshot_by_name, save_snapshot, snapshot_names, delete_snapshot_by_name, save_screenshot
 from bioset.NOV import get_nov_sphere_points, camera_position_from_sphere, view_up_for_sphere_point
-from bioset.NOV.scoring import compute_view_score, normalize_scores
+from bioset.NOV.scoring import compute_view_score_fraction, normalize_scores
 from bioset.streaming.lod import compute_visible_xy_roi_vox, camera_distance_to_focal, choose_component
 from .state import get_channel_color
 
@@ -172,7 +173,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_panel_visible = False
         state.nov_candidates = []
         state.nov_current_index = 0
-        state.nov_view_index_display = "0/18"
+        state.nov_view_index_display = "0/10"
         state.nov_score_display = 0.0
     
         if _refs["view"]:
@@ -1515,6 +1516,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def _build_nov_sphere_svg(sphere_xy, current_index):
+        """Build SVG string for 18 positions on sphere; current_index is highlighted."""
+        if not sphere_xy:
+            return ""
+        parts = [
+            '<svg width="28" height="28" viewBox="0 0 56 56" style="display:block">',
+            '<circle cx="28" cy="28" r="22" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>',
+        ]
+        for i, (x, y) in enumerate(sphere_xy):
+            active = i == current_index
+            r = 4 if active else 2.5
+            fill = "#fff" if active else "rgba(255,255,255,0.5)"
+            stroke = "#1976d2" if active else "transparent"
+            sw = 1.5 if active else 0
+            parts.append(
+                f'<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>'
+            )
+        parts.append("</svg>")
+        return "".join(parts)
+
     def nov_toggle():
         """Compute 8 NOV candidates (sphere points), score by visible ROI, show panel and apply best view.
         Uses current scene state: active channels, LOD component, and camera from streamer."""
@@ -1578,7 +1599,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             area = (roi.x1 - roi.x0) * (roi.y1 - roi.y0)
             total_xy = xdim * ydim
             occlusion = max(0.0, float(total_xy) - area)
-            score_raw = compute_view_score(area, occlusion=occlusion, alpha=0.5, beta=0.5)
+            score_raw = compute_view_score_fraction(area, total_xy)
             raw_scores.append(score_raw)
             candidates.append({
                 "camera": {
@@ -1587,19 +1608,36 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     "viewUp": view_up,
                 },
                 "score_raw": score_raw,
+                "theta_deg": theta_deg,
+                "phi_deg": phi_deg,
+                "fixed_index": i,
             })
-            print(f"[NOV]   candidate {i+1}/{n_points} theta={theta_deg} phi={phi_deg} -> roi=({roi.x0}:{roi.x1},{roi.y0}:{roi.y1}) area={area} occ={occlusion:.0f} score={score_raw:.2f}")
+            print(f"[NOV]   candidate {i+1}/{n_points} theta={theta_deg} phi={phi_deg} -> roi=({roi.x0}:{roi.x1},{roi.y0}:{roi.y1}) area={area} occ={occlusion:.0f} score={score_raw:.3f} (visible frac)")
         normed = normalize_scores(raw_scores)
         for i, c in enumerate(candidates):
             c["score_normalized"] = normed[i] if i < len(normed) else 0.0
+        # Sort high to low: rank 1 = best, 10 = worst
         candidates.sort(key=lambda x: x["score_normalized"], reverse=True)
         best_score = candidates[0]["score_normalized"] if candidates else 0.0
         state.nov_candidates = candidates
         state.nov_current_index = 0
+        # Sphere positions in fixed geometric order (theta 0-180, phi 0-360) for consistent layout
+        r_svg, cx_svg, cy_svg = 22, 28, 28
+        sphere_xy = []
+        for theta_deg, phi_deg in points:
+            th = math.radians(theta_deg)
+            ph = math.radians(phi_deg)
+            x = math.sin(th) * math.cos(ph)
+            y = math.sin(th) * math.sin(ph)
+            sphere_xy.append([round(cx_svg + r_svg * x, 1), round(cy_svg - r_svg * y, 1)])
+        state.nov_sphere_xy = sphere_xy
+        active_fixed = candidates[0]["fixed_index"] if candidates else 0
+        state.nov_sphere_svg = _build_nov_sphere_svg(sphere_xy, active_fixed)
+        state.nov_is_front = active_fixed < 5
         state.nov_score_display = candidates[0]["score_normalized"] if candidates else 0.0
-        state.nov_view_index_display = f"1/{len(candidates)}" if candidates else "0/18"
+        state.nov_view_index_display = f"1/{len(candidates)}" if candidates else "0/10"
         state.nov_panel_visible = True
-        print("[NOV] Scores (max -> min):")
+        print("[NOV] Scores (rank 1=best .. 10=worst):")
         for rank, c in enumerate(candidates, 1):
             print(f"[NOV]   #{rank}  score_raw={c['score_raw']:.2f}  score_norm={c['score_normalized']:.2f}")
         if candidates:
@@ -1618,6 +1656,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
         idx = getattr(state, "nov_current_index", 0)
         idx = (idx - 1) % len(candidates)
         state.nov_current_index = idx
+        active_fixed = candidates[idx]["fixed_index"]
+        state.nov_sphere_svg = _build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), active_fixed)
+        state.nov_is_front = active_fixed < 5
         _nov_apply_camera(candidates[idx])
         state.nov_score_display = candidates[idx]["score_normalized"]
         state.nov_view_index_display = f"{idx + 1}/{len(candidates)}"
@@ -1634,6 +1675,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
         idx = getattr(state, "nov_current_index", 0)
         idx = (idx + 1) % len(candidates)
         state.nov_current_index = idx
+        active_fixed = candidates[idx]["fixed_index"]
+        state.nov_sphere_svg = _build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), active_fixed)
+        state.nov_is_front = active_fixed < 5
         _nov_apply_camera(candidates[idx])
         state.nov_score_display = candidates[idx]["score_normalized"]
         state.nov_view_index_display = f"{idx + 1}/{len(candidates)}"

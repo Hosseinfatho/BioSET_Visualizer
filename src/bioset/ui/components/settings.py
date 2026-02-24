@@ -105,18 +105,24 @@ def settings_section(state, ctrl):
                                 vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
                             html.Span("Next Best View")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        with html.Div(style="display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;"):
+                        with html.Div(style="display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; min-width: 0;"):
                             html.Span("NOV", style="cursor: pointer; flex-shrink: 0;", click=ctrl.nov_toggle)
                             with html.Div(
                                 v_show=("nov_panel_visible", False),
-                                style="display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0;",
+                                style="display: inline-flex; align-items: center; gap: 1px; flex-shrink: 0;",
                             ):
                                 with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_prev):
                                     vuetify.VIcon("mdi-chevron-left", small=True)
-                                html.Span("{{ nov_view_index_display || '0/18' }}", style="min-width: 3ch; font-size: 0.85em;")
+                                html.Span("{{ nov_view_index_display || '0/10' }}", style="min-width: 3ch; font-size: 0.7em;")
                                 with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_next):
                                     vuetify.VIcon("mdi-chevron-right", small=True)
-                
+                            with html.Div(
+                                v_show=("nov_panel_visible && nov_sphere_svg", False),
+                                style="margin-left: 3px; flex-shrink: 0; display: inline-flex; align-items: center; gap: 1px;",
+                            ):
+                                html.Span("F", v_show=("nov_is_front", True), style="font-size: 0.65em; opacity: 0.8;")
+                                html.Span("B", v_show=("!nov_is_front", False), style="font-size: 0.65em; opacity: 0.8;")
+                                html.Div(v_html=("nov_sphere_svg", ""), style="flex-shrink: 0;")
                 # Lineage
                 with vuetify.VListItem(
                     class_=("lineage_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
