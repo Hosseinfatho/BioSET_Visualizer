@@ -12,7 +12,7 @@ from typing import List, Tuple
 
 # ---------- Easy-to-change parameters ----------
 # Mesh resolution (N x N). Plane is a square of side 2 * radius.
-NOV_MESH_SIZE = 1000
+NOV_MESH_SIZE = 500
 # Weights: visibility (filled cells) positive, occlusion (cells with 2+ channels) negative.
 VISIBILITY_WEIGHT = 0.8
 OCCLUSION_WEIGHT = 0.2
