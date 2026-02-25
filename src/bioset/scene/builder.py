@@ -15,6 +15,7 @@ from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
 from ..streaming import VolumeStreamer
 from .heatmap import HeatmapRenderer
+from .meshes import MeshManager
 
 @dataclass
 class VtkScene:
@@ -23,6 +24,7 @@ class VtkScene:
     interactor: vtkRenderWindowInteractor
     streamer: Optional[VolumeStreamer] = None
     heatmap: Optional[HeatmapRenderer] = None  
+    mesh_manager: Optional[MeshManager] = None
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -89,10 +91,19 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.ResetCameraClippingRange()
     renderer.ResetCamera()
 
+    mesh_manager: Optional[MeshManager] = None
+    if cfg.mesh_dir:
+        mesh_manager = MeshManager(
+            mesh_dir=cfg.mesh_dir,
+            renderer=renderer,
+            base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
+        )
+
     return VtkScene(
         renderer=renderer,
         render_window=render_window,
         interactor=interactor,
         streamer=streamer,
-        heatmap=heatmap
+        heatmap=heatmap,
+        mesh_manager=mesh_manager,
     )

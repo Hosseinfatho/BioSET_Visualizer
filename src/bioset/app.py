@@ -82,6 +82,8 @@ def main():
         scene.streamer.set_render_callback(view.update)
     if scene.heatmap is not None:
         ctrl.set_heatmap(scene.heatmap)
+    if scene.mesh_manager is not None:
+        ctrl.set_mesh_manager(scene.mesh_manager)
 
     server.start()
 

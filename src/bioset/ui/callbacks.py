@@ -699,6 +699,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         color_hex = color_hex.upper()
         
         print(f"[callbacks] Channel {channel_id} color changed to: {color_hex}")
+
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr and channel_id in state.active_channels:
+            mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
         
         new_channels = []
         for ch in state.channels:
