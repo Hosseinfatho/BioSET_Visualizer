@@ -58,6 +58,9 @@ class VolumeConfig:
     cache_dir: Path = Path.home() / ".cache" / "bioset_zarr_cache"
     cache_size_gb: float = 8.0
 
+    # surfaces directory
+    mesh_dir: Optional[Path] = None
+
     # Rendering Defaults
     background: str = "Black"
     shade: bool = True
@@ -87,4 +90,5 @@ def default_config() -> VolumeConfig:
         base_sx=0.14,
         base_sy=0.14,
         base_sz=0.28,
+        mesh_dir=data_dir / "output_meshes",
     )
