@@ -226,8 +226,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 state.current_dilation = metadata.dilation_amounts[0]
             
             if metadata.hierarchy_levels:
-                mid_idx = len(metadata.hierarchy_levels) // 2
-                state.current_hierarchy_level = metadata.hierarchy_levels[mid_idx]["level"]
+                state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
             
             # Initialize plot channel selections with all channels
             state.upset_selected_channels = [ch for ch in state.analysis_channels]

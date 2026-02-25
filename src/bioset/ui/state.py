@@ -100,7 +100,7 @@ def init_state(state):
 
     # Current analysis settings
     state.setdefault("current_dilation", 0)  # Selected dilation amount
-    state.setdefault("current_hierarchy_level", 2)  # Selected hierarchy (default coarse)
+    state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
 
     # Heatmap state
     state.setdefault("heatmap_visible", True)
