@@ -79,7 +79,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         return desired_comp, active_channel_ids
 
     def nov_toggle():
-        """Compute 8 NOV candidates (sphere points), score by visible ROI, show panel and apply best view.
+        """Compute NOV candidates (sphere points), score by visible ROI, show panel and apply best view.
         Uses current scene state: active channels, LOD component, and camera from streamer."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
@@ -149,9 +149,9 @@ def register_nov_callbacks(ctrl, state, _refs):
         active_fixed = candidates[0]["fixed_index"] if candidates else 0
         state.nov_sphere_svg = _build_nov_sphere_svg(sphere_xy, active_fixed)
         state.nov_score_display = candidates[0]["score_normalized"] if candidates else 0.0
-        state.nov_view_index_display = f"1/{len(candidates)}" if candidates else "0/5"
+        state.nov_view_index_display = f"1/{len(candidates)}" if candidates else "0/0"
         state.nov_panel_visible = True
-        print("[NOV] Scores (1/5=top .. 5/5=lowest):")
+        print(f"[NOV] Scores (1/{len(candidates)}=top .. {len(candidates)}/{len(candidates)}=lowest):")
         for rank, c in enumerate(candidates, 1):
             print(f"[NOV]   #{rank}  score_raw={c['score_raw']:.2f}  score_norm={c['score_normalized']:.2f}")
         if candidates:
@@ -202,7 +202,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_sphere_svg = _build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), current_fixed)
         state.nov_score_display = candidates[new_idx]["score_normalized"]
         state.nov_view_index_display = f"{new_idx + 1}/{len(candidates)}"
-        print(f"[NOV] Scores updated (active_channels={len(active_channel_ids)}): 1/5=top .. {len(candidates)}/5=lowest")
+        print(f"[NOV] Scores updated (active_channels={len(active_channel_ids)}): 1/{len(candidates)}=top .. {len(candidates)}/{len(candidates)}=lowest")
 
     def nov_recompute_scores_if_visible():
         """If NOV panel is open, recompute scores from current active channels (and optionally range)."""
