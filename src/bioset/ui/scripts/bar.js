@@ -74,7 +74,7 @@ Vue.component('bar-plot', {
                 .padding(0.1);
 
             const y = d3.scaleLinear()
-                .domain([0, 100])
+                .domain([0, maxCount])
                 .range([height - marginBottom, marginTop]);
 
             const svg = d3.select(container)
