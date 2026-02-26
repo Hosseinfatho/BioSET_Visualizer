@@ -1,20 +1,165 @@
-# NOV.py
-"""NOV (Next Best View) UI callbacks: toggle panel, prev/next candidate, recompute scores.
-   Register with register_nov_callbacks(ctrl, state, _refs).
-"""
+# NOV (Next Best View): single-file module.
+# Sphere candidates, camera math, mesh-based view scoring, UI callbacks.
+# Score = visibility_weight * (filled/total) - occlusion_weight * (occluded/total).
 
 from __future__ import annotations
 
 import math
 import time
+from typing import List, Tuple, TYPE_CHECKING
 
-from . import get_nov_sphere_points, camera_position_from_sphere, view_up_for_sphere_point
-from .mesh_score import compute_view_score_mesh, normalize_scores
 from bioset.streaming.lod import camera_distance_to_focal, choose_component
 
+if TYPE_CHECKING:
+    from bioset.streaming.lod import ROI
 
-def build_nov_sphere_svg(sphere_xy, current_index):
-    """Build SVG string for 5 positions on sphere; current_index is highlighted."""
+# --- Constants ---
+NOV_THETA_PHI: List[Tuple[float, float]] = [
+    (90.0, 0.0), (45.0, 45.0), (135.0, 45.0), (45.0, -45.0), (135.0, -45.0),
+    (90.0, 30.0), (90.0, -30.0), (60.0, 0.0), (120.0, 0.0), (90.0, 60.0), (90.0, -60.0),
+]
+NOV_MESH_SIZE = 500
+VISIBILITY_WEIGHT = 0.8
+OCCLUSION_WEIGHT = 0.2
+
+# --- Math helpers ---
+def _rad(d: float) -> float:
+    return d * math.pi / 180.0
+
+def _norm3(v: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    n = math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+    return (v[0]/n, v[1]/n, v[2]/n) if n >= 1e-12 else (0.0, 0.0, 0.0)
+
+def _cross(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+
+def _dot(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+
+def _hull2(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    if len(points) <= 2:
+        return list(points)
+    pts = sorted(set(points))
+    if len(pts) <= 2:
+        return pts
+    def cross_o(a, b, c):
+        return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross_o(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross_o(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+def _in_poly(q: Tuple[float, float], poly: List[Tuple[float, float]]) -> bool:
+    n, x, y = len(poly), q[0], q[1]
+    if n < 3:
+        return False
+    inside, j = False, n - 1
+    for i in range(n):
+        xi, yi, xj, yj = poly[i][0], poly[i][1], poly[j][0], poly[j][1]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-20) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+def _aabb_corners(b: Tuple[float, float, float, float, float, float]) -> List[Tuple[float, float, float]]:
+    x0, x1, y0, y1, z0, z1 = b
+    return [(x0,y0,z0),(x1,y0,z0),(x0,y1,z0),(x1,y1,z0),(x0,y0,z1),(x1,y0,z1),(x0,y1,z1),(x1,y1,z1)]
+
+# --- Sphere candidates ---
+def get_nov_sphere_points() -> List[Tuple[float, float]]:
+    return list(NOV_THETA_PHI)
+
+# --- Camera from sphere (theta, phi in degrees) ---
+def camera_position_from_sphere(center: Tuple[float, float, float], radius: float, theta_deg: float, phi_deg: float) -> List[float]:
+    th, ph = _rad(theta_deg), _rad(phi_deg)
+    dx = radius * math.sin(th) * math.sin(ph)
+    dy = radius * math.cos(th)
+    dz = -radius * math.sin(th) * math.cos(ph)
+    return [center[0] + dx, center[1] + dy, center[2] + dz]
+
+def view_up_for_sphere_point(theta_deg: float, phi_deg: float) -> List[float]:
+    th, ph = _rad(theta_deg), _rad(phi_deg)
+    nx = math.sin(th) * math.sin(ph)
+    ny = math.cos(th)
+    nz = -math.sin(th) * math.cos(ph)
+    ux, uy, uz = 0.0, 1.0, 0.0
+    if abs(ny) > 0.99:
+        ux, uy, uz = 0.0, 0.0, 1.0
+    dot = ux*nx + uy*ny + uz*nz
+    vx, vy, vz = ux - dot*nx, uy - dot*ny, uz - dot*nz
+    n = math.sqrt(vx*vx + vy*vy + vz*vz)
+    return [vx/n, vy/n, vz/n] if n >= 1e-9 else [0.0, 0.0, 1.0]
+
+# --- Mesh-based view score ---
+def compute_view_score_mesh(
+    camera_pos: Tuple[float, float, float],
+    focal: Tuple[float, float, float],
+    view_up: Tuple[float, float, float],
+    radius: float,
+    bounds_world: Tuple[float, float, float, float, float, float],
+    num_channels: int,
+    *,
+    mesh_size: int = NOV_MESH_SIZE,
+    visibility_weight: float = VISIBILITY_WEIGHT,
+    occlusion_weight: float = OCCLUSION_WEIGHT,
+) -> float:
+    if num_channels <= 0:
+        return 0.0
+    normal = _norm3((focal[0]-camera_pos[0], focal[1]-camera_pos[1], focal[2]-camera_pos[2]))
+    up = _norm3((view_up[0], view_up[1], view_up[2]))
+    u_axis = _norm3(_cross(normal, up))
+    v_axis = _norm3(_cross(normal, u_axis))
+    corners = _aabb_corners(bounds_world)
+    uv = [(_dot((c[0]-focal[0], c[1]-focal[1], c[2]-focal[2]), u_axis), _dot((c[0]-focal[0], c[1]-focal[1], c[2]-focal[2]), v_axis)) for c in corners]
+    hull = _hull2(uv)
+    if len(hull) < 3:
+        return 0.0
+    total = mesh_size * mesh_size
+    cell = (2.0 * radius) / mesh_size
+    count = [[0] * mesh_size for _ in range(mesh_size)]
+    umin, umax = min(p[0] for p in hull), max(p[0] for p in hull)
+    vmin, vmax = min(p[1] for p in hull), max(p[1] for p in hull)
+    i0 = max(0, int((umin + radius) / (2.0 * radius) * mesh_size))
+    i1 = min(mesh_size, int((umax + radius) / (2.0 * radius) * mesh_size) + 1)
+    j0 = max(0, int((vmin + radius) / (2.0 * radius) * mesh_size))
+    j1 = min(mesh_size, int((vmax + radius) / (2.0 * radius) * mesh_size) + 1)
+    for _ in range(num_channels):
+        for i in range(i0, i1):
+            for j in range(j0, j1):
+                uc = -radius + (i + 0.5) * cell
+                vc = -radius + (j + 0.5) * cell
+                if _in_poly((uc, vc), hull):
+                    count[i][j] += 1
+    filled = sum(1 for row in count for c in row if c >= 1)
+    occluded = sum(1 for row in count for c in row if c >= 2)
+    score = visibility_weight * (filled / total) - occlusion_weight * (occluded / total)
+    return max(0.0, min(1.0, score))
+
+def normalize_scores(scores: list[float]) -> list[float]:
+    if not scores:
+        return []
+    mx = max(scores)
+    return [0.0] * len(scores) if mx <= 0 else [s / mx for s in scores]
+
+# --- Legacy ROI scoring (optional API) ---
+def compute_view_score(visible_roi_area: float, occlusion: float = 0.0, alpha: float = 0.5, beta: float = 0.5) -> float:
+    return max(0.0, alpha * visible_roi_area - beta * occlusion)
+
+def compute_view_score_fraction(visible_roi_area: float, total_xy_area: float) -> float:
+    return float(visible_roi_area) / float(total_xy_area) if total_xy_area > 0 else 0.0
+
+def visible_roi_area_from_roi(roi: "ROI") -> float:
+    return float(max(0, roi.x1 - roi.x0) * max(0, roi.y1 - roi.y0))
+
+# --- SVG ---
+def build_nov_sphere_svg(sphere_xy: list, current_index: int) -> str:
     if not sphere_xy:
         return ""
     parts = [
@@ -27,22 +172,17 @@ def build_nov_sphere_svg(sphere_xy, current_index):
         fill = "#fff" if active else "rgba(255,255,255,0.5)"
         stroke = "#1976d2" if active else "transparent"
         sw = 1.5 if active else 0
-        parts.append(
-            f'<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>'
-        )
+        parts.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
     parts.append("</svg>")
     return "".join(parts)
 
-
+# --- Callbacks ---
 def register_nov_callbacks(ctrl, state, _refs):
-    """Register all nov_* and _nov_* methods on ctrl. Uses state and _refs."""
-
-    def _nov_apply_camera(camera_dict):
-        """Apply camera dict (position, focalPoint, viewUp) to streamer and refresh view."""
+    def apply_cam(cam_dict):
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
             return
-        c = camera_dict.get("camera") or camera_dict
+        c = cam_dict.get("camera") or cam_dict
         cam = streamer.renderer.GetActiveCamera()
         if c.get("position") and len(c["position"]) >= 3:
             cam.SetPosition(c["position"][:3])
@@ -54,33 +194,22 @@ def register_nov_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
-    def _build_nov_sphere_svg(sphere_xy, current_index):
-        return build_nov_sphere_svg(sphere_xy, current_index)
-
-    def _nov_get_scene_lod(streamer):
-        """Return (desired_comp, active_channel_ids) from streamer scene state or camera distance."""
-        active_channel_ids = list(streamer.get_active_channels()) if streamer else []
-        desired_comp = None
-        if active_channel_ids:
-            for ch_id in active_channel_ids:
-                st = getattr(streamer, "state", None) and streamer.state.get(ch_id)
+    def get_lod(s):
+        active = list(s.get_active_channels()) if s else []
+        comp = None
+        if active:
+            for ch_id in active:
+                st = getattr(s, "state", None) and s.state.get(ch_id)
                 if st is not None:
-                    desired_comp = st.component
+                    comp = st.component
                     break
-        if desired_comp is None and streamer and getattr(streamer, "renderer", None):
-            cam = streamer.renderer.GetActiveCamera()
-            radius = camera_distance_to_focal(cam)
-            desired_comp = choose_component(
-                radius,
-                streamer.cfg.distance_rules,
-                min_component=streamer.cfg.min_component,
-                max_component=streamer.cfg.max_component,
-            )
-        return desired_comp, active_channel_ids
+        if comp is None and s and getattr(s, "renderer", None):
+            cam = s.renderer.GetActiveCamera()
+            r = camera_distance_to_focal(cam)
+            comp = choose_component(r, s.cfg.distance_rules, min_component=s.cfg.min_component, max_component=s.cfg.max_component)
+        return comp, active
 
     def nov_toggle():
-        """Compute NOV candidates (sphere points), score by visible ROI, show panel and apply best view.
-        Uses current scene state: active channels, LOD component, and camera from streamer."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
             state.nov_panel_visible = False
@@ -92,150 +221,75 @@ def register_nov_callbacks(ctrl, state, _refs):
         radius = camera_distance_to_focal(cam)
         if radius < 1e-6:
             radius = 1.0
-        desired_comp, active_channel_ids = _nov_get_scene_lod(streamer)
+        comp, active_ch = get_lod(streamer)
         points = get_nov_sphere_points()
-        n_points = len(points)
-        if desired_comp is None:
-            print(f"[NOV] Start: focal={focal}, radius={radius:.1f}, {n_points} candidates (no scene state -> LOD from distance)")
-        else:
-            print(f"[NOV] Start: focal={focal}, radius={radius:.1f}, {n_points} candidates (scene state: comp={desired_comp}, active_channels={active_channel_ids})")
-        zdim, ydim, xdim = streamer._dims_for_component(desired_comp)
-        bounds = streamer._volume_bounds_world(desired_comp)
-        num_channels = max(1, len(active_channel_ids))
-        print(f"[NOV] LOD component={desired_comp}, dims=({xdim}, {ydim}, {zdim}), mesh scoring (visibility=0.8, occlusion=0.2)")
-
-        raw_scores = []
-        candidates = []
-        for i, (theta_deg, phi_deg) in enumerate(points):
-            pos = camera_position_from_sphere(focal, radius, theta_deg, phi_deg)
-            view_up = view_up_for_sphere_point(theta_deg, phi_deg)
-            score_raw = compute_view_score_mesh(
-                camera_pos=(pos[0], pos[1], pos[2]),
-                focal=(focal[0], focal[1], focal[2]),
-                view_up=(view_up[0], view_up[1], view_up[2]),
-                radius=radius,
-                bounds_world=bounds,
-                num_channels=num_channels,
-            )
-            raw_scores.append(score_raw)
-            candidates.append({
-                "camera": {
-                    "position": pos,
-                    "focalPoint": focal,
-                    "viewUp": view_up,
-                },
-                "score_raw": score_raw,
-                "theta_deg": theta_deg,
-                "phi_deg": phi_deg,
-                "fixed_index": i,
-            })
-            print(f"[NOV]   candidate {i+1}/{n_points} theta={theta_deg} phi={phi_deg} score={score_raw:.3f} (mesh)")
+        bounds = streamer._volume_bounds_world(comp)
+        nch = max(1, len(active_ch))
+        raw_scores, candidates = [], []
+        for i, (t_deg, p_deg) in enumerate(points):
+            pos = camera_position_from_sphere(focal, radius, t_deg, p_deg)
+            vup = view_up_for_sphere_point(t_deg, p_deg)
+            sc = compute_view_score_mesh((pos[0], pos[1], pos[2]), (focal[0], focal[1], focal[2]), (vup[0], vup[1], vup[2]), radius, bounds, nch)
+            raw_scores.append(sc)
+            candidates.append({"camera": {"position": pos, "focalPoint": focal, "viewUp": vup}, "score_raw": sc, "theta_deg": t_deg, "phi_deg": p_deg, "fixed_index": i})
         normed = normalize_scores(raw_scores)
         for i, c in enumerate(candidates):
             c["score_normalized"] = normed[i] if i < len(normed) else 0.0
         candidates.sort(key=lambda x: x["score_normalized"], reverse=True)
-        best_score = candidates[0]["score_normalized"] if candidates else 0.0
         state.nov_candidates = candidates
         state.nov_current_index = 0
-        r_svg, cx_svg, cy_svg = 22, 28, 28
-        sphere_xy = []
-        for theta_deg, phi_deg in points:
-            th = math.radians(theta_deg)
-            ph = math.radians(phi_deg)
-            x = math.sin(th) * math.sin(ph)
-            y = math.cos(th)
-            sphere_xy.append([round(cx_svg + r_svg * x, 1), round(cy_svg - r_svg * y, 1)])
+        r_svg, cx, cy = 22, 28, 28
+        sphere_xy = [[round(cx + r_svg * math.sin(_rad(t)) * math.sin(_rad(p)), 1), round(cy - r_svg * math.cos(_rad(t)), 1)] for t, p in points]
         state.nov_sphere_xy = sphere_xy
-        active_fixed = candidates[0]["fixed_index"] if candidates else 0
-        state.nov_sphere_svg = _build_nov_sphere_svg(sphere_xy, active_fixed)
+        state.nov_sphere_svg = build_nov_sphere_svg(sphere_xy, candidates[0]["fixed_index"] if candidates else 0)
         state.nov_score_display = candidates[0]["score_normalized"] if candidates else 0.0
         state.nov_view_index_display = f"1/{len(candidates)}" if candidates else "0/0"
         state.nov_panel_visible = True
-        print(f"[NOV] Scores (1/{len(candidates)}=top .. {len(candidates)}/{len(candidates)}=lowest):")
-        for rank, c in enumerate(candidates, 1):
-            print(f"[NOV]   #{rank}  score_raw={c['score_raw']:.2f}  score_norm={c['score_normalized']:.2f}")
         if candidates:
-            _nov_apply_camera(candidates[0])
-        elapsed = time.perf_counter() - t0
-        print(f"[NOV] Done: best score={best_score:.2f}, applied view 1/{len(candidates)}, elapsed={elapsed:.2f}s")
+            apply_cam(candidates[0])
+        print(f"[NOV] Done: best={(candidates[0]['score_normalized'] if candidates else 0):.2f}, elapsed={time.perf_counter()-t0:.2f}s")
         if _refs.get("view"):
             _refs["view"].update()
 
-    def _nov_recompute_scores():
-        """Recompute NOV scores for current candidates using only active channels in the scene. Keeps current view (by fixed_index)."""
+    def recompute():
         streamer = _refs.get("streamer")
-        candidates = getattr(state, "nov_candidates", []) or []
-        if not streamer or not candidates:
+        cands = getattr(state, "nov_candidates", []) or []
+        if not streamer or not cands:
             return
-        desired_comp, active_channel_ids = _nov_get_scene_lod(streamer)
-        num_channels = max(1, len(active_channel_ids))
-        bounds = streamer._volume_bounds_world(desired_comp)
-        current_idx = getattr(state, "nov_current_index", 0)
-        current_fixed = candidates[current_idx]["fixed_index"] if current_idx < len(candidates) else 0
-        raw_scores = []
-        for c in candidates:
-            pos = c["camera"]["position"]
-            focal = c["camera"]["focalPoint"]
-            view_up = c["camera"]["viewUp"]
-            radius = math.sqrt(
-                (pos[0] - focal[0]) ** 2 + (pos[1] - focal[1]) ** 2 + (pos[2] - focal[2]) ** 2
-            )
-            if radius < 1e-6:
-                radius = 1.0
-            score_raw = compute_view_score_mesh(
-                camera_pos=(pos[0], pos[1], pos[2]),
-                focal=(focal[0], focal[1], focal[2]),
-                view_up=(view_up[0], view_up[1], view_up[2]),
-                radius=radius,
-                bounds_world=bounds,
-                num_channels=num_channels,
-            )
-            raw_scores.append(score_raw)
-            c["score_raw"] = score_raw
-        normed = normalize_scores(raw_scores)
-        for i, c in enumerate(candidates):
+        comp, active_ch = get_lod(streamer)
+        bounds = streamer._volume_bounds_world(comp)
+        nch = max(1, len(active_ch))
+        cur = getattr(state, "nov_current_index", 0)
+        fixed = cands[cur]["fixed_index"] if cur < len(cands) else 0
+        for c in cands:
+            pos, focal, vup = c["camera"]["position"], c["camera"]["focalPoint"], c["camera"]["viewUp"]
+            r = math.sqrt((pos[0]-focal[0])**2 + (pos[1]-focal[1])**2 + (pos[2]-focal[2])**2) or 1.0
+            c["score_raw"] = compute_view_score_mesh((pos[0],pos[1],pos[2]), (focal[0],focal[1],focal[2]), (vup[0],vup[1],vup[2]), r, bounds, nch)
+        normed = normalize_scores([c["score_raw"] for c in cands])
+        for i, c in enumerate(cands):
             c["score_normalized"] = normed[i] if i < len(normed) else 0.0
-        candidates.sort(key=lambda x: x["score_normalized"], reverse=True)
-        state.nov_candidates = candidates
-        new_idx = next((k for k, c in enumerate(candidates) if c["fixed_index"] == current_fixed), 0)
+        cands.sort(key=lambda x: x["score_normalized"], reverse=True)
+        state.nov_candidates = cands
+        new_idx = next((k for k, c in enumerate(cands) if c["fixed_index"] == fixed), 0)
         state.nov_current_index = new_idx
-        state.nov_sphere_svg = _build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), current_fixed)
-        state.nov_score_display = candidates[new_idx]["score_normalized"]
-        state.nov_view_index_display = f"{new_idx + 1}/{len(candidates)}"
-        print(f"[NOV] Scores updated (active_channels={len(active_channel_ids)}): 1/{len(candidates)}=top .. {len(candidates)}/{len(candidates)}=lowest")
+        state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), fixed)
+        state.nov_score_display = cands[new_idx]["score_normalized"]
+        state.nov_view_index_display = f"{new_idx+1}/{len(cands)}"
 
-    def nov_recompute_scores_if_visible():
-        """If NOV panel is open, recompute scores from current active channels (and optionally range)."""
-        if getattr(state, "nov_panel_visible", False):
-            _nov_recompute_scores()
-
-    def _nov_switch(step, label):
-        """Switch to previous (step=-1) or next (step=+1) NOV candidate and update display."""
-        candidates = getattr(state, "nov_candidates", []) or []
-        if not candidates:
-            print(f"[NOV] {label}: no candidates")
+    def switch(step):
+        cands = getattr(state, "nov_candidates", []) or []
+        if not cands:
             return
-        idx = (getattr(state, "nov_current_index", 0) + step) % len(candidates)
+        idx = (getattr(state, "nov_current_index", 0) + step) % len(cands)
         state.nov_current_index = idx
-        active_fixed = candidates[idx]["fixed_index"]
-        state.nov_sphere_svg = _build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), active_fixed)
-        _nov_apply_camera(candidates[idx])
-        state.nov_score_display = candidates[idx]["score_normalized"]
-        state.nov_view_index_display = f"{idx + 1}/{len(candidates)}"
-        print(f"[NOV] {label} -> view {idx + 1}/{len(candidates)} score={candidates[idx]['score_normalized']:.2f}")
+        state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), cands[idx]["fixed_index"])
+        apply_cam(cands[idx])
+        state.nov_score_display = cands[idx]["score_normalized"]
+        state.nov_view_index_display = f"{idx+1}/{len(cands)}"
         if _refs.get("view"):
             _refs["view"].update()
 
-    def nov_prev():
-        """Switch to previous NOV candidate and update score display."""
-        _nov_switch(-1, "Prev")
-
-    def nov_next():
-        """Switch to next NOV candidate and update score display."""
-        _nov_switch(1, "Next")
-
-    # Attach to ctrl
     ctrl.nov_toggle = nov_toggle
-    ctrl.nov_prev = nov_prev
-    ctrl.nov_next = nov_next
-    ctrl.nov_recompute_scores_if_visible = nov_recompute_scores_if_visible
+    ctrl.nov_prev = lambda: switch(-1)
+    ctrl.nov_next = lambda: switch(1)
+    ctrl.nov_recompute_scores_if_visible = lambda: recompute() if getattr(state, "nov_panel_visible", False) else None
