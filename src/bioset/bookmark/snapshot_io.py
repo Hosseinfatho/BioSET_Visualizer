@@ -1,7 +1,7 @@
 # snapshot_io.py
 """Load and save bookmark (saved view) snapshots per dataset.
    For each dataset link, use a folder under bookmark/default/recordings/<dataset_id>/.
-   One JSON file per area/snapshot, same ID/name as user set. Supports agreements and updates.
+   One JSON file per area/snapshot, same ID/name as user set.
 """
 
 from __future__ import annotations

@@ -1,0 +1,105 @@
+{
+  "id": "f25cf9e9-b15b-4b26-a8bc-84e6ea5052f2",
+  "title": "focal point",
+  "created": "2026-02-26T05:49:40Z",
+  "updated": "2026-02-26T05:50:52Z",
+  "notes": "",
+  "camera": {
+    "position": [
+      757.9299214116483,
+      380.31028007719084,
+      27.02000000000001
+    ],
+    "focalPoint": [
+      757.9299214116483,
+      380.31028007719084,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    0
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 2133,
+    "height": 1012
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          757.9299214116483,
+          380.31028007719084,
+          27.02000000000001
+        ],
+        "focalPoint": [
+          757.9299214116483,
+          380.31028007719084,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        0
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 2133,
+        "height": 1012
+      },
+      "optional_LOD": {
+        "component": 0,
+        "roi": {
+          "x0": 5288,
+          "x1": 5539,
+          "y0": 2648,
+          "y1": 2785
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 0,
+    "roi": {
+      "x0": 5288,
+      "x1": 5539,
+      "y0": 2648,
+      "y1": 2785
+    }
+  },
+  "description": ""
+}

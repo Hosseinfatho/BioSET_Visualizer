@@ -60,8 +60,6 @@
     "width": 1920,
     "height": 911
   },
-  "agreements": 1,
-  "disagreements": 0,
   "comments": [],
   "views": [
     {
@@ -131,9 +129,7 @@
           "y0": 327,
           "y1": 1021
         }
-      },
-      "agreements": 1,
-      "disagreements": 0
+      }
     },
     {
       "camera": {
@@ -202,9 +198,7 @@
           "y0": 255,
           "y1": 919
         }
-      },
-      "agreements": 0,
-      "disagreements": 0
+      }
     }
   ],
   "optional_LOD": {

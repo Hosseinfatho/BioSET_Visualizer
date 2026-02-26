@@ -237,8 +237,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "comments": v0.get("comments", []),
             "created": snap.get("created"),
             "updated": snap.get("updated"),
-            "agreements": v0.get("agreements", snap.get("agreements", 0)),
-            "disagreements": v0.get("disagreements", snap.get("disagreements", 0)),
             "views": views,
         }
 
@@ -279,8 +277,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             **disp,
             "description": v.get("notes") or "",
             "comments": v.get("comments", []),
-            "agreements": v.get("agreements", 0),
-            "disagreements": v.get("disagreements", 0),
         }
 
     def bookmark_apply_current_view():
@@ -319,8 +315,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "background": cap["background"],
             "viewport": cap.get("viewport") or {},
             "optional_LOD": cap.get("optional_lod"),
-            "agreements": 0,
-            "disagreements": 0,
         }
         views.append(new_view)
         state.bookmark_current_view_index = len(views) - 1
@@ -331,8 +325,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "views": views,
             "description": "",
             "comments": [],
-            "agreements": 0,
-            "disagreements": 0,
         }
         dataset_id = _bookmark_dataset_id()
         snap = load_snapshot_by_name(disp["title"], dataset_id)
@@ -414,8 +406,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "active_channels": cap["active_channels"],
             "background": cap["background"],
             "viewport": cap["viewport"],
-            "agreements": 0,
-            "disagreements": 0,
             "comments": comments,
             "views": [view0],
         }
@@ -436,8 +426,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "comments": comments,
             "created": now,
             "updated": now,
-            "agreements": 0,
-            "disagreements": 0,
             "views": [view0],
         }
         if _refs.get("view"):
@@ -472,8 +460,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                 "background": snap.get("background") or "",
                 "viewport": snap.get("viewport") or {},
                 "optional_LOD": snap.get("optional_LOD"),
-                "agreements": snap.get("agreements", 0),
-                "disagreements": snap.get("disagreements", 0),
             }]
         idx = getattr(state, "bookmark_current_view_index", 0)
         idx = max(0, min(idx, len(views) - 1))
@@ -482,15 +468,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         view_comments = list(views[idx].get("comments") or []) if idx < len(views) else []
         if new_comment:
             view_comments.append({"date": now, "text": new_comment})
-        current_view_data = views[idx] if idx < len(views) else {}
-        def _view_agreements():
-            if "agreements" in current_view_data:
-                return current_view_data["agreements"]
-            return snap.get("agreements", 0) if idx == 0 else 0
-        def _view_disagreements():
-            if "disagreements" in current_view_data:
-                return current_view_data["disagreements"]
-            return snap.get("disagreements", 0) if idx == 0 else 0
         view_payload = {
             "camera": cap["camera"],
             "notes": notes,
@@ -500,8 +477,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "background": cap["background"],
             "viewport": cap.get("viewport") or {},
             "optional_LOD": cap.get("optional_lod"),
-            "agreements": _view_agreements(),
-            "disagreements": _view_disagreements(),
         }
         if idx < len(views):
             views[idx] = view_payload
@@ -532,42 +507,10 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "comments": view_comments,
             "created": snap.get("created"),
             "updated": snap.get("updated"),
-            "agreements": current_view.get("agreements", 0),
-            "disagreements": current_view.get("disagreements", 0),
             "views": views,
         }
         state.bookmark_edit_title = snap["title"]
         state.bookmark_edit_comment = ""
-
-    def _bookmark_increment_feedback(field_name, require_title=True):
-        """Increment agreements or disagreements for the current view and save. field_name is 'agreements' or 'disagreements'."""
-        disp = getattr(state, "bookmark_display_snapshot", None)
-        if not disp or not disp.get("title"):
-            if require_title:
-                print("[callbacks] Bookmark: no snapshot displayed to agree")
-            return
-        idx = max(0, min(getattr(state, "bookmark_current_view_index", 0), len(disp.get("views") or []) - 1))
-        title = disp["title"]
-        dataset_id = _bookmark_dataset_id()
-        snap = load_snapshot_by_name(title, dataset_id)
-        if not snap:
-            if require_title:
-                print(f"[callbacks] Bookmark: snapshot not found: {title}")
-            return
-        views = list(snap.get("views") or [])
-        if idx < len(views):
-            views[idx][field_name] = views[idx].get(field_name, 0) + 1
-            snap["views"] = views
-            save_snapshot(snap, dataset_id)
-            state.bookmark_display_snapshot = {**disp, "views": views, field_name: views[idx][field_name]}
-
-    def bookmark_agree():
-        """Increment agreements for the current view and save."""
-        _bookmark_increment_feedback("agreements", require_title=True)
-
-    def bookmark_disagree():
-        """Increment disagreements for the current view and save."""
-        _bookmark_increment_feedback("disagreements", require_title=False)
 
     def bookmark_comment():
         """Append current comment to the current view and save."""
@@ -633,7 +576,5 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     ctrl.bookmark_apply_current_view = bookmark_apply_current_view
     ctrl.bookmark_open_export_screenshot = bookmark_open_export_screenshot
     ctrl.bookmark_export_screenshot_save = bookmark_export_screenshot_save
-    ctrl.bookmark_agree = bookmark_agree
-    ctrl.bookmark_disagree = bookmark_disagree
     ctrl.bookmark_comment = bookmark_comment
     ctrl.bookmark_update_snapshot = bookmark_update_snapshot

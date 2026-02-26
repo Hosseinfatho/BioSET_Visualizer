@@ -24,19 +24,24 @@ OCCLUSION_WEIGHT = 0.2
 
 # --- Math helpers ---
 def _rad(d: float) -> float:
+    """Convert degrees to radians."""
     return d * math.pi / 180.0
 
 def _norm3(v: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    """Return unit vector; zero vector if norm too small."""
     n = math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
     return (v[0]/n, v[1]/n, v[2]/n) if n >= 1e-12 else (0.0, 0.0, 0.0)
 
 def _cross(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    """Return 3D cross product a × b."""
     return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
 
 def _dot(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
+    """Return 3D dot product a·b."""
     return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
 
 def _hull2(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Return 2D convex hull of points (counterclockwise)."""
     if len(points) <= 2:
         return list(points)
     pts = sorted(set(points))
@@ -57,6 +62,7 @@ def _hull2(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     return lower[:-1] + upper[:-1]
 
 def _in_poly(q: Tuple[float, float], poly: List[Tuple[float, float]]) -> bool:
+    """Return True if point q is inside or on the boundary of polygon poly."""
     n, x, y = len(poly), q[0], q[1]
     if n < 3:
         return False
@@ -69,15 +75,18 @@ def _in_poly(q: Tuple[float, float], poly: List[Tuple[float, float]]) -> bool:
     return inside
 
 def _aabb_corners(b: Tuple[float, float, float, float, float, float]) -> List[Tuple[float, float, float]]:
+    """Return 8 corners of AABB (xmin,xmax, ymin,ymax, zmin,zmax)."""
     x0, x1, y0, y1, z0, z1 = b
     return [(x0,y0,z0),(x1,y0,z0),(x0,y1,z0),(x1,y1,z0),(x0,y0,z1),(x1,y0,z1),(x0,y1,z1),(x1,y1,z1)]
 
 # --- Sphere candidates ---
 def get_nov_sphere_points() -> List[Tuple[float, float]]:
+    """Return list of (theta_deg, phi_deg) for NOV candidate viewpoints on the front hemisphere."""
     return list(NOV_THETA_PHI)
 
 # --- Camera from sphere (theta, phi in degrees) ---
 def camera_position_from_sphere(center: Tuple[float, float, float], radius: float, theta_deg: float, phi_deg: float) -> List[float]:
+    """Compute camera position on sphere around center; returns [x, y, z] world position."""
     th, ph = _rad(theta_deg), _rad(phi_deg)
     dx = radius * math.sin(th) * math.sin(ph)
     dy = radius * math.cos(th)
@@ -85,6 +94,7 @@ def camera_position_from_sphere(center: Tuple[float, float, float], radius: floa
     return [center[0] + dx, center[1] + dy, center[2] + dz]
 
 def view_up_for_sphere_point(theta_deg: float, phi_deg: float) -> List[float]:
+    """Compute view-up vector for sphere point so the image is upright; returns normalized [x, y, z]."""
     th, ph = _rad(theta_deg), _rad(phi_deg)
     nx = math.sin(th) * math.sin(ph)
     ny = math.cos(th)
@@ -98,6 +108,10 @@ def view_up_for_sphere_point(theta_deg: float, phi_deg: float) -> List[float]:
     return [vx/n, vy/n, vz/n] if n >= 1e-9 else [0.0, 0.0, 1.0]
 
 # --- Mesh-based view score ---
+# FOCAL POINT: comes from the camera (cam.GetFocalPoint()) — the 3D point the camera looks at.
+#   It is NOT from the data (e.g. not "end of data in z"). VTK sets it (e.g. center of scene on ResetCamera); user orbit keeps it fixed.
+# Plane: passes through FOCAL, perpendicular to (camera -> focal). Square side = 2*radius (u,v in [-radius, +radius]).
+# Mesh: N×N grid on that square; cell size = (2*radius)/N. Origin (u=0,v=0) = focal.
 def compute_view_score_mesh(
     camera_pos: Tuple[float, float, float],
     focal: Tuple[float, float, float],
@@ -110,17 +124,21 @@ def compute_view_score_mesh(
     visibility_weight: float = VISIBILITY_WEIGHT,
     occlusion_weight: float = OCCLUSION_WEIGHT,
 ) -> float:
+    """Score one viewpoint by tangent-plane mesh: visibility_weight*(filled/total) - occlusion_weight*(occluded/total), in [0,1]."""
     if num_channels <= 0:
         return 0.0
+    # Plane at focal: normal = from camera to focal (view direction reversed)
     normal = _norm3((focal[0]-camera_pos[0], focal[1]-camera_pos[1], focal[2]-camera_pos[2]))
     up = _norm3((view_up[0], view_up[1], view_up[2]))
     u_axis = _norm3(_cross(normal, up))
     v_axis = _norm3(_cross(normal, u_axis))
+    # Project volume AABB corners onto plane (orthographic along view direction); get 2D hull
     corners = _aabb_corners(bounds_world)
     uv = [(_dot((c[0]-focal[0], c[1]-focal[1], c[2]-focal[2]), u_axis), _dot((c[0]-focal[0], c[1]-focal[1], c[2]-focal[2]), v_axis)) for c in corners]
     hull = _hull2(uv)
     if len(hull) < 3:
         return 0.0
+    # Mesh: N×N over the square [-radius, +radius] x [-radius, +radius]; total cells = N*N
     total = mesh_size * mesh_size
     cell = (2.0 * radius) / mesh_size
     count = [[0] * mesh_size for _ in range(mesh_size)]
@@ -143,6 +161,7 @@ def compute_view_score_mesh(
     return max(0.0, min(1.0, score))
 
 def normalize_scores(scores: list[float]) -> list[float]:
+    """Scale scores to [0, 1] with max mapped to 1; return zeros if max <= 0."""
     if not scores:
         return []
     mx = max(scores)
@@ -150,16 +169,20 @@ def normalize_scores(scores: list[float]) -> list[float]:
 
 # --- Legacy ROI scoring (optional API) ---
 def compute_view_score(visible_roi_area: float, occlusion: float = 0.0, alpha: float = 0.5, beta: float = 0.5) -> float:
+    """Legacy: max(0, alpha*area - beta*occlusion); prefer compute_view_score_mesh for NOV."""
     return max(0.0, alpha * visible_roi_area - beta * occlusion)
 
 def compute_view_score_fraction(visible_roi_area: float, total_xy_area: float) -> float:
+    """Legacy: visible fraction area / total_xy in [0, 1]."""
     return float(visible_roi_area) / float(total_xy_area) if total_xy_area > 0 else 0.0
 
 def visible_roi_area_from_roi(roi: "ROI") -> float:
+    """Return ROI area in voxel space (width × height)."""
     return float(max(0, roi.x1 - roi.x0) * max(0, roi.y1 - roi.y0))
 
 # --- SVG ---
 def build_nov_sphere_svg(sphere_xy: list, current_index: int) -> str:
+    """Build SVG string for sphere widget with dots at sphere_xy; current_index is highlighted."""
     if not sphere_xy:
         return ""
     parts = [
@@ -178,7 +201,9 @@ def build_nov_sphere_svg(sphere_xy: list, current_index: int) -> str:
 
 # --- Callbacks ---
 def register_nov_callbacks(ctrl, state, _refs):
+    """Register nov_toggle, nov_prev, nov_next, nov_recompute_scores_if_visible on ctrl; uses state and _refs."""
     def apply_cam(cam_dict):
+        """Apply camera dict (position, focalPoint, viewUp) to streamer and refresh view."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
             return
@@ -195,6 +220,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def get_lod(s):
+        """Return (desired_comp, active_channel_ids) from streamer state or camera distance."""
         active = list(s.get_active_channels()) if s else []
         comp = None
         if active:
@@ -210,6 +236,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         return comp, active
 
     def nov_toggle():
+        """Compute NOV candidates, score by mesh, show panel and apply best view."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
             state.nov_panel_visible = False
@@ -252,6 +279,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def recompute():
+        """Recompute NOV scores for current candidates from active channels; keep current view by fixed_index."""
         streamer = _refs.get("streamer")
         cands = getattr(state, "nov_candidates", []) or []
         if not streamer or not cands:
@@ -277,6 +305,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_view_index_display = f"{new_idx+1}/{len(cands)}"
 
     def switch(step):
+        """Switch to previous (step=-1) or next (step=+1) NOV candidate and update display."""
         cands = getattr(state, "nov_candidates", []) or []
         if not cands:
             return

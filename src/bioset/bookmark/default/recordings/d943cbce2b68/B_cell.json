@@ -80,8 +80,6 @@
     "width": 1536,
     "height": 695
   },
-  "agreements": 3,
-  "disagreements": 2,
   "comments": [
     {
       "date": "2026-02-25T14:13:30Z",
@@ -189,9 +187,7 @@
           "y0": 0,
           "y1": 666
         }
-      },
-      "agreements": 3,
-      "disagreements": 3
+      }
     },
     {
       "camera": {
@@ -285,9 +281,7 @@
           "y0": 0,
           "y1": 653
         }
-      },
-      "agreements": 0,
-      "disagreements": 0
+      }
     },
     {
       "camera": {
@@ -381,9 +375,7 @@
           "y0": 0,
           "y1": 624
         }
-      },
-      "agreements": 2,
-      "disagreements": 1
+      }
     }
   ],
   "optional_LOD": {
