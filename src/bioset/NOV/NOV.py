@@ -409,9 +409,21 @@ def register_nov_callbacks(ctrl, state, _refs):
         focal = list(cam.GetFocalPoint())
         cam_pos = cam.GetPosition()
         cam_z = cam_pos[2] if len(cam_pos) >= 3 else 0.0
+        disp = getattr(state, "bookmark_display_snapshot", None)
+        if disp and isinstance(disp, dict) and disp.get("views"):
+            idx = max(0, int(getattr(state, "bookmark_current_view_index", 0)))
+            views = disp.get("views") or []
+            if idx < len(views):
+                c = (views[idx] or {}).get("camera") or {}
+                pos = c.get("position")
+                if isinstance(pos, (list, tuple)) and len(pos) >= 3:
+                    try:
+                        cam_z = float(pos[2])
+                    except (TypeError, ValueError):
+                        pass
         state.nov_drawing_sphere = True
         state.nov_sphere_center = focal
-        state.nov_sphere_radius = max(0.5 * abs(cam_z), MIN_SPHERE_RADIUS)
+        state.nov_sphere_radius = max(0.05 * abs(cam_z), MIN_SPHERE_RADIUS)
         _update_nov_sphere(state.nov_sphere_center, state.nov_sphere_radius, True)
         if _refs.get("view"):
             _refs["view"].update()
