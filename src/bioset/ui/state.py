@@ -140,15 +140,19 @@ def init_state(state):
     state.setdefault("bar_filter_dialog", False)
     state.setdefault("bar_expanded", False)
     
-    # NOV (Next Best View)
+    # NOV (Next Best View) — sphere ROI: click = center, drag = radius, release = run
     state.setdefault("nov_open", False)
-    state.setdefault("nov_panel_visible", False)  # show score + next/prev after pressing NOV
+    state.setdefault("nov_drawing_sphere", False)
+    state.setdefault("nov_drag_started", False)
+    state.setdefault("nov_sphere_center", None)  # [x,y,z] when set
+    state.setdefault("nov_sphere_radius", 0.0)
+    state.setdefault("nov_panel_visible", False)
     state.setdefault("nov_current_index", 0)
-    state.setdefault("nov_candidates", [])  # list of {camera, score_normalized}
-    state.setdefault("nov_score_display", 0.0)  # 0--1 for current view
-    state.setdefault("nov_view_index_display", "0/5")  # 1/5=top (best), 5/5=lowest (worst)
-    state.setdefault("nov_sphere_xy", [])  # [[x,y], ...] SVG coords for 5 positions on sphere
-    state.setdefault("nov_sphere_svg", "")  # full SVG string for sphere widget (built server-side)
+    state.setdefault("nov_candidates", [])
+    state.setdefault("nov_score_display", 0.0)
+    state.setdefault("nov_view_index_display", "0/5")
+    state.setdefault("nov_sphere_xy", [])
+    state.setdefault("nov_sphere_svg", "")
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open

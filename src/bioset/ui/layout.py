@@ -14,23 +14,20 @@ from bioset.bookmark import bookmark_form_panel
 def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
     state = server.state
-    
-    init_state(state)
 
+    init_state(state)
+    register_callbacks(ctrl, state, None, streamer)
+
+    view = None
     with VAppLayout(server) as layout:
         register_styles(client)
-
-        # UI components
         left_drawer(state, ctrl)
         right_drawer(state, ctrl)
-        
-        # VTK RENDERER
         with layout.root:
             view = viewer(ctrl, render_window)
+            ctrl.set_view(view)
             bookmark_form_panel(state, ctrl)
             register_scripts(client)
 
-    register_callbacks(ctrl, state, view, streamer)
     register_state_change_handlers(state, ctrl)
-        
     return ctrl, view

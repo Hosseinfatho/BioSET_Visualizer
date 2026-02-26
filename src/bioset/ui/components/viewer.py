@@ -14,7 +14,14 @@ def viewer(ctrl, render_window):
         classes="pa-0 fill-height",
         style="position: relative;",
     ):
-        view = vtk.VtkRemoteView(render_window, interactive_ratio=1.0)
+        view = vtk.VtkRemoteView(
+            render_window,
+            interactive_ratio=1.0,
+            interactor_events=("events", ["RightButtonPress", "MouseMove", "RightButtonRelease"]),
+            RightButtonPress=(ctrl.nov_handle_click, "[$event.position.x, $event.position.y]"),
+            MouseMove=(ctrl.nov_handle_drag, "[$event.position.x, $event.position.y]"),
+            RightButtonRelease=(ctrl.nov_handle_release, "[$event.position.x, $event.position.y]"),
+        )
         ctrl.view_update = view.update
         
         with vuetify.VBtn(

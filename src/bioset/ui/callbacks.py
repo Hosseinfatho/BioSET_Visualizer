@@ -23,10 +23,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
     _refs = {
         "streamer": None,
         "view": view,
-        "analysis_loader": None,  
+        "analysis_loader": None,
         "heatmap": None,
         "mesh_manager": None,
     }
+
+    def set_view(v):
+        _refs["view"] = v
+
+    ctrl.set_view = set_view
 
     def set_streamer(streamer):
         """Set the streamer reference."""
@@ -167,12 +172,18 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         state.right_drawer_open = False
 
-        # Reset NOV so only "NOV" is shown (no arrows / <n/8>)
+        # Reset NOV and hide sphere overlay
+        state.nov_drawing_sphere = False
+        state.nov_drag_started = False
+        state.nov_sphere_center = None
+        state.nov_sphere_radius = 0.0
         state.nov_panel_visible = False
         state.nov_candidates = []
         state.nov_current_index = 0
         state.nov_view_index_display = "0/5"
         state.nov_score_display = 0.0
+        if hasattr(ctrl, "nov_hide_sphere"):
+            ctrl.nov_hide_sphere()
     
         if _refs["view"]:
             _refs["view"].update()
