@@ -85,6 +85,7 @@ class VolumeStreamer:
         self._cache_max_entries = 32
 
         self._last_component: Optional[int] = None
+        self._initial_camera: Optional[dict] = None  # position, focalPoint, viewUp after first load
 
         self._active_channels: set[int] = set() 
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {} 
@@ -118,6 +119,7 @@ class VolumeStreamer:
         self.volumes.clear()
         self.mappers.clear()
         self.state.clear()
+        self._initial_camera = None
 
     def set_spacing(self, sx: float, sy: float, sz: float):
         """Update the base spacing."""
@@ -351,11 +353,38 @@ class VolumeStreamer:
         if reset_camera:
             print(f"[stream] Resetting camera for first volume")
             self.renderer.ResetCamera()
+            cam = self.renderer.GetActiveCamera()
+            self._initial_camera = {
+                "position": list(cam.GetPosition()),
+                "focalPoint": list(cam.GetFocalPoint()),
+                "viewUp": list(cam.GetViewUp()),
+            }
         
         self.renderer.ResetCameraClippingRange()
         self._render()
         
         print(f"[stream] Channel {channel_id} displayed")
+
+    def reset_camera_to_initial(self) -> None:
+        """Restore camera to initial position (saved when data was first loaded). If none saved, call ResetCamera()."""
+        if not self.renderer:
+            return
+        cam = self.renderer.GetActiveCamera()
+        if self._initial_camera:
+            pos = self._initial_camera.get("position")
+            fp = self._initial_camera.get("focalPoint")
+            vup = self._initial_camera.get("viewUp")
+            if pos and len(pos) >= 3:
+                cam.SetPosition(pos[0], pos[1], pos[2])
+            if fp and len(fp) >= 3:
+                cam.SetFocalPoint(fp[0], fp[1], fp[2])
+            if vup and len(vup) >= 3:
+                cam.SetViewUp(vup[0], vup[1], vup[2])
+            cam.Modified()
+        else:
+            self.renderer.ResetCamera()
+        self.renderer.ResetCameraClippingRange()
+        self._render()
 
     def load_channel_at_lod(
         self,

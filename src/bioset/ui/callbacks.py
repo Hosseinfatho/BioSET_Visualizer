@@ -552,13 +552,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Bar local data updated: {len(local_bar_data)} channels")
     
     def reset_camera():
-        """Reset the VTK camera to default view."""
-        print(f"[callbacks] Resetting camera")
+        """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
         streamer = _refs.get("streamer")
-        if streamer and hasattr(streamer, 'renderer'):
-            streamer.renderer.ResetCamera()
-            streamer.renderer.ResetCameraClippingRange()
-        if _refs["view"]:
+        if streamer and getattr(streamer, "renderer", None):
+            if hasattr(streamer, "reset_camera_to_initial"):
+                streamer.reset_camera_to_initial()
+            else:
+                streamer.renderer.ResetCamera()
+                streamer.renderer.ResetCameraClippingRange()
+        if _refs.get("view"):
             _refs["view"].update()
     
     def update_background_color(color_hex):
