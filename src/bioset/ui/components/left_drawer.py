@@ -34,7 +34,7 @@ def left_drawer(state, ctrl):
                 vuetify.VImg(src="assets/icon.jpg", contain=True)
             with vuetify.VListItemContent(classes="d-flex justify-center flex-column"):
                 vuetify.VListItemTitle("BioSET", classes="brand-title")
-                vuetify.VListItemSubtitle("Visualizer", classes="brand-subtitle")
+                vuetify.VListItemSubtitle("Visualizer", classes="text-overline")
         
         vuetify.VDivider()
         

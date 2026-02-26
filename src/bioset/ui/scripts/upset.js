@@ -43,7 +43,7 @@ Vue.component('upset-plot', {
       if (!this.$refs.container || !window.UpSetJS) return;
       const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
 
-      const maxCount = sourceData.length > 0 ? Math.max(...sourceData.map(d => d.count)) : 0;
+      const maxIou = sourceData.length > 0 ? Math.max(...sourceData.map(d => d.iou)) : 0;
 
       const start = this.offset;
       const end = start + this.limit;
@@ -51,7 +51,7 @@ Vue.component('upset-plot', {
 
       const mappedData = renderData.map(item => ({
         sets: item.channels,
-        cardinality: item.count
+        cardinality: item.iou
       }));
 
       const { sets, combinations } = UpSetJS.extractFromExpression(mappedData);
@@ -81,15 +81,15 @@ Vue.component('upset-plot', {
         fontSizes: {
           axisTick: '12px',
           setLabel: '12px',
-          setSize: '12px',
+          setSize: '0px',
           intersectionLabel: '12px',
           barLabel: '0px',
           chartLabel: '0px',
         },
-        widthRatios: [0.18, 0.35],
+        widthRatios: [0, 0.35],
         heightRatios: [0.4],
         exportButtons: false,
-        yDomain: [0, maxCount],
+        yDomain: [0, maxIou],
         onClick: (clickedItem) => {
           setTimeout(() => {
             if (!clickedItem) {

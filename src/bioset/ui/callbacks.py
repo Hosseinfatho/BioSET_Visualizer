@@ -6,12 +6,21 @@ from .state import get_channel_color
 
 def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
-
+    
+    def _hex_to_rgb_tuple(color_hex: str):
+        """Convert '#RRGGBB' to (r, g, b) floats in [0,1]."""
+        color_hex = color_hex.lstrip("#")
+        r = int(color_hex[0:2], 16) / 255.0
+        g = int(color_hex[2:4], 16) / 255.0
+        b = int(color_hex[4:6], 16) / 255.0
+        return (r, g, b)
+    
     _refs = {
         "streamer": None,
         "view": view,
         "analysis_loader": None,  
         "heatmap": None,
+        "mesh_manager": None,
     }
 
     def set_streamer(streamer):
@@ -23,6 +32,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the heatmap renderer reference."""
         _refs["heatmap"] = heatmap
         print(f"[callbacks] Heatmap renderer set: {heatmap}")
+        
+    def set_mesh_manager(mesh_manager):
+        """Set the mesh manager reference."""
+        _refs["mesh_manager"] = mesh_manager
+        print(f"[callbacks] Mesh manager set: {mesh_manager}"
+              f" (available={mesh_manager.is_available if mesh_manager else False})")
     
     def load_data():
         """Load data from zarr_url and metadata_url."""
@@ -46,6 +61,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if streamer:
                 streamer.set_zarr_url(state.zarr_url)
                 streamer.set_spacing(
+                    metadata.physical_size_x,
+                    metadata.physical_size_y,
+                    metadata.physical_size_z
+                )
+                
+            mesh_mgr = _refs.get("mesh_manager")
+            if mesh_mgr:
+                mesh_mgr.update_spacing(
                     metadata.physical_size_x,
                     metadata.physical_size_y,
                     metadata.physical_size_z
@@ -105,7 +128,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.renderer.ResetCameraClippingRange() 
             
         if heatmap:
-            heatmap.clear()   
+            heatmap.clear() 
+            
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr:
+            mesh_mgr.clear()  
             
         if _refs["analysis_loader"]:
             _refs["analysis_loader"].close()
@@ -244,6 +271,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Syncing active channels: {active_channels}")
         
         streamer = _refs.get("streamer")
+        mesh_mgr = _refs.get("mesh_manager")
+        
         if streamer is None:
             print(f"[callbacks] No streamer available yet")
             return
@@ -255,6 +284,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         for channel_id in to_deactivate:
             print(f"[callbacks] Deactivating channel {channel_id}")
             streamer.deactivate_channel(channel_id)
+            if mesh_mgr:
+                mesh_mgr.deactivate_channel_mesh(channel_id)
         
         to_activate = new_active - currently_active
         for channel_id in to_activate:
@@ -265,12 +296,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
             print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
             streamer.activate_channel(channel_id, color_hex)
+            
+            # Also load mesh overlay (tile 4_0 for now)
+            if mesh_mgr and mesh_mgr.is_available:
+                color_rgb = _hex_to_rgb_tuple(color_hex)
+                mesh_mgr.activate_channel_mesh(
+                    channel_idx=channel_id,
+                    color_rgb=color_rgb,
+                    tile_x=6,
+                    tile_y=1,
+                    opacity=1.0,
+                )
         
         if _refs["view"]:
             _refs["view"].update()
 
     def update_heatmap():
-        """Update heatmap visualization based on current state."""
+        """Update heatmap visualization based on current state.
+        
+        Tiles use active_fraction (fraction of tile volume occupied by the
+        channel/combination) to set the color-mapped opacity.
+        """
         loader = _refs.get("analysis_loader")
         heatmap = _refs.get("heatmap")
         streamer = _refs.get("streamer")
@@ -326,8 +372,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     
     def _filter_combinations_by_channel_selection(combinations, selected_channels):
         """
-        Filter combinations to only include selected channels and re-aggregate counts.
-        Returns a list of dicts: [{'channels': [...], 'count': ...}]
+        Filter combinations to only include those whose channels are all
+        within the selected set.
         """
         if len(selected_channels) == 0:
             return combinations
@@ -335,20 +381,16 @@ def register_callbacks(ctrl, state, view, streamer=None):
         filtered_combinations = []
 
         for combo in combinations:
-            skip_combination = False
-            for ch in combo.channels:
-                if ch not in selected_channels:
-                    skip_combination = True
-
-            if skip_combination:
-                continue
-
-            filtered_combinations.append(combo)
+            if all(ch in selected_channels for ch in combo.channels):
+                filtered_combinations.append(combo)
 
         return filtered_combinations
 
     def update_upset_data():
-        """Update UpSet plot data based on current analysis settings."""
+        """Update UpSet plot data based on current analysis settings.
+        
+        Uses aggregated IoU across tiles, sorted descending.
+        """
         loader = _refs.get("analysis_loader")
         
         if not loader or not loader.is_loaded:
@@ -357,22 +399,24 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         print(f"[callbacks] Updating UpSet data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
         
-        # Get all combinations from analysis (large limit)
+        # Get all combinations from analysis (large limit), sorted by agg IoU desc
         combinations = loader.get_top_combinations(
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
-            limit=1000,  # Get all combinations
+            limit=1000,
             min_channels=2,
         )
         
-        # Filter and aggregate logic moved to helper
+        # Filter to selected channels
         all_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
 
         mapped_combinations = []
         for combination in all_data:
-            mapped_combinations.append({"channels": combination.channels, "count": combination.total_count})
+            mapped_combinations.append({
+                "channels": combination.channels,
+                "iou": combination.iou,
+            })
 
-        # Store all combinations
         state.upset_data = mapped_combinations
         
         print(f"[callbacks] UpSet data updated: {len(mapped_combinations)} total")
@@ -407,24 +451,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         print(f"[callbacks] Updating UpSet local data for channels: {active_channel_names}")
         
-        # Use get_filtered_combinations with exact_match=False (at least one channel)
         try:
             combinations = loader.get_filtered_combinations(
-                channel_filter=active_channel_names, # Use original active selection for DB query
+                channel_filter=active_channel_names,
                 dilation=state.current_dilation,
                 hierarchy_level=state.current_hierarchy_level,
-                limit=1000, # Increased limit to allow for post-filtering
+                limit=1000,
                 exact_match=False,
             )
             
-            # Post-filter and aggregate
+            # Post-filter by selected channels
             local_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
 
             mapped_combinations = []
             for combination in local_data:
-                mapped_combinations.append({"channels": combination.channels, "count": combination.total_count})
+                mapped_combinations.append({
+                    "channels": combination.channels,
+                    "iou": combination.iou,
+                })
 
-            # Store all combinations
             state.upset_data_local = mapped_combinations
 
             print(f"[callbacks] UpSet local data updated: {len(mapped_combinations)} combinations")
@@ -433,7 +478,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.upset_data_local = []
     
     def update_bar_data():
-        """Update bar chart data based on current analysis settings."""
+        """Update bar chart data with coverage percentage per channel.
+        
+        Coverage % = (tiles with marker present) / (total tiles) * 100
+        Sorted descending. Filtered to bar_selected_channels.
+        """
         loader = _refs.get("analysis_loader")
         
         if not loader or not loader.is_loaded:
@@ -443,30 +492,24 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         print(f"[callbacks] Updating bar data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
         
-        # Get all combinations (including single-channel)
-        combinations = loader.get_top_combinations(
+        # Get coverage percentages from channel_stats table
+        all_coverage = loader.get_channel_coverage(
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
-            limit=1000,
-            min_channels=1,
         )
-
-        # Compute per-channel frequencies
-        from collections import Counter
-        channel_counter = Counter()
-        for combo in combinations:             
-            for channel in combo.channels:
-                if channel in state.bar_selected_channels:
-                    channel_counter[channel] += combo.total_count
-
-        all_bar_data = channel_counter.most_common()
-        state.bar_data = all_bar_data
         
-        print(f"[callbacks] Bar data updated: {len(all_bar_data)} total")
+        # Filter to selected channels
+        filtered = [
+            (name, pct) for name, pct in all_coverage
+            if name in state.bar_selected_channels
+        ]
+        
+        state.bar_data = filtered
+        
+        print(f"[callbacks] Bar data updated: {len(filtered)} channels")
     
     def update_bar_data_local():
         """Update local bar data filtered to active channels only."""
-        # Get active channel names
         active_channel_ids = state.active_channels or []
         channels_list = state.channels or []
         active_channel_names = [
@@ -478,9 +521,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Bar local data cleared (no active channels)")
             return
         
-        # Filter bar_data to only include active channels (AND selected channels)        
+        # Filter bar_data to only include active AND selected channels
         local_bar_data = [
-            (name, count) for name, count in state.bar_data 
+            (name, pct) for name, pct in state.bar_data
             if name in active_channel_names and name in state.bar_selected_channels
         ]
         
@@ -526,6 +569,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if streamer and channel_id in state.active_channels:
             streamer.deactivate_channel(channel_id)
             streamer.activate_channel(channel_id, color_hex)
+            
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr and channel_id in state.active_channels:
+            mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
             
     def on_channel_color_change(channel_id, color_value):
         """Handle color change from the color picker."""
@@ -841,4 +888,5 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_login = chatbot_login
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_clear = chatbot_clear
+    ctrl.set_mesh_manager = set_mesh_manager
 
