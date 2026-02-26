@@ -375,12 +375,26 @@ def register_nov_callbacks(ctrl, state, _refs):
         return [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2], b
 
     def nov_toggle():
-        """Enter sphere-draw mode: sphere center = focal point; right-click = new center, right-drag = radius, right-release = run NOV. If already in NOV (viewing candidates), reset and start again."""
+        """1st press: show sphere, drag to set radius, release = best views. 2nd press: turn off NOV, remove sphere from scene and update."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None):
             state.nov_panel_visible = False
             return
-        # Reset previous NOV run: remove sphere from screen, hide < >, like first time
+        # If NOV is on (showing results) → turn off: remove sphere from scene, clear state, update view
+        if getattr(state, "nov_panel_visible", False):
+            state.nov_candidates = []
+            state.nov_current_index = 0
+            state.nov_view_index_display = ""
+            state.nov_score_display = 0.0
+            state.nov_sphere_svg = ""
+            state.nov_view_side = ""
+            state.nov_sphere_xy = []
+            state.nov_drag_started = False
+            state.nov_panel_visible = False
+            state.nov_drawing_sphere = False
+            nov_hide_sphere()
+            return
+        # Start NOV: remove any previous sphere, show new sphere at current focal
         state.nov_candidates = []
         state.nov_current_index = 0
         state.nov_view_index_display = ""
@@ -397,7 +411,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         cam_z = cam_pos[2] if len(cam_pos) >= 3 else 0.0
         state.nov_drawing_sphere = True
         state.nov_sphere_center = focal
-        state.nov_sphere_radius = max(0.1 * abs(cam_z), MIN_SPHERE_RADIUS)
+        state.nov_sphere_radius = max(0.5 * abs(cam_z), MIN_SPHERE_RADIUS)
         _update_nov_sphere(state.nov_sphere_center, state.nov_sphere_radius, True)
         if _refs.get("view"):
             _refs["view"].update()
