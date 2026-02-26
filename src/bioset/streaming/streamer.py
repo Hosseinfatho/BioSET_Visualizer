@@ -365,7 +365,7 @@ class VolumeStreamer:
         roi_dict: dict,
         reset_camera: bool = False,
     ) -> None:
-        """Load one channel at exact LOD (component and roi). Used when restoring a lineage snapshot."""
+        """Load one channel at exact LOD (component and roi). Used when restoring a bookmark snapshot."""
         roi = ROI(
             x0=int(roi_dict.get("x0", 0)),
             x1=int(roi_dict.get("x1", 1)),

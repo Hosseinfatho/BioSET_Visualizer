@@ -1,6 +1,6 @@
-# lineage.py
-"""Lineage UI callbacks: view snapshots, per-dataset recordings, export screenshot.
-   Register with register_lineage_callbacks(ctrl, state, _refs).
+# bookmark.py
+"""Bookmark UI callbacks: view snapshots, per-dataset recordings, export screenshot.
+   Register with register_bookmark_callbacks(ctrl, state, _refs).
 """
 
 from __future__ import annotations
@@ -15,13 +15,12 @@ from .snapshot_io import (
     delete_snapshot_by_name,
     save_screenshot,
 )
-from bioset.ui.state import get_channel_color
 from bioset.scene.volumes import build_tf_with_range
 
 
 def capture_screenshot_png_bytes(streamer):
     """Capture VTK view as PNG bytes (scene only, no UI). Returns bytes or None.
-    Standalone for use by callbacks.capture_screenshot and lineage export."""
+    Standalone for use by callbacks.capture_screenshot and bookmark export."""
     try:
         import vtk
         from vtk.util.numpy_support import vtk_to_numpy
@@ -82,14 +81,15 @@ def _add_caption_to_png(png_bytes: bytes, caption: str) -> bytes:
         return png_bytes
 
 
-def register_lineage_callbacks(ctrl, state, _refs):
-    """Register all lineage_* and _lineage_* methods on ctrl. Uses state and _refs."""
+def register_bookmark_callbacks(ctrl, state, _refs):
+    """Register all bookmark_* and _bookmark_* methods on ctrl. Uses state and _refs."""
 
-    def _lineage_dataset_id():
-        return getattr(state, "lineage_dataset_id", None) or "default"
+    def _bookmark_dataset_id():
+        return getattr(state, "bookmark_dataset_id", None) or "default"
 
-    def _lineage_merge_channels(restored, all_channels_list):
-        """Merge snapshot channels with all dataset channels so user can add new channels in lineage view."""
+    def _bookmark_merge_channels(restored, all_channels_list):
+        """Merge snapshot channels with all dataset channels so user can add new channels in bookmark view."""
+        from bioset.ui.state import get_channel_color
         if not all_channels_list:
             return restored
         by_id = {ch.get("id"): dict(ch) for ch in restored if ch.get("id") is not None}
@@ -158,22 +158,22 @@ def register_lineage_callbacks(ctrl, state, _refs):
                     prop.SetColor(color_tf)
                     prop.SetScalarOpacity(opacity_tf)
 
-    def lineage_refresh_names():
+    def bookmark_refresh_names():
         """Load snapshot names for current dataset into dropdown."""
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         names = snapshot_names(dataset_id)
-        state.lineage_snapshot_names = names
+        state.bookmark_snapshot_names = names
 
-    def lineage_open_snapshot():
+    def bookmark_open_snapshot():
         """Open selected snapshot: restore camera, channels, colors, LOD, TF; show description/comment."""
-        name = getattr(state, "lineage_selected_name", None) or "Name"
+        name = getattr(state, "bookmark_selected_name", None) or "Name"
         if not name or not str(name).strip():
-            print("[callbacks] Lineage: no name selected")
+            print("[callbacks] Bookmark: no name selected")
             return
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         snap = load_snapshot_by_name(name, dataset_id)
         if not snap:
-            print(f"[callbacks] Lineage: snapshot not found: {name}")
+            print(f"[callbacks] Bookmark: snapshot not found: {name}")
             return
         streamer = _refs.get("streamer")
         all_channels_before = list(state.channels or [])
@@ -189,10 +189,10 @@ def register_lineage_callbacks(ctrl, state, _refs):
                 "viewport": snap.get("viewport") or {},
                 "optional_LOD": snap.get("optional_LOD"),
             }]
-        state.lineage_current_view_index = 0
+        state.bookmark_current_view_index = 0
         v0 = views[0]
         restored = _normalize_channels(v0.get("channels"))
-        state.channels = _lineage_merge_channels(restored, all_channels_before)
+        state.channels = _bookmark_merge_channels(restored, all_channels_before)
         state.active_channels = list(v0.get("active_channels") or [])
         visible = list(getattr(state, "visible_channel_ids", []) or [])
         for ch_id in state.active_channels:
@@ -227,11 +227,11 @@ def register_lineage_callbacks(ctrl, state, _refs):
                 ctrl.update_active_channels(state.active_channels)
             _apply_channel_tfs_to_streamer(streamer)
         _apply_camera(streamer, v0.get("camera") or {})
-        state.lineage_edit_title = snap.get("title") or ""
-        state.lineage_edit_description = v0.get("notes") or ""
-        state.lineage_edit_comment = ""
-        state.lineage_form_minimized = False
-        state.lineage_display_snapshot = {
+        state.bookmark_edit_title = snap.get("title") or ""
+        state.bookmark_edit_description = v0.get("notes") or ""
+        state.bookmark_edit_comment = ""
+        state.bookmark_form_minimized = False
+        state.bookmark_display_snapshot = {
             "title": snap.get("title"),
             "description": v0.get("notes") or "",
             "comments": v0.get("comments", []),
@@ -242,13 +242,13 @@ def register_lineage_callbacks(ctrl, state, _refs):
             "views": views,
         }
 
-    def _lineage_apply_view(v):
+    def _bookmark_apply_view(v):
         """Apply view to scene: camera, channels, active_channels, background, TF. Updates state and streamer."""
         streamer = _refs.get("streamer")
         _apply_camera(streamer, v.get("camera") or {})
         if v.get("channels") is not None and v.get("active_channels") is not None:
             restored = _normalize_channels(v.get("channels"))
-            state.channels = _lineage_merge_channels(restored, list(state.channels or []))
+            state.channels = _bookmark_merge_channels(restored, list(state.channels or []))
             state.active_channels = list(v.get("active_channels") or [])
             visible = list(getattr(state, "visible_channel_ids", []) or [])
             for ch_id in state.active_channels:
@@ -264,18 +264,18 @@ def register_lineage_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
-    def _lineage_switch_view(new_idx):
+    def _bookmark_switch_view(new_idx):
         """Switch to view at new_idx: apply that view to scene and update form."""
-        disp = getattr(state, "lineage_display_snapshot", None)
+        disp = getattr(state, "bookmark_display_snapshot", None)
         views = (disp.get("views") or []) if disp else []
         if new_idx < 0 or new_idx >= len(views) or not views:
             return
         v = views[new_idx]
-        _lineage_apply_view(v)
-        state.lineage_current_view_index = new_idx
-        state.lineage_edit_description = v.get("notes") or ""
-        state.lineage_edit_comment = ""
-        state.lineage_display_snapshot = {
+        _bookmark_apply_view(v)
+        state.bookmark_current_view_index = new_idx
+        state.bookmark_edit_description = v.get("notes") or ""
+        state.bookmark_edit_comment = ""
+        state.bookmark_display_snapshot = {
             **disp,
             "description": v.get("notes") or "",
             "comments": v.get("comments", []),
@@ -283,32 +283,32 @@ def register_lineage_callbacks(ctrl, state, _refs):
             "disagreements": v.get("disagreements", 0),
         }
 
-    def lineage_apply_current_view():
+    def bookmark_apply_current_view():
         """Apply current view (camera, channels, TF, background) to the scene."""
-        disp = getattr(state, "lineage_display_snapshot", None)
+        disp = getattr(state, "bookmark_display_snapshot", None)
         views = (disp.get("views") or []) if disp else []
-        idx = getattr(state, "lineage_current_view_index", 0)
+        idx = getattr(state, "bookmark_current_view_index", 0)
         if not views or idx < 0 or idx >= len(views):
             return
-        _lineage_apply_view(views[idx])
+        _bookmark_apply_view(views[idx])
 
-    def lineage_close_display():
-        state.lineage_display_snapshot = None
-        state.lineage_form_minimized = False
+    def bookmark_close_display():
+        state.bookmark_display_snapshot = None
+        state.bookmark_form_minimized = False
 
-    def lineage_view_prev():
-        idx = getattr(state, "lineage_current_view_index", 0)
-        _lineage_switch_view(idx - 1)
+    def bookmark_view_prev():
+        idx = getattr(state, "bookmark_current_view_index", 0)
+        _bookmark_switch_view(idx - 1)
 
-    def lineage_view_next():
-        _lineage_switch_view(getattr(state, "lineage_current_view_index", 0) + 1)
+    def bookmark_view_next():
+        _bookmark_switch_view(getattr(state, "bookmark_current_view_index", 0) + 1)
 
-    def lineage_add_view():
+    def bookmark_add_view():
         """Add a new view with current camera, channels, TF, background; save to JSON and switch to it."""
-        disp = getattr(state, "lineage_display_snapshot", None)
+        disp = getattr(state, "bookmark_display_snapshot", None)
         if not disp or not disp.get("title"):
             return
-        cap = _lineage_capture_view()
+        cap = _bookmark_capture_view()
         views = list(disp.get("views") or [])
         new_view = {
             "camera": cap["camera"],
@@ -323,10 +323,10 @@ def register_lineage_callbacks(ctrl, state, _refs):
             "disagreements": 0,
         }
         views.append(new_view)
-        state.lineage_current_view_index = len(views) - 1
-        state.lineage_edit_description = ""
-        state.lineage_edit_comment = ""
-        state.lineage_display_snapshot = {
+        state.bookmark_current_view_index = len(views) - 1
+        state.bookmark_edit_description = ""
+        state.bookmark_edit_comment = ""
+        state.bookmark_display_snapshot = {
             **disp,
             "views": views,
             "description": "",
@@ -334,7 +334,7 @@ def register_lineage_callbacks(ctrl, state, _refs):
             "agreements": 0,
             "disagreements": 0,
         }
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         snap = load_snapshot_by_name(disp["title"], dataset_id)
         if snap:
             snap["views"] = views
@@ -343,15 +343,15 @@ def register_lineage_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
-    def lineage_open_new_form():
+    def bookmark_open_new_form():
         """Open the new-snapshot form (bottom-left). Optionally refresh names."""
-        lineage_refresh_names()
-        state.lineage_form_name = getattr(state, "lineage_selected_name", "Name") or "Name"
-        state.lineage_form_description = ""
-        state.lineage_form_new_comment = ""
-        state.lineage_form_dialog = True
+        bookmark_refresh_names()
+        state.bookmark_form_name = getattr(state, "bookmark_selected_name", "Name") or "Name"
+        state.bookmark_form_description = ""
+        state.bookmark_form_new_comment = ""
+        state.bookmark_form_dialog = True
 
-    def _lineage_capture_view():
+    def _bookmark_capture_view():
         """Capture camera, LOD, channels (active only), viewport, background from current view."""
         streamer = _refs.get("streamer")
         camera = {}
@@ -383,16 +383,16 @@ def register_lineage_callbacks(ctrl, state, _refs):
         bg = getattr(state, "bg_color", "#000000") or "#000000"
         return {"camera": camera, "optional_lod": optional_lod, "channels": channels_data, "active_channels": active, "viewport": viewport, "background": bg}
 
-    def lineage_save_snapshot():
-        """Capture current view + form fields; save to lineage JSON; close form."""
+    def bookmark_save_snapshot():
+        """Capture current view + form fields; save to bookmark JSON; close form."""
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        cap = _lineage_capture_view()
-        form_name = (getattr(state, "lineage_form_name", None) or getattr(state, "lineage_selected_name", None) or "").strip()
+        cap = _bookmark_capture_view()
+        form_name = (getattr(state, "bookmark_form_name", None) or getattr(state, "bookmark_selected_name", None) or "").strip()
         title = form_name or "Unnamed"
         comments = []
-        if getattr(state, "lineage_form_new_comment", "").strip():
-            comments.append({"date": now, "text": state.lineage_form_new_comment})
-        notes = getattr(state, "lineage_form_description", "") or ""
+        if getattr(state, "bookmark_form_new_comment", "").strip():
+            comments.append({"date": now, "text": state.bookmark_form_new_comment})
+        notes = getattr(state, "bookmark_form_description", "") or ""
         view0 = {
             "camera": cap["camera"],
             "notes": notes,
@@ -421,16 +421,16 @@ def register_lineage_callbacks(ctrl, state, _refs):
         }
         if cap["optional_lod"]:
             snapshot["optional_LOD"] = cap["optional_lod"]
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         save_snapshot(snapshot, dataset_id)
-        lineage_refresh_names()
-        state.lineage_selected_name = title
-        state.lineage_form_dialog = False
-        state.lineage_edit_title = title
-        state.lineage_edit_description = notes
-        state.lineage_edit_comment = ""
-        state.lineage_current_view_index = 0
-        state.lineage_display_snapshot = {
+        bookmark_refresh_names()
+        state.bookmark_selected_name = title
+        state.bookmark_form_dialog = False
+        state.bookmark_edit_title = title
+        state.bookmark_edit_description = notes
+        state.bookmark_edit_comment = ""
+        state.bookmark_current_view_index = 0
+        state.bookmark_display_snapshot = {
             "title": title,
             "description": notes,
             "comments": comments,
@@ -443,22 +443,22 @@ def register_lineage_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
-    def lineage_update_snapshot():
+    def bookmark_update_snapshot():
         """Save current view into views list (use state's views so Add-view entries persist), then write JSON."""
-        disp = getattr(state, "lineage_display_snapshot", None)
+        disp = getattr(state, "bookmark_display_snapshot", None)
         if not disp or not disp.get("title"):
-            print("[callbacks] Lineage: no snapshot displayed to update")
+            print("[callbacks] Bookmark: no snapshot displayed to update")
             return
         old_title = disp["title"]
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         snap = load_snapshot_by_name(old_title, dataset_id)
         if not snap:
-            print(f"[callbacks] Lineage: snapshot not found: {old_title}")
+            print(f"[callbacks] Bookmark: snapshot not found: {old_title}")
             return
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        cap = _lineage_capture_view()
+        cap = _bookmark_capture_view()
         snap["updated"] = now
-        snap["title"] = (getattr(state, "lineage_edit_title", "") or "").strip() or old_title
+        snap["title"] = (getattr(state, "bookmark_edit_title", "") or "").strip() or old_title
         views = list(disp.get("views") or [])
         if not views and snap.get("views"):
             views = list(snap.get("views") or [])
@@ -475,10 +475,10 @@ def register_lineage_callbacks(ctrl, state, _refs):
                 "agreements": snap.get("agreements", 0),
                 "disagreements": snap.get("disagreements", 0),
             }]
-        idx = getattr(state, "lineage_current_view_index", 0)
+        idx = getattr(state, "bookmark_current_view_index", 0)
         idx = max(0, min(idx, len(views) - 1))
-        notes = getattr(state, "lineage_edit_description", "") or ""
-        new_comment = (getattr(state, "lineage_edit_comment", "") or "").strip()
+        notes = getattr(state, "bookmark_edit_description", "") or ""
+        new_comment = (getattr(state, "bookmark_edit_comment", "") or "").strip()
         view_comments = list(views[idx].get("comments") or []) if idx < len(views) else []
         if new_comment:
             view_comments.append({"date": now, "text": new_comment})
@@ -524,116 +524,116 @@ def register_lineage_callbacks(ctrl, state, _refs):
         if snap["title"] != old_title:
             delete_snapshot_by_name(old_title, dataset_id)
         save_snapshot(snap, dataset_id)
-        lineage_refresh_names()
-        state.lineage_selected_name = snap["title"]
-        state.lineage_display_snapshot = {
+        bookmark_refresh_names()
+        state.bookmark_selected_name = snap["title"]
+        state.bookmark_display_snapshot = {
             "title": snap["title"],
             "description": notes,
             "comments": view_comments,
             "created": snap.get("created"),
-            "updated": snap["updated"],
+            "updated": snap.get("updated"),
             "agreements": current_view.get("agreements", 0),
             "disagreements": current_view.get("disagreements", 0),
             "views": views,
         }
-        state.lineage_edit_title = snap["title"]
-        state.lineage_edit_comment = ""
+        state.bookmark_edit_title = snap["title"]
+        state.bookmark_edit_comment = ""
 
-    def _lineage_increment_feedback(field_name, require_title=True):
+    def _bookmark_increment_feedback(field_name, require_title=True):
         """Increment agreements or disagreements for the current view and save. field_name is 'agreements' or 'disagreements'."""
-        disp = getattr(state, "lineage_display_snapshot", None)
+        disp = getattr(state, "bookmark_display_snapshot", None)
         if not disp or not disp.get("title"):
             if require_title:
-                print("[callbacks] Lineage: no snapshot displayed to agree")
+                print("[callbacks] Bookmark: no snapshot displayed to agree")
             return
-        idx = max(0, min(getattr(state, "lineage_current_view_index", 0), len(disp.get("views") or []) - 1))
+        idx = max(0, min(getattr(state, "bookmark_current_view_index", 0), len(disp.get("views") or []) - 1))
         title = disp["title"]
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         snap = load_snapshot_by_name(title, dataset_id)
         if not snap:
             if require_title:
-                print(f"[callbacks] Lineage: snapshot not found: {title}")
+                print(f"[callbacks] Bookmark: snapshot not found: {title}")
             return
         views = list(snap.get("views") or [])
         if idx < len(views):
             views[idx][field_name] = views[idx].get(field_name, 0) + 1
             snap["views"] = views
             save_snapshot(snap, dataset_id)
-            state.lineage_display_snapshot = {**disp, "views": views, field_name: views[idx][field_name]}
+            state.bookmark_display_snapshot = {**disp, "views": views, field_name: views[idx][field_name]}
 
-    def lineage_agree():
+    def bookmark_agree():
         """Increment agreements for the current view and save."""
-        _lineage_increment_feedback("agreements", require_title=True)
+        _bookmark_increment_feedback("agreements", require_title=True)
 
-    def lineage_disagree():
+    def bookmark_disagree():
         """Increment disagreements for the current view and save."""
-        _lineage_increment_feedback("disagreements", require_title=False)
+        _bookmark_increment_feedback("disagreements", require_title=False)
 
-    def lineage_comment():
+    def bookmark_comment():
         """Append current comment to the current view and save."""
-        disp = getattr(state, "lineage_display_snapshot", None)
+        disp = getattr(state, "bookmark_display_snapshot", None)
         if not disp or not disp.get("title"):
             return
-        new_comment = (getattr(state, "lineage_edit_comment", "") or "").strip()
+        new_comment = (getattr(state, "bookmark_edit_comment", "") or "").strip()
         if not new_comment:
             return
         title = disp["title"]
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         snap = load_snapshot_by_name(title, dataset_id)
         if not snap:
             return
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         snap["updated"] = now
         views = snap.get("views") or [{"camera": snap.get("camera"), "notes": snap.get("notes") or "", "comments": snap.get("comments") or []}]
-        idx = max(0, min(getattr(state, "lineage_current_view_index", 0), len(views) - 1))
+        idx = max(0, min(getattr(state, "bookmark_current_view_index", 0), len(views) - 1))
         views[idx].setdefault("comments", []).append({"date": now, "text": new_comment})
         snap["views"] = views
         snap["comments"] = views[0].get("comments", [])
         save_snapshot(snap, dataset_id)
-        state.lineage_display_snapshot = {**disp, "comments": views[idx].get("comments", []), "updated": now, "views": views}
-        state.lineage_edit_comment = ""
+        state.bookmark_display_snapshot = {**disp, "comments": views[idx].get("comments", []), "updated": now, "views": views}
+        state.bookmark_edit_comment = ""
 
     def _capture_screenshot_png_bytes():
         streamer = _refs.get("streamer")
         return capture_screenshot_png_bytes(streamer)
 
-    def lineage_open_export_screenshot():
+    def bookmark_open_export_screenshot():
         """Open export screenshot popup: empty name and caption boxes."""
-        state.lineage_export_screenshot_name = ""
-        state.lineage_export_screenshot_caption = ""
-        state.lineage_export_screenshot_dialog = True
+        state.bookmark_export_screenshot_name = ""
+        state.bookmark_export_screenshot_caption = ""
+        state.bookmark_export_screenshot_dialog = True
 
-    def lineage_export_screenshot_save():
+    def bookmark_export_screenshot_save():
         """Save screenshot to dataset Screenshot folder with chosen name; add description as caption; close dialog."""
-        name = (getattr(state, "lineage_export_screenshot_name", "") or "").strip()
+        name = (getattr(state, "bookmark_export_screenshot_name", "") or "").strip()
         if not name:
             return
         png_bytes = _capture_screenshot_png_bytes()
         if not png_bytes:
             return
-        caption = getattr(state, "lineage_export_screenshot_caption", "") or ""
+        caption = getattr(state, "bookmark_export_screenshot_caption", "") or ""
         png_bytes = _add_caption_to_png(png_bytes, caption)
-        dataset_id = _lineage_dataset_id()
+        dataset_id = _bookmark_dataset_id()
         save_screenshot(png_bytes, name, dataset_id)
-        state.lineage_export_screenshot_dialog = False
-        state.lineage_export_screenshot_name = ""
-        state.lineage_export_screenshot_caption = ""
+        state.bookmark_export_screenshot_dialog = False
+        state.bookmark_export_screenshot_name = ""
+        state.bookmark_export_screenshot_caption = ""
         if _refs.get("view"):
             _refs["view"].update()
 
     # Attach to ctrl
-    ctrl.lineage_refresh_names = lineage_refresh_names
-    ctrl.lineage_open_snapshot = lineage_open_snapshot
-    ctrl.lineage_open_new_form = lineage_open_new_form
-    ctrl.lineage_save_snapshot = lineage_save_snapshot
-    ctrl.lineage_view_prev = lineage_view_prev
-    ctrl.lineage_view_next = lineage_view_next
-    ctrl.lineage_add_view = lineage_add_view
-    ctrl.lineage_close_display = lineage_close_display
-    ctrl.lineage_apply_current_view = lineage_apply_current_view
-    ctrl.lineage_open_export_screenshot = lineage_open_export_screenshot
-    ctrl.lineage_export_screenshot_save = lineage_export_screenshot_save
-    ctrl.lineage_agree = lineage_agree
-    ctrl.lineage_disagree = lineage_disagree
-    ctrl.lineage_comment = lineage_comment
-    ctrl.lineage_update_snapshot = lineage_update_snapshot
+    ctrl.bookmark_refresh_names = bookmark_refresh_names
+    ctrl.bookmark_open_snapshot = bookmark_open_snapshot
+    ctrl.bookmark_open_new_form = bookmark_open_new_form
+    ctrl.bookmark_save_snapshot = bookmark_save_snapshot
+    ctrl.bookmark_view_prev = bookmark_view_prev
+    ctrl.bookmark_view_next = bookmark_view_next
+    ctrl.bookmark_add_view = bookmark_add_view
+    ctrl.bookmark_close_display = bookmark_close_display
+    ctrl.bookmark_apply_current_view = bookmark_apply_current_view
+    ctrl.bookmark_open_export_screenshot = bookmark_open_export_screenshot
+    ctrl.bookmark_export_screenshot_save = bookmark_export_screenshot_save
+    ctrl.bookmark_agree = bookmark_agree
+    ctrl.bookmark_disagree = bookmark_disagree
+    ctrl.bookmark_comment = bookmark_comment
+    ctrl.bookmark_update_snapshot = bookmark_update_snapshot

@@ -48,24 +48,24 @@ def init_state(state):
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)
     
-    # Lineage (view snapshots: name, open, new form)
-    state.setdefault("lineage_open", False)
-    state.setdefault("lineage_snapshot_names", [])
-    state.setdefault("lineage_selected_name", "Name")
-    state.setdefault("lineage_form_dialog", False)
-    state.setdefault("lineage_form_name", "")
-    state.setdefault("lineage_form_description", "")
-    state.setdefault("lineage_form_new_comment", "")
-    state.setdefault("lineage_display_snapshot", None)
-    state.setdefault("lineage_current_view_index", 0)
-    state.setdefault("lineage_form_minimized", False)
-    state.setdefault("lineage_dataset_id", "default")   # per-dataset folder under recordings
-    state.setdefault("lineage_edit_title", "")
-    state.setdefault("lineage_edit_description", "")
-    state.setdefault("lineage_edit_comment", "")
-    state.setdefault("lineage_export_screenshot_dialog", False)
-    state.setdefault("lineage_export_screenshot_name", "")
-    state.setdefault("lineage_export_screenshot_caption", "")
+    # Bookmark (saved views / snapshots: name, open, new form)
+    state.setdefault("bookmark_open", False)
+    state.setdefault("bookmark_snapshot_names", [])
+    state.setdefault("bookmark_selected_name", "Name")
+    state.setdefault("bookmark_form_dialog", False)
+    state.setdefault("bookmark_form_name", "")
+    state.setdefault("bookmark_form_description", "")
+    state.setdefault("bookmark_form_new_comment", "")
+    state.setdefault("bookmark_display_snapshot", None)
+    state.setdefault("bookmark_current_view_index", 0)
+    state.setdefault("bookmark_form_minimized", False)
+    state.setdefault("bookmark_dataset_id", "default")   # per-dataset folder under recordings
+    state.setdefault("bookmark_edit_title", "")
+    state.setdefault("bookmark_edit_description", "")
+    state.setdefault("bookmark_edit_comment", "")
+    state.setdefault("bookmark_export_screenshot_dialog", False)
+    state.setdefault("bookmark_export_screenshot_name", "")
+    state.setdefault("bookmark_export_screenshot_caption", "")
     
     # Right drawer
     state.setdefault("right_drawer_open", False)
@@ -266,10 +266,10 @@ def register_state_change_handlers(state, ctrl):
     def on_bar_search_change(bar_search, **kwargs):
         state.bar_filtered_channels = _filter_channels(state.analysis_channels, bar_search)
 
-    @state.change("lineage_open")
-    def on_lineage_open_change(lineage_open, **kwargs):
-        if lineage_open and hasattr(ctrl, "lineage_refresh_names"):
-            ctrl.lineage_refresh_names()
+    @state.change("bookmark_open")
+    def on_bookmark_open_change(bookmark_open, **kwargs):
+        if bookmark_open and hasattr(ctrl, "bookmark_refresh_names"):
+            ctrl.bookmark_refresh_names()
 
     @state.change("analysis_channels")
     def on_analysis_channels_change(analysis_channels, **kwargs):

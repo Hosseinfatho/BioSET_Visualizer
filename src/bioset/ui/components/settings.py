@@ -121,27 +121,27 @@ def settings_section(state, ctrl):
                                 style="margin-left: 3px; flex-shrink: 0;",
                             ):
                                 html.Div(v_html=("nov_sphere_svg", ""), style="flex-shrink: 0;")
-                # Lineage
+                # Bookmark (saved views / snapshots)
                 with vuetify.VListItem(
-                    class_=("lineage_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                    class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
                     link=True,
                     ripple=True,
-                    click="lineage_open = !lineage_open",
+                    click="bookmark_open = !bookmark_open",
                 ):
                     with vuetify.VListItemIcon():
                         with vuetify.VTooltip(right=True):
                             with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-book-open-variant", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("Lineage")
+                                vuetify.VIcon("mdi-bookmark", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Bookmark")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Lineage")
+                        html.Span("Bookmark")
                 with vuetify.VExpandTransition():
-                    with html.Div(v_show=("lineage_open", False)):
+                    with html.Div(v_show=("bookmark_open", False)):
                         with vuetify.VListItem(class_="nav-item nav-item--nested"):
                             with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;"):
                                 vuetify.VAutocomplete(
-                                    v_model=("lineage_selected_name", "Name"),
-                                    items=("lineage_snapshot_names", []),
+                                    v_model=("bookmark_selected_name", "Name"),
+                                    items=("bookmark_snapshot_names", []),
                                     dense=True,
                                     hide_details=True,
                                     placeholder="Select...",
@@ -150,15 +150,15 @@ def settings_section(state, ctrl):
                                 with vuetify.VBtn(
                                     x_small=True,
                                     color="primary",
-                                    disabled=("!lineage_selected_name || !String(lineage_selected_name).trim()",),
-                                    click=ctrl.lineage_open_snapshot,
+                                    disabled=("!bookmark_selected_name || !String(bookmark_selected_name).trim()",),
+                                    click=ctrl.bookmark_open_snapshot,
                                     style="flex: 0.3 1 0; min-width: 0;",
                                 ):
                                     html.Span("Open")
                                 with vuetify.VBtn(
                                     x_small=True,
                                     color="secondary",
-                                    click=ctrl.lineage_open_new_form,
+                                    click=ctrl.bookmark_open_new_form,
                                     style="flex: 0.3 1 0; min-width: 0;",
                                 ):
                                     html.Span("New")

@@ -1,0 +1,200 @@
+{
+  "id": "03c6a576-1468-4115-bb7b-2df8d0627929",
+  "title": "cd4",
+  "created": "2026-02-25T14:42:58Z",
+  "updated": "2026-02-25T14:45:15Z",
+  "notes": "interaction between cd4 and CD31",
+  "camera": {
+    "position": [
+      754.7477386720602,
+      380.8,
+      1070.8881190672755
+    ],
+    "focalPoint": [
+      757.1199999999999,
+      380.8,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 19,
+      "name": "CD31",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        32.0
+      ]
+    },
+    {
+      "id": 25,
+      "name": "CD4",
+      "color": "#0000FF",
+      "range": [
+        0.0,
+        29.0
+      ]
+    }
+  ],
+  "active_channels": [
+    25,
+    19
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1536,
+    "height": 695
+  },
+  "agreements": 0,
+  "disagreements": 0,
+  "comments": [
+    {
+      "date": "2026-02-25T14:43:08Z",
+      "text": "this snapshot shows..."
+    }
+  ],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          754.7477386720602,
+          380.8,
+          1070.8881190672755
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "interaction between cd4 and CD31",
+      "comments": [
+        {
+          "date": "2026-02-25T14:43:08Z",
+          "text": "this snapshot shows..."
+        }
+      ],
+      "channels": [
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            32.0
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            29.0
+          ]
+        }
+      ],
+      "active_channels": [
+        25,
+        19
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": {
+        "component": 4,
+        "roi": {
+          "x0": 30,
+          "x1": 661,
+          "y0": 0,
+          "y1": 313
+        }
+      },
+      "agreements": 0,
+      "disagreements": 0
+    },
+    {
+      "camera": {
+        "position": [
+          974.9310969810655,
+          498.66268922986694,
+          858.4141277832113
+        ],
+        "focalPoint": [
+          846.2729471945889,
+          366.07068331616057,
+          15.726065722650521
+        ],
+        "viewUp": [
+          -0.0009169709376499087,
+          0.9878676887726685,
+          -0.1552951661940765
+        ]
+      },
+      "notes": "another snapshot view of ",
+      "comments": [],
+      "channels": [
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        25,
+        19
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": {
+        "component": 4,
+        "roi": {
+          "x0": 30,
+          "x1": 661,
+          "y0": 0,
+          "y1": 313
+        }
+      },
+      "agreements": 1,
+      "disagreements": 1
+    }
+  ],
+  "optional_LOD": {
+    "component": 4,
+    "roi": {
+      "x0": 30,
+      "x1": 661,
+      "y0": 0,
+      "y1": 313
+    }
+  },
+  "description": "interaction between cd4 and CD31"
+}

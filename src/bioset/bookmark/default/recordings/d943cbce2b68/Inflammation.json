@@ -1,0 +1,65 @@
+{
+  "id": "6dbeaa28-ebf7-4f85-b20e-d159c026b603",
+  "title": "Inflammation",
+  "created": "2026-02-25T15:17:11Z",
+  "updated": "2026-02-25T15:17:11Z",
+  "notes": "the snapshot shows...",
+  "camera": {
+    "position": [
+      875.3941866001937,
+      299.3342300606227,
+      -1240.1734507548963
+    ],
+    "focalPoint": [
+      875.3941866001937,
+      299.33423006062264,
+      22.91023494312431
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      6.123233995736766e-17
+    ]
+  },
+  "channels": [],
+  "active_channels": [],
+  "background": "#000000",
+  "viewport": {
+    "width": 1536,
+    "height": 695
+  },
+  "agreements": 0,
+  "disagreements": 0,
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          875.3941866001937,
+          299.3342300606227,
+          -1240.1734507548963
+        ],
+        "focalPoint": [
+          875.3941866001937,
+          299.33423006062264,
+          22.91023494312431
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          6.123233995736766e-17
+        ]
+      },
+      "notes": "the snapshot shows...",
+      "comments": [],
+      "channels": [],
+      "active_channels": [],
+      "background": "#000000",
+      "viewport": {
+        "width": 1536,
+        "height": 695
+      },
+      "optional_LOD": null
+    }
+  ]
+}

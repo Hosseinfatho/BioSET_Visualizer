@@ -5,7 +5,7 @@ from datetime import datetime
 
 from bioset.llm import BiomniClient
 from .state import get_channel_color
-from bioset.lineage import register_lineage_callbacks, capture_screenshot_png_bytes
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.NOV import register_nov_callbacks
 
 
@@ -44,7 +44,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Mesh manager set: {mesh_manager}"
               f" (available={mesh_manager.is_available if mesh_manager else False})")
 
-    register_lineage_callbacks(ctrl, state, _refs)
+    register_bookmark_callbacks(ctrl, state, _refs)
     register_nov_callbacks(ctrl, state, _refs)
 
     def load_data():
@@ -98,12 +98,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
             initial_visible = channels if len(channels) < state.default_num_channels else [ch["id"] for ch in channels[:state.default_num_channels]]
             state.visible_channel_ids = initial_visible
             state.data_loaded = True
-            # Per-dataset folder for lineage recordings (one folder per dataset link)
+            # Per-dataset folder for bookmark recordings (one folder per dataset link)
             try:
                 url = getattr(state, "zarr_url", "") or ""
-                state.lineage_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
+                state.bookmark_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
             except Exception:
-                state.lineage_dataset_id = "default"
+                state.bookmark_dataset_id = "default"
             
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")

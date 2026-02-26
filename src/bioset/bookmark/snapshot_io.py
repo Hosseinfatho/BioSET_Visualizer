@@ -1,6 +1,6 @@
 # snapshot_io.py
-"""Load and save lineage view snapshots per dataset.
-   For each dataset link, use a folder under lineage/default/recordings/<dataset_id>/.
+"""Load and save bookmark (saved view) snapshots per dataset.
+   For each dataset link, use a folder under bookmark/default/recordings/<dataset_id>/.
    One JSON file per area/snapshot, same ID/name as user set. Supports agreements and updates.
 """
 
@@ -11,13 +11,13 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-LINEAGE_ROOT = Path(__file__).resolve().parent
-RECORDINGS_BASE = LINEAGE_ROOT / "default" / "recordings"
+BOOKMARK_ROOT = Path(__file__).resolve().parent
+RECORDINGS_BASE = BOOKMARK_ROOT / "default" / "recordings"
 DEFAULT_DATASET = "default"
 
 
 def _recordings_dir(dataset_id: str) -> Path:
-    """Folder for this dataset's recordings: lineage/default/recordings/<dataset_id>/."""
+    """Folder for this dataset's recordings: bookmark/default/recordings/<dataset_id>/."""
     safe_id = re.sub(r'[^\w\-]', '_', (dataset_id or DEFAULT_DATASET).strip()) or DEFAULT_DATASET
     return RECORDINGS_BASE / safe_id
 
@@ -61,7 +61,7 @@ def load_snapshots(dataset_id: str = DEFAULT_DATASET) -> List[Dict[str, Any]]:
             if isinstance(data, dict) and (data.get("title") is not None or data.get("id")):
                 out.append(data)
         except Exception as e:
-            print(f"[lineage] Skip {path}: {e}")
+            print(f"[bookmark] Skip {path}: {e}")
     return out
 
 
@@ -77,7 +77,7 @@ def load_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> Optio
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"[lineage] Failed to load {path}: {e}")
+            print(f"[bookmark] Failed to load {path}: {e}")
     for p in rec.glob("*.json"):
         try:
             with open(p, "r", encoding="utf-8") as f:
