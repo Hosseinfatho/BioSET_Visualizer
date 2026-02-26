@@ -421,10 +421,16 @@ def register_nov_callbacks(ctrl, state, _refs):
         pt = display_to_world_xy(streamer.renderer, x, y)
         if pt is None:
             return
-        state.nov_sphere_center = [pt[0], pt[1], pt[2]]
-        state.nov_sphere_radius = 0.0
+        center = getattr(state, "nov_sphere_center", None)
+        if not center or len(center) < 3:
+            state.nov_sphere_center = [pt[0], pt[1], pt[2]]
         state.nov_drag_started = True
-        _update_nov_sphere(state.nov_sphere_center, 0.0, True)
+        state.nov_sphere_radius = math.sqrt(
+            (pt[0] - state.nov_sphere_center[0]) ** 2
+            + (pt[1] - state.nov_sphere_center[1]) ** 2
+            + (pt[2] - state.nov_sphere_center[2]) ** 2
+        )
+        _update_nov_sphere(state.nov_sphere_center, state.nov_sphere_radius, True)
         if _refs.get("view"):
             _refs["view"].update()
 
