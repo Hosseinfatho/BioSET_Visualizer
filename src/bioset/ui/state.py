@@ -150,9 +150,10 @@ def init_state(state):
     state.setdefault("nov_current_index", 0)
     state.setdefault("nov_candidates", [])
     state.setdefault("nov_score_display", 0.0)
-    state.setdefault("nov_view_index_display", "0/5")
+    state.setdefault("nov_view_index_display", "")
     state.setdefault("nov_sphere_xy", [])
     state.setdefault("nov_sphere_svg", "")
+    state.setdefault("nov_view_side", "")
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open

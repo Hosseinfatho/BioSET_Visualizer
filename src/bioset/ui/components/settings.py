@@ -113,13 +113,14 @@ def settings_section(state, ctrl):
                             ):
                                 with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_prev):
                                     vuetify.VIcon("mdi-chevron-left", small=True)
-                                html.Span("{{ nov_view_index_display || '0/5' }}", style="min-width: 3ch; font-size: 0.7em;")
+                                html.Span("{{ nov_view_index_display }}", style="min-width: 3ch; font-size: 0.7em;")
                                 with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_next):
                                     vuetify.VIcon("mdi-chevron-right", small=True)
                             with html.Div(
                                 v_show=("nov_panel_visible && nov_sphere_svg", False),
-                                style="margin-left: 3px; flex-shrink: 0;",
+                                style="display: inline-flex; align-items: center; margin-left: 3px; flex-shrink: 0; gap: 2px;",
                             ):
+                                html.Span("{{ nov_view_side }}", style="font-size: 0.75em; font-weight: 600; min-width: 1ch;")
                                 html.Div(v_html=("nov_sphere_svg", ""), style="flex-shrink: 0;")
                 # Bookmark (saved views / snapshots)
                 with vuetify.VListItem(

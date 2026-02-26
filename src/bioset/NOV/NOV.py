@@ -22,9 +22,12 @@ except Exception:
     _VTK_SPHERE_AVAILABLE = False
 
 # --- Constants ---
+# 10 points: 5 front (theta, phi) + 5 back; sorted by score high→low in compute_best_views_for_sphere
+# Front: phi=180,90 | 135,45 | 135,135 | 225,45 | 225,135
+# Back:  phi=0,90   | 45,45  | 45,135  | -45,45 | -45,135
 NOV_THETA_PHI: List[Tuple[float, float]] = [
-    (90.0, 0.0), (45.0, 45.0), (135.0, 45.0), (45.0, -45.0), (135.0, -45.0),
-    (90.0, 30.0), (90.0, -30.0), (60.0, 0.0), (120.0, 0.0), (90.0, 60.0), (90.0, -60.0),
+    (90.0, 180.0), (45.0, 135.0), (135.0, 135.0), (45.0, 225.0), (135.0, 225.0),   # front
+    (90.0, 0.0), (45.0, 45.0), (135.0, 45.0), (45.0, -45.0), (135.0, -45.0),       # back
 ]
 NOV_MESH_SIZE = 500
 VISIBILITY_WEIGHT = 0.8
@@ -201,9 +204,10 @@ def compute_best_views_for_sphere(
         vup = view_up_for_sphere_point(t_deg, p_deg)
         sc = compute_view_score_mesh((pos[0], pos[1], pos[2]), center, (vup[0], vup[1], vup[2]), sphere_radius, roi_bounds, num_channels)
         raw_scores.append(sc)
+        side = "F" if i < 5 else "B"
         candidates.append({
             "camera": {"position": pos, "focalPoint": list(center), "viewUp": vup},
-            "score_raw": sc, "theta_deg": t_deg, "phi_deg": p_deg, "fixed_index": i,
+            "score_raw": sc, "theta_deg": t_deg, "phi_deg": p_deg, "fixed_index": i, "side": side,
         })
     normed = normalize_scores(raw_scores)
     for i, c in enumerate(candidates):
@@ -354,6 +358,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_current_index = 0
         state.nov_sphere_xy = sphere_xy
         state.nov_sphere_svg = build_nov_sphere_svg(sphere_xy, candidates[0]["fixed_index"])
+        state.nov_view_side = candidates[0].get("side", "F")
         state.nov_score_display = candidates[0]["score_normalized"]
         state.nov_view_index_display = f"1/{len(candidates)}"
         state.nov_panel_visible = True
@@ -370,20 +375,29 @@ def register_nov_callbacks(ctrl, state, _refs):
         return [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2], b
 
     def nov_toggle():
-        """Enter sphere-draw mode: sphere center = focal point; right-click = new center, right-drag = radius, right-release = run NOV."""
+        """Enter sphere-draw mode: sphere center = focal point; right-click = new center, right-drag = radius, right-release = run NOV. If already in NOV (viewing candidates), reset and start again."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None):
             state.nov_panel_visible = False
             return
+        # Reset previous NOV run: remove sphere from screen, hide < >, like first time
+        state.nov_candidates = []
+        state.nov_current_index = 0
+        state.nov_view_index_display = ""
+        state.nov_score_display = 0.0
+        state.nov_sphere_svg = ""
+        state.nov_view_side = ""
+        state.nov_sphere_xy = []
+        state.nov_drag_started = False
+        state.nov_panel_visible = False
+        _update_nov_sphere(None, 0.0, False)
         cam = streamer.renderer.GetActiveCamera()
         focal = list(cam.GetFocalPoint())
         _, b = _volume_center_bounds(streamer)
         ext = min(b[1] - b[0], b[3] - b[2], b[5] - b[4])
         state.nov_drawing_sphere = True
-        state.nov_drag_started = False
         state.nov_sphere_center = focal
         state.nov_sphere_radius = max(ext * 0.15, MIN_SPHERE_RADIUS)
-        _update_nov_sphere(state.nov_sphere_center, state.nov_sphere_radius, True)
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -502,6 +516,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         new_idx = next((k for k, c in enumerate(candidates) if c["fixed_index"] == fixed), 0)
         state.nov_current_index = new_idx
         state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), candidates[new_idx]["fixed_index"])
+        state.nov_view_side = candidates[new_idx].get("side", "F")
         state.nov_score_display = candidates[new_idx]["score_normalized"]
         state.nov_view_index_display = f"{new_idx+1}/{len(candidates)}"
         if _refs.get("view"):
@@ -514,6 +529,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         idx = (getattr(state, "nov_current_index", 0) + step) % len(cands)
         state.nov_current_index = idx
         state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), cands[idx]["fixed_index"])
+        state.nov_view_side = cands[idx].get("side", "F")
         apply_cam(cands[idx])
         state.nov_score_display = cands[idx]["score_normalized"]
         state.nov_view_index_display = f"{idx+1}/{len(cands)}"
