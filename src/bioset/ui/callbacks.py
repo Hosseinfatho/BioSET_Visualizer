@@ -21,7 +21,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         return (r, g, b)
     
     _refs = {
-        "streamer": None,
+        "streamer": streamer,
         "view": view,
         "analysis_loader": None,
         "heatmap": None,
