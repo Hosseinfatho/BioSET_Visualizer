@@ -393,11 +393,12 @@ def register_nov_callbacks(ctrl, state, _refs):
         _update_nov_sphere(None, 0.0, False)
         cam = streamer.renderer.GetActiveCamera()
         focal = list(cam.GetFocalPoint())
-        _, b = _volume_center_bounds(streamer)
-        ext = min(b[1] - b[0], b[3] - b[2], b[5] - b[4])
+        cam_pos = cam.GetPosition()
+        cam_z = cam_pos[2] if len(cam_pos) >= 3 else 0.0
         state.nov_drawing_sphere = True
         state.nov_sphere_center = focal
-        state.nov_sphere_radius = max(ext * 0.15, MIN_SPHERE_RADIUS)
+        state.nov_sphere_radius = max(0.1 * abs(cam_z), MIN_SPHERE_RADIUS)
+        _update_nov_sphere(state.nov_sphere_center, state.nov_sphere_radius, True)
         if _refs.get("view"):
             _refs["view"].update()
 
