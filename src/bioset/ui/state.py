@@ -66,7 +66,8 @@ def init_state(state):
     state.setdefault("bookmark_export_screenshot_dialog", False)
     state.setdefault("bookmark_export_screenshot_name", "")
     state.setdefault("bookmark_export_screenshot_caption", "")
-    
+    state.setdefault("bookmark_capture_from_nov", False)  # True when saving from NOV popup
+
     # Right drawer
     state.setdefault("right_drawer_open", False)
     
@@ -156,6 +157,8 @@ def init_state(state):
     state.setdefault("nov_sphere_xy", [])  # for SVG mini-map
     state.setdefault("nov_sphere_svg", "")
     state.setdefault("nov_view_side", "")  # "F" or "B"
+    state.setdefault("nov_popup_minimized", False)  # minimize NOV popup (header only)
+    state.setdefault("nov_popup_open", False)  # True after "Set" → popup visible; "Reset" closes it
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open

@@ -33,6 +33,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     ctrl.set_view = set_view
 
+    def set_nov_view(v):
+        _refs["nov_view"] = v
+
+    ctrl.set_nov_view = set_nov_view
+
     def set_streamer(streamer):
         """Set the streamer reference."""
         _refs["streamer"] = streamer

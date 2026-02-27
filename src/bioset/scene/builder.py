@@ -23,7 +23,9 @@ class VtkScene:
     render_window: vtkRenderWindow
     interactor: vtkRenderWindowInteractor
     streamer: Optional[VolumeStreamer] = None
-    heatmap: Optional[HeatmapRenderer] = None  
+    heatmap: Optional[HeatmapRenderer] = None
+    nov_renderer: Optional[vtkRenderer] = None
+    nov_render_window: Optional[vtkRenderWindow] = None  
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -45,6 +47,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.SetBackground(colors.GetColor3d(cfg.background))
 
     streamer: Optional[VolumeStreamer] = None
+    nov_renderer: Optional[vtkRenderer] = None
+    nov_render_window: Optional[vtkRenderWindow] = None
 
     heatmap = HeatmapRenderer(renderer)
 
@@ -62,12 +66,30 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             streamer = VolumeStreamer(
                 cfg=cfg, renderer=renderer, render_window=render_window)
 
+            nov_renderer = vtkRenderer()
+            nov_render_window = vtkRenderWindow()
+            nov_render_window.AddRenderer(nov_renderer)
+            nov_render_window.SetOffScreenRendering(1)
+            nov_render_window.SetShowWindow(False)
+            nov_render_window.SetSize(320, 200)
+            nov_renderer.SetBackground(colors.GetColor3d(cfg.background))
+            nov_interactor = vtkRenderWindowInteractor()
+            nov_interactor.SetRenderWindow(nov_render_window)
+            nov_interactor.Initialize()
+            nov_style = vtkInteractorStyleSwitch()
+            nov_style.SetCurrentStyleToTrackballCamera()
+            nov_interactor.SetInteractorStyle(nov_style)
+            nov_render_window.SetInteractor(nov_interactor)
+            streamer.set_nov_renderer(nov_renderer, nov_render_window)
+
             def _on_end_interaction(obj, evt):
                 streamer.on_interaction_end()
 
             interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
         except Exception as e:
             streamer = None
+            nov_renderer = None
+            nov_render_window = None
             err = f"{type(e).__name__}: {e}"
             print(f"[bioset] Could not connect to zarr URL (SSL/network?). App will start without data. Error: {err}", file=sys.stderr)
 
@@ -100,5 +122,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         render_window=render_window,
         interactor=interactor,
         streamer=streamer,
-        heatmap=heatmap
+        heatmap=heatmap,
+        nov_renderer=nov_renderer,
+        nov_render_window=nov_render_window,
     )

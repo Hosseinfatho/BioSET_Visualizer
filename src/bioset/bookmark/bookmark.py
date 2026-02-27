@@ -135,6 +135,41 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def _apply_nov_view(streamer, nov_data):
+        """Apply NOV view: set box, sync volumes, apply camera to nov_renderer, open popup."""
+        if not streamer or not getattr(streamer, "nov_renderer", None) or not nov_data:
+            return
+        box = nov_data.get("box_center"), nov_data.get("box_length", 0), nov_data.get("box_width", 0), nov_data.get("box_depth", 0)
+        if not box[0] or len(box[0]) < 3 or box[1] <= 0 or box[2] <= 0 or box[3] <= 0:
+            return
+        state.nov_box_center = list(box[0])
+        state.nov_box_length = float(box[1])
+        state.nov_box_width = float(box[2])
+        state.nov_box_depth = float(box[3])
+        state.nov_panel_visible = True
+        state.nov_popup_open = True
+        streamer.set_nov_box_clip(box[0], box[1], box[2], box[3])
+        if getattr(streamer, "sync_nov_volumes", None):
+            streamer.sync_nov_volumes()
+        c = nov_data.get("camera") or {}
+        ren = streamer.nov_renderer
+        cam = ren.GetActiveCamera()
+        if c.get("position") and len(c.get("position", [])) >= 3:
+            cam.SetPosition(c["position"][:3])
+        if c.get("focalPoint") and len(c.get("focalPoint", [])) >= 3:
+            cam.SetFocalPoint(c["focalPoint"][:3])
+        if c.get("viewUp") and len(c.get("viewUp", [])) >= 3:
+            cam.SetViewUp(c["viewUp"][:3])
+        ren.ResetCameraClippingRange()
+        if getattr(streamer, "nov_render_window", None):
+            streamer.nov_render_window.Render()
+        if _refs.get("view"):
+            _refs["view"].update()
+        if _refs.get("nov_view"):
+            _refs["nov_view"].update()
+        if hasattr(ctrl, "nov_refresh_box_display"):
+            ctrl.nov_refresh_box_display()
+
     def _apply_channel_tfs_to_streamer(streamer):
         """Update streamer TFs from state.channels for active_channels."""
         if not streamer:
@@ -226,7 +261,10 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             if hasattr(ctrl, "update_active_channels"):
                 ctrl.update_active_channels(state.active_channels)
             _apply_channel_tfs_to_streamer(streamer)
-        _apply_camera(streamer, v0.get("camera") or {})
+        if v0.get("nov_view"):
+            _apply_nov_view(streamer, v0["nov_view"])
+        else:
+            _apply_camera(streamer, v0.get("camera") or {})
         state.bookmark_edit_title = snap.get("title") or ""
         state.bookmark_edit_description = v0.get("notes") or ""
         state.bookmark_edit_comment = ""
@@ -241,9 +279,12 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         }
 
     def _bookmark_apply_view(v):
-        """Apply view to scene: camera, channels, active_channels, background, TF. Updates state and streamer."""
+        """Apply view to scene: camera, channels, active_channels, background, TF. Updates state and streamer. If nov_view, apply to NOV popup."""
         streamer = _refs.get("streamer")
-        _apply_camera(streamer, v.get("camera") or {})
+        if v.get("nov_view"):
+            _apply_nov_view(streamer, v["nov_view"])
+        else:
+            _apply_camera(streamer, v.get("camera") or {})
         if v.get("channels") is not None and v.get("active_channels") is not None:
             restored = _normalize_channels(v.get("channels"))
             state.channels = _bookmark_merge_channels(restored, list(state.channels or []))
@@ -337,6 +378,16 @@ def register_bookmark_callbacks(ctrl, state, _refs):
 
     def bookmark_open_new_form():
         """Open the new-snapshot form (bottom-left). Optionally refresh names."""
+        state.bookmark_capture_from_nov = False
+        bookmark_refresh_names()
+        state.bookmark_form_name = getattr(state, "bookmark_selected_name", "Name") or "Name"
+        state.bookmark_form_description = ""
+        state.bookmark_form_new_comment = ""
+        state.bookmark_form_dialog = True
+
+    def bookmark_open_new_form_from_nov():
+        """Open the new-snapshot form for saving the current NOV popup view as a bookmark."""
+        state.bookmark_capture_from_nov = True
         bookmark_refresh_names()
         state.bookmark_form_name = getattr(state, "bookmark_selected_name", "Name") or "Name"
         state.bookmark_form_description = ""
@@ -344,10 +395,17 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         state.bookmark_form_dialog = True
 
     def _bookmark_capture_view():
-        """Capture camera, LOD, channels (active only), viewport, background from current view."""
+        """Capture camera, LOD, channels (active only), viewport, background. From main scene or NOV popup if bookmark_capture_from_nov."""
         streamer = _refs.get("streamer")
+        capture_nov = getattr(state, "bookmark_capture_from_nov", False)
+        use_nov = capture_nov and streamer and getattr(streamer, "nov_renderer", None)
         camera = {}
-        if streamer and hasattr(streamer, "renderer") and streamer.renderer:
+        if use_nov:
+            cam = streamer.nov_renderer.GetActiveCamera()
+            camera["position"] = list(cam.GetPosition())
+            camera["focalPoint"] = list(cam.GetFocalPoint())
+            camera["viewUp"] = list(cam.GetViewUp())
+        elif streamer and hasattr(streamer, "renderer") and streamer.renderer:
             cam = streamer.renderer.GetActiveCamera()
             camera["position"] = list(cam.GetPosition())
             camera["focalPoint"] = list(cam.GetFocalPoint())
@@ -373,12 +431,22 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                 w, h = rw.GetSize()
                 viewport = {"width": w, "height": h}
         bg = getattr(state, "bg_color", "#000000") or "#000000"
-        return {"camera": camera, "optional_lod": optional_lod, "channels": channels_data, "active_channels": active, "viewport": viewport, "background": bg}
+        out = {"camera": camera, "optional_lod": optional_lod, "channels": channels_data, "active_channels": active, "viewport": viewport, "background": bg}
+        if use_nov and getattr(state, "nov_box_center", None) and len(state.nov_box_center) >= 3:
+            out["nov_view"] = {
+                "camera": dict(camera),
+                "box_center": list(state.nov_box_center),
+                "box_length": float(getattr(state, "nov_box_length", 0)),
+                "box_width": float(getattr(state, "nov_box_width", 0)),
+                "box_depth": float(getattr(state, "nov_box_depth", 0)),
+            }
+        return out
 
     def bookmark_save_snapshot():
         """Capture current view + form fields; save to bookmark JSON; close form."""
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         cap = _bookmark_capture_view()
+        state.bookmark_capture_from_nov = False
         form_name = (getattr(state, "bookmark_form_name", None) or getattr(state, "bookmark_selected_name", None) or "").strip()
         title = form_name or "Unnamed"
         comments = []
@@ -395,6 +463,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "viewport": cap.get("viewport") or {},
             "optional_LOD": cap.get("optional_lod"),
         }
+        if cap.get("nov_view"):
+            view0["nov_view"] = cap["nov_view"]
         snapshot = {
             "id": str(uuid.uuid4()),
             "title": title,
@@ -411,6 +481,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         }
         if cap["optional_lod"]:
             snapshot["optional_LOD"] = cap["optional_lod"]
+        if cap.get("nov_view"):
+            snapshot["nov_view"] = cap["nov_view"]
         dataset_id = _bookmark_dataset_id()
         save_snapshot(snapshot, dataset_id)
         bookmark_refresh_names()
@@ -568,6 +640,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     ctrl.bookmark_refresh_names = bookmark_refresh_names
     ctrl.bookmark_open_snapshot = bookmark_open_snapshot
     ctrl.bookmark_open_new_form = bookmark_open_new_form
+    ctrl.bookmark_open_new_form_from_nov = bookmark_open_new_form_from_nov
     ctrl.bookmark_save_snapshot = bookmark_save_snapshot
     ctrl.bookmark_view_prev = bookmark_view_prev
     ctrl.bookmark_view_next = bookmark_view_next

@@ -92,8 +92,12 @@ class VolumeStreamer:
         
         self._channel_data_range: Dict[int, Tuple[float, float]] = {}
 
-        # NOV box clip: when set, only voxels inside the box (center, length, width, depth) are shown
+        # NOV box clip: when set, only voxels inside the box are shown in the NOV popup view (main view stays full)
         self._nov_box_clip: Optional[Tuple[Tuple[float, float, float], float, float, float]] = None
+        self.nov_renderer = None
+        self.nov_render_window = None
+        self.nov_volumes: Dict[int, vtkVolume] = {}
+        self.nov_mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
 
         if self.cfg.channels:
             self._init_low_res_full()
@@ -295,6 +299,12 @@ class VolumeStreamer:
         
         if channel_id in self.mappers:
             del self.mappers[channel_id]
+        if channel_id in self.nov_volumes and self.nov_renderer:
+            self.nov_renderer.RemoveVolume(self.nov_volumes[channel_id])
+        if channel_id in self.nov_volumes:
+            del self.nov_volumes[channel_id]
+        if channel_id in self.nov_mappers:
+            del self.nov_mappers[channel_id]
         
         if channel_id in self.state:
             del self.state[channel_id]
@@ -412,16 +422,73 @@ class VolumeStreamer:
         """Return the set of currently active channel IDs."""
         return self._active_channels.copy()
 
+    def set_nov_renderer(self, renderer, render_window) -> None:
+        """Set the optional NOV popup renderer/window. When set, clipped volumes are pushed here."""
+        self.nov_renderer = renderer
+        self.nov_render_window = render_window
+
     def set_nov_box_clip(self, center: Tuple[float, float, float], length: float, width: float, depth: float) -> None:
-        """Clip volume display to inside box (center, length=X, width=Y, depth=Z). Call reload_current_volumes() after to apply."""
+        """Clip NOV popup view to inside box. Main view stays full. Call sync_nov_volumes() after to update popup."""
         self._nov_box_clip = (
             (float(center[0]), float(center[1]), float(center[2])),
             float(length), float(width), float(depth),
         )
 
     def clear_nov_box_clip(self) -> None:
-        """Remove NOV box clip so full volume is shown again. Call reload_current_volumes() after to apply."""
+        """Remove NOV box clip. Call clear_nov_view() to remove popup volumes."""
         self._nov_box_clip = None
+
+    def clear_nov_view(self) -> None:
+        """Remove all volumes from NOV popup renderer and clear NOV volume caches."""
+        if self.nov_renderer is None:
+            return
+        for ch, vol in list(self.nov_volumes.items()):
+            if self.nov_renderer.HasViewProp(vol):
+                self.nov_renderer.RemoveVolume(vol)
+        self.nov_volumes.clear()
+        self.nov_mappers.clear()
+        if self.nov_render_window:
+            self.nov_render_window.Render()
+        if self.render_callback is not None:
+            self.render_callback()
+
+    def sync_nov_volumes(self) -> None:
+        """Update NOV popup volumes with clipped data from current state. No-op if no nov_renderer or no clip."""
+        if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
+            return
+        for ch in list(self._active_channels):
+            st = self.state.get(ch)
+            if st is None:
+                continue
+            try:
+                np_arr = self._load_channel_data(st.component, ch, st.roi)
+            except Exception:
+                continue
+            if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
+                continue
+            spacing = self._spacing_for_component(st.component)
+            origin_xyz = (st.roi.x0 * spacing.sx, st.roi.y0 * spacing.sy, 0.0)
+            try:
+                img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
+            except ValueError:
+                continue
+            vol, mapper = self._get_or_create_nov_volume(ch)
+            mapper.SetInputData(img)
+            mapper.Modified()
+            if ch in self._channel_tfs:
+                color_tf, opacity_tf = self._channel_tfs[ch]
+                prop = vol.GetProperty()
+                prop.SetColor(color_tf)
+                prop.SetScalarOpacity(opacity_tf)
+                prop.SetScalarOpacityUnitDistance(
+                    max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+            if not self.nov_renderer.HasViewProp(vol):
+                self.nov_renderer.AddVolume(vol)
+        self.nov_renderer.ResetCameraClippingRange()
+        if self.nov_render_window:
+            self.nov_render_window.Render()
+        if self.render_callback is not None:
+            self.render_callback()
 
     def reload_current_volumes(self) -> None:
         """Reload and redisplay all active channels with current component/ROI (e.g. after NOV box clip change)."""
@@ -519,6 +586,34 @@ class VolumeStreamer:
         self.mappers[ch] = mapper
         return vol, mapper
 
+    def _get_or_create_nov_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
+        """Get or create volume/mapper for the NOV popup renderer."""
+        if self.nov_renderer is None:
+            raise RuntimeError("NOV renderer not set")
+        if ch in self.nov_volumes:
+            return self.nov_volumes[ch], self.nov_mappers[ch]
+        mapper = vtkGPUVolumeRayCastMapper()
+        mapper.SetAutoAdjustSampleDistances(True)
+        prop = vtkVolumeProperty()
+        if self.cfg.linear_interpolation:
+            prop.SetInterpolationTypeToLinear()
+        else:
+            prop.SetInterpolationTypeToNearest()
+        if self.cfg.shade:
+            prop.ShadeOn()
+            prop.SetAmbient(0.5)
+            prop.SetDiffuse(0.8)
+            prop.SetSpecular(0.1)
+            prop.SetSpecularPower(8.0)
+        else:
+            prop.ShadeOff()
+        vol = vtkVolume()
+        vol.SetMapper(mapper)
+        vol.SetProperty(prop)
+        self.nov_volumes[ch] = vol
+        self.nov_mappers[ch] = mapper
+        return vol, mapper
+
     # OpenGL 3D texture limit (avoid "Invalid texture dimensions" / MAX_3D_TEXTURE_SIZE 2048)
     MAX_TEXTURE_DIM = 2048
 
@@ -527,8 +622,9 @@ class VolumeStreamer:
         np_vol_zyx: np.ndarray,
         spacing: SpacingConfig,
         origin_xyz: Tuple[float, float, float],
+        for_nov_view: bool = False,
     ) -> vtkImageData:
-        """Create vtkImageData from numpy array. Downsample if any dimension exceeds MAX_TEXTURE_DIM."""
+        """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only)."""
         np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)
         z, y, x = np_vol_zyx.shape
         if x <= 0 or y <= 0 or z <= 0:
@@ -556,9 +652,9 @@ class VolumeStreamer:
             )
             print(f"[stream] Downsampled volume to ({z},{y},{x}) for OpenGL 2048 limit")
 
-        # Apply NOV box clip: only show voxels inside the box (mask outside to 0)
+        # Apply NOV box clip only for NOV popup view (main view always shows full volume)
         clip = getattr(self, "_nov_box_clip", None)
-        if clip is not None:
+        if for_nov_view and clip is not None:
             (cx, cy, cz), length, width, depth = clip
             hL, hW, hD = length / 2.0, width / 2.0, depth / 2.0
             ox, oy, oz = origin_xyz[0], origin_xyz[1], origin_xyz[2]

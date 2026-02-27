@@ -356,24 +356,37 @@ def register_nov_callbacks(ctrl, state, _refs):
 
     def nov_hide_box():
         _update_nov_box(None, 0.0, 0.0, 0.0, False)
+        streamer = _refs.get("streamer")
+        if streamer:
+            streamer.clear_nov_box_clip()
+            if getattr(streamer, "clear_nov_view", None):
+                streamer.clear_nov_view()
         if _refs.get("view"):
             _refs["view"].update()
 
     def apply_cam(cam_dict):
+        """Apply camera to NOV popup view only (never to main scene)."""
         streamer = _refs.get("streamer")
-        if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer:
+        if not streamer:
+            return
+        ren = getattr(streamer, "nov_renderer", None)
+        if not ren:
             return
         c = cam_dict.get("camera") or cam_dict
-        cam = streamer.renderer.GetActiveCamera()
+        cam = ren.GetActiveCamera()
         if c.get("position") and len(c["position"]) >= 3:
             cam.SetPosition(c["position"][:3])
         if c.get("focalPoint") and len(c.get("focalPoint", [])) >= 3:
             cam.SetFocalPoint(c["focalPoint"][:3])
         if c.get("viewUp") and len(c.get("viewUp", [])) >= 3:
             cam.SetViewUp(c["viewUp"][:3])
-        streamer.renderer.ResetCameraClippingRange()
+        ren.ResetCameraClippingRange()
+        if getattr(streamer, "nov_render_window", None):
+            streamer.nov_render_window.Render()
         if _refs.get("view"):
             _refs["view"].update()
+        if _refs.get("nov_view"):
+            _refs["nov_view"].update()
 
     def display_to_display_coords(renderer, x: float, y: float):
         """Convert client (x,y) 0-1 to VTK display coords (origin bottom-left)."""
@@ -464,6 +477,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         if not candidates:
             state.nov_candidates = []
             state.nov_panel_visible = True
+            state.nov_popup_open = False
             if _refs.get("view"):
                 _refs["view"].update()
             return
@@ -483,7 +497,13 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_box_width = width
         state.nov_box_depth = depth
         _update_nov_box(state.nov_box_center, length, width, depth, True)
+        # Push clipped data to NOV popup view and set its camera (main scene unchanged)
+        if streamer:
+            streamer.set_nov_box_clip((center[0], center[1], center[2]), length, width, depth)
+            if getattr(streamer, "sync_nov_volumes", None):
+                streamer.sync_nov_volumes()
         apply_cam(candidates[0])
+        state.nov_popup_open = False  # popup shows only when user presses "Set"
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -501,6 +521,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_view_side = ""
         state.nov_sphere_xy = []
         state.nov_panel_visible = False
+        state.nov_popup_open = False
 
     def nov_toggle():
         """1st press: show box, drag to set size, release = best views. 2nd press: turn off NOV, remove box from scene."""
@@ -721,7 +742,37 @@ def register_nov_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def nov_set():
+        """Open the NOV popup (after user has resized the box and presses Set)."""
+        state.nov_popup_open = True
+        if _refs.get("nov_view"):
+            _refs["nov_view"].update()
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def nov_reset():
+        """Close popup and remove box from scene (Reset button)."""
+        _clear_nov_panel_state()
+        state.nov_drawing_box = False
+        nov_hide_box()
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def nov_refresh_box_display():
+        """Refresh the NOV box overlay on the main scene (e.g. after restoring an NOV bookmark)."""
+        center = getattr(state, "nov_box_center", None)
+        L = getattr(state, "nov_box_length", 0.0)
+        W = getattr(state, "nov_box_width", 0.0)
+        D = getattr(state, "nov_box_depth", 0.0)
+        if center and len(center) >= 3 and L > 0 and W > 0 and D > 0:
+            _update_nov_box(center, L, W, D, True)
+        else:
+            _update_nov_box(None, 0.0, 0.0, 0.0, False)
+
     ctrl.nov_toggle = nov_toggle
+    ctrl.nov_set = nov_set
+    ctrl.nov_reset = nov_reset
+    ctrl.nov_refresh_box_display = nov_refresh_box_display
     ctrl.nov_handle_click = nov_handle_click
     ctrl.nov_handle_drag = nov_handle_drag
     ctrl.nov_handle_release = nov_handle_release

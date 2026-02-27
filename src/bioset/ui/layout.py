@@ -8,10 +8,10 @@ from .styles import register_styles
 from .scripts import register_scripts
 from .state import init_state, register_state_change_handlers
 from .callbacks import register_callbacks
-from .components import left_drawer, right_drawer, viewer
+from .components import left_drawer, right_drawer, viewer, nov_popup_panel
 from bioset.bookmark import bookmark_form_panel
 
-def build_ui(server, render_window, streamer=None):
+def build_ui(server, render_window, streamer=None, nov_render_window=None):
     ctrl = server.controller
     state = server.state
 
@@ -27,6 +27,7 @@ def build_ui(server, render_window, streamer=None):
             view = viewer(ctrl, render_window)
             ctrl.set_view(view)
             bookmark_form_panel(state, ctrl)
+            nov_popup_panel(state, ctrl, nov_render_window)
             register_scripts(client)
 
     register_state_change_handlers(state, ctrl)

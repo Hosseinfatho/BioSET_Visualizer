@@ -56,7 +56,12 @@ def main():
     server = get_server(client_type="vue2")
     server.enable_module({"serve": {"assets": str(ASSETS_DIR)}})
 
-    ctrl, view = build_ui(server, scene.render_window, streamer=scene.streamer)
+    ctrl, view = build_ui(
+        server,
+        scene.render_window,
+        streamer=scene.streamer,
+        nov_render_window=scene.nov_render_window,
+    )
 
     if scene.streamer is not None:
         ctrl.set_streamer(scene.streamer)
