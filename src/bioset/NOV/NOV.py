@@ -265,7 +265,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             actor = vtkActor()
             actor.SetMapper(mapper)
             actor.GetProperty().SetColor(0.4, 1.0, 0.45)
-            actor.GetProperty().SetOpacity(0.2)
+            actor.GetProperty().SetOpacity(0.1)
             actor.GetProperty().SetAmbient(0.9)
             actor.GetProperty().SetDiffuse(0.1)
             actor.GetProperty().SetSpecular(0.15)
