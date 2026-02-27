@@ -71,7 +71,7 @@ def right_drawer(state, ctrl):
                 with html.Div(classes="d-flex justify-center mb-3"):
                     with vuetify.VMenu(
                         offset_y=True,
-                        v_if="heatmap_available_combinations && heatmap_available_combinations.length > 0",
+                        v_if="heatmap_available_combinations",
                     ):
                         with vuetify.Template(v_slot_activator="{ on, attrs }"):
                             with vuetify.VBtn(
@@ -80,13 +80,12 @@ def right_drawer(state, ctrl):
                                 small=True,
                                 dark=True,
                                 classes="text-none",
-                                style="max-width: 300px; text-transform: none;",
                             ):
                                 # Show selected combo as chips inside the button
                                 vuetify.Template(
                                     """
                                     <span v-if="!heatmap_combination || heatmap_combination.length === 0" style="color: #888;">
-                                        Select combination
+                                        No selection
                                     </span>
                                     <span v-else class="d-flex flex-wrap align-center" style="gap: 3px;">
                                         <v-chip
