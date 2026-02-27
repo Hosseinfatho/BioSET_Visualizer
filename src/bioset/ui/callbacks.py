@@ -409,6 +409,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot update heatmap - loader or heatmap not ready")
             return
         
+        if not state.heatmap_visible:
+            print("[callbacks] Heatmap hidden")
+            heatmap.clear()
+            state.heatmap_tile_count = 0
+            if _refs["view"]:
+                _refs["view"].update()
+            return
+        
         selected_channel_names = state.heatmap_combination or []
         
         if not selected_channel_names:

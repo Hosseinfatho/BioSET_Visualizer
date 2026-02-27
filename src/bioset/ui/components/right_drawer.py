@@ -65,7 +65,19 @@ def right_drawer(state, ctrl):
             
             # Heatmap section
             with html.Div(classes="mb-4 mt-3"):
-                html.Div("Heatmap", classes="text-overline mb-3 text-center", style="color: white;")
+                with html.Div(classes="d-flex align-center justify-center mb-3"):
+                    html.Span("Heatmap", classes="text-overline", style="color: white;")
+                    with vuetify.VBtn(
+                        icon=True,
+                        x_small=True,
+                        classes="ml-1",
+                        click="heatmap_visible = !heatmap_visible",
+                    ):
+                        vuetify.VIcon(
+                            v_text="heatmap_visible ? 'mdi-eye' : 'mdi-eye-off'",
+                            x_small=True,
+                            style=("heatmap_visible ? 'color:white' : 'color:#555'",),
+                        )
                 
                 # Combination dropdown
                 with html.Div(classes="d-flex justify-center mb-3"):
