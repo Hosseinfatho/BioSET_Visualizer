@@ -128,12 +128,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.renderer.ResetCameraClippingRange() 
             
         if heatmap:
-            heatmap.clear()
+            heatmap.clear() 
             
         mesh_mgr = _refs.get("mesh_manager")
         if mesh_mgr:
-            mesh_mgr.clear()
-
+            mesh_mgr.clear()  
+            
         if _refs["analysis_loader"]:
             _refs["analysis_loader"].close()
             _refs["analysis_loader"] = None
@@ -340,7 +340,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             available.append({
                 "channels": [name],
                 "label": name,
-                "iou": None,
+                "iou": None,  
             })
 
         if len(active_channel_names) >= 2:
@@ -397,7 +397,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def update_heatmap():
         """Update heatmap visualization based on current state.
-
+        
         Tiles use active_fraction (fraction of tile volume occupied by the
         channel/combination) to set the color-mapped opacity.
         """
@@ -475,7 +475,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def update_upset_data():
         """Update UpSet plot data based on current analysis settings.
-
+        
         Uses aggregated IoU across tiles, sorted descending.
         """
         loader = _refs.get("analysis_loader")
@@ -568,7 +568,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     
     def update_bar_data():
         """Update bar chart data with coverage percentage per channel.
-
+        
         Coverage % = (tiles with marker present) / (total tiles) * 100
         Sorted descending. Filtered to bar_selected_channels.
         """
@@ -959,8 +959,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_heatmap = set_heatmap                
     ctrl.load_data = load_data
     ctrl.clear_data = clear_data
-    ctrl.load_analysis_file = load_analysis_file  
-    ctrl.update_heatmap = update_heatmap
+    ctrl.load_analysis_file = load_analysis_file
+    ctrl.update_heatmap = update_heatmap   
     ctrl.update_heatmap_combinations = update_heatmap_combinations
     ctrl.toggle_channel = toggle_channel
     ctrl.update_active_channels = update_active_channels
