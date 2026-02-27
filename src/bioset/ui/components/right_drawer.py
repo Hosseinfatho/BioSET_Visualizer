@@ -276,10 +276,28 @@ def right_drawer(state, ctrl):
             # UpSet Filter Dialog
             with vuetify.VDialog(v_model=("upset_filter_dialog",), max_width="600px", scrollable=True):
                 with vuetify.VCard(classes="grey darken-4 white--text"):
-                    vuetify.VCardTitle("Select channels for UpSet plot", classes="headline grey darken-3")
+                    vuetify.VCardTitle("Settings - UpSet", classes="headline grey darken-3")
                     vuetify.VDivider()
                     
                     with vuetify.VCardText():
+                        with html.Div(classes="mb-4 mt-2"):
+                            html.Div("Limit", classes="text-caption mb-2 text-left", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                for val in [1, 2, 3, 4, 5]:
+                                    vuetify.VBtn(
+                                        str(val),
+                                        click=f"upset_min_channels = {val}",
+                                        color=(f"upset_min_channels === {val} ? 'white' : 'grey darken-3'",),
+                                        dark=(f"upset_min_channels !== {val}",),
+                                        class_="flex-grow-1 rounded px-4",
+                                        elevation=0,
+                                        style="flex: 1;",
+                                    )
+
+                        vuetify.VDivider(classes="mb-3")
+
+                        html.Div("Channels", classes="text-caption mb-2 text-left", style="color: white;")
+
                         with html.Div(classes="d-flex justify-space-between my-2"):
                             # Search bar
                             vuetify.VTextField(
@@ -299,23 +317,6 @@ def right_drawer(state, ctrl):
                                     click="upset_selected_channels = []")
 
                         vuetify.VDivider(classes="mb-3 mt-1")
-
-                        # Combination size limit
-                        with html.Div(classes="mb-4"):
-                            html.Div("Limit", classes="text-caption mb-2 text-left", style="color: white;")
-                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
-                                for val in [1, 2, 3, 4, 5]:
-                                    vuetify.VBtn(
-                                        str(val),
-                                        click=f"upset_min_channels = {val}",
-                                        color=(f"upset_min_channels === {val} ? 'white' : 'grey darken-3'",),
-                                        dark=(f"upset_min_channels !== {val}",),
-                                        class_="flex-grow-1 rounded px-4",
-                                        elevation=0,
-                                        style="flex: 1;",
-                                    )
-
-                        vuetify.VDivider(classes="mb-3")
                         
                         # Use checkboxes directly
                         with html.Div():
@@ -475,7 +476,7 @@ def right_drawer(state, ctrl):
             # Bar Filter Dialog
             with vuetify.VDialog(v_model=("bar_filter_dialog",), max_width="600px", scrollable=True):
                 with vuetify.VCard(classes="grey darken-4 white--text"):
-                    vuetify.VCardTitle("Select channels for Bar plot", classes="headline grey darken-3")
+                    vuetify.VCardTitle("Settings - Bar Chart", classes="headline grey darken-3")
                     vuetify.VDivider()
                     
                     with vuetify.VCardText():
