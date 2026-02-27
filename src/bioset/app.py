@@ -84,6 +84,7 @@ def main():
         ctrl.set_heatmap(scene.heatmap)
     if scene.mesh_manager is not None:
         ctrl.set_mesh_manager(scene.mesh_manager)
+        ctrl.setup_right_click_picker(scene.interactor)
 
     server.start()
 
