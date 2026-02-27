@@ -226,8 +226,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 state.current_dilation = metadata.dilation_amounts[0]
             
             if metadata.hierarchy_levels:
-                mid_idx = len(metadata.hierarchy_levels) // 2
-                state.current_hierarchy_level = metadata.hierarchy_levels[mid_idx]["level"]
+                state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
             
             # Initialize plot channel selections with all channels
             state.upset_selected_channels = [ch for ch in state.analysis_channels]
@@ -381,7 +380,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         filtered_combinations = []
 
         for combo in combinations:
-            if all(ch in selected_channels for ch in combo.channels):
+            if any(ch in selected_channels for ch in combo.channels):
                 filtered_combinations.append(combo)
 
         return filtered_combinations
@@ -408,10 +407,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         )
         
         # Filter to selected channels
-        all_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
+        #all_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
 
         mapped_combinations = []
-        for combination in all_data:
+        for combination in combinations:
             mapped_combinations.append({
                 "channels": combination.channels,
                 "iou": combination.iou,

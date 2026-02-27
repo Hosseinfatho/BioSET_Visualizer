@@ -48,8 +48,9 @@ def right_drawer(state, ctrl):
                         dense=True,
                         dark=True,
                         hide_details=False,
-                        class_="mx-2",
-                        #style="max-width: 200px; flex-shrink: 0;",
+                        classes="mx-2",
+                        small=True,
+                        style="font-size: 0.75rem;",
                         tick_labels=("analysis_dilation_amounts.map(v => v + ' \u03BCm')",),
                     )
                     

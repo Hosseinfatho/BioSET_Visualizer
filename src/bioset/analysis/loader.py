@@ -274,7 +274,7 @@ class AnalysisLoader:
         exact_match: bool = False,
     ) -> list[CombinationData]:
         """
-        Get combinations containing specified channels, aggregated by IoU.
+        Get combinations containing ANY of the specified channels, aggregated by IoU.
         """
         if not self.is_loaded or not channel_filter:
             return []
@@ -307,9 +307,15 @@ class AnalysisLoader:
             '''
             params = [dilation, hierarchy_level]
             
+            # OR logic: combination must contain ANY of the filter channels
+            channel_clauses = []
             for ch in channel_filter:
-                query += " AND (channels = ? OR channels LIKE ? OR channels LIKE ? OR channels LIKE ?)"
+                channel_clauses.append(
+                    "(channels = ? OR channels LIKE ? OR channels LIKE ? OR channels LIKE ?)"
+                )
                 params.extend([ch, f"{ch}|%", f"%|{ch}", f"%|{ch}|%"])
+            
+            query += " AND (" + " OR ".join(channel_clauses) + ")"
             
             query += " GROUP BY channels HAVING sum_union > 0"
             query += " ORDER BY CAST(SUM(total_count) AS REAL) / SUM(total_union) DESC LIMIT ?"

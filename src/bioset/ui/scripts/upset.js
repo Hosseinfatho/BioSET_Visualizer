@@ -42,6 +42,10 @@ Vue.component('upset-plot', {
     render() {
       if (!this.$refs.container || !window.UpSetJS) return;
       const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
+      if (sourceData.length === 0) {
+            this.$refs.container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel is selected</div>';
+            return;
+        }
 
       const maxIou = sourceData.length > 0 ? Math.max(...sourceData.map(d => d.iou)) : 0;
 
@@ -55,6 +59,20 @@ Vue.component('upset-plot', {
       }));
 
       const { sets, combinations } = UpSetJS.extractFromExpression(mappedData);
+
+      // sort channels by the number of combinations they appear in
+      const combCountBySet = new Map(sets.map(s => [s.name, 0]));
+      for (const comb of combinations) {
+        const members = comb.sets ? Array.from(comb.sets).map(s => s.name) : [];
+        for (const name of members) {
+          combCountBySet.set(name, (combCountBySet.get(name) || 0) + 1);
+        }
+      }
+      sets.sort((a, b) => {
+        const da = combCountBySet.get(a.name) || 0;
+        const db = combCountBySet.get(b.name) || 0;
+        return db-da || a.name.localeCompare(b.name); 
+      });
 
       if (this.channelData && this.channelData.length > 0) {
         sets.forEach(set => {

@@ -53,7 +53,7 @@ Vue.component('bar-plot', {
             const renderData = sourceData.slice(start, end);
 
             if (renderData.length === 0) {
-                container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel data available</div>';
+                container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel is selected</div>';
                 return;
             }
 
