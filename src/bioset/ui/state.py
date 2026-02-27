@@ -106,6 +106,9 @@ def init_state(state):
     state.setdefault("heatmap_visible", True)
     state.setdefault("heatmap_color", "#FFFFFF")  # White
     state.setdefault("heatmap_tile_count", 0)
+    state.setdefault("heatmap_combination", [])  # Currently selected combination (list of channel names)
+    state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
+    state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
 
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
@@ -169,18 +172,24 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Active channels changed: {active_channels}")
         if hasattr(ctrl, 'update_active_channels'):
             ctrl.update_active_channels(active_channels)
-        if hasattr(ctrl, 'update_heatmap'):
-            ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_heatmap_combinations'):
+            ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data_local'):
             ctrl.update_upset_data_local()
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
+            
+    @state.change("heatmap_combination")
+    def on_heatmap_combination_change(heatmap_combination, **kwargs):
+        print(f"[state] Heatmap combination changed: {heatmap_combination}")
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):
         print(f"[state] Dilation changed: {current_dilation}")
-        if hasattr(ctrl, 'update_heatmap'):
-            ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_heatmap_combinations'):
+            ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
@@ -189,8 +198,8 @@ def register_state_change_handlers(state, ctrl):
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
-        if hasattr(ctrl, 'update_heatmap'):
-            ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_heatmap_combinations'):
+            ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data() 
         if hasattr(ctrl, 'update_bar_data'):
