@@ -6,18 +6,31 @@ from __future__ import annotations
 from trame.widgets import html, vtk, vuetify
 
 
+_STYLE_FULL = (
+    "position: fixed; left: 50%; transform: translateX(-50%); bottom: 1%; "
+    "width: 30vw; min-width: 560px; max-width: 1280px; "
+    "height: 30vh; min-height: 360px; max-height: 720px; "
+    "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
+    "box-shadow: 0 4px 20px rgba(0,0,0,0.35); background: #ffffff; border: 1px solid rgba(0,0,0,0.12); "
+    "display: flex; flex-direction: column;"
+)
+_STYLE_MINIMIZED = (
+    "position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; "
+    "width: 30vw; min-width: 560px; max-width: 1280px; "
+    "height: auto; min-height: 44px; max-height: 44px; "
+    "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
+    "box-shadow: 0 -2px 12px rgba(0,0,0,0.25); background: #ffffff; border: 1px solid rgba(0,0,0,0.12); border-bottom: none; "
+    "display: flex; flex-direction: column;"
+)
+
+
 def nov_popup_panel(state, ctrl, nov_render_window=None):
-    """Floating NOV panel at bottom center: 10% viewport height, with close/minimize and NOV controls."""
+    """Floating NOV panel at bottom center; when minimized, collapses to a bar at bottom of screen."""
+    state.setdefault("nov_popup_style_full", _STYLE_FULL)
+    state.setdefault("nov_popup_style_minimized", _STYLE_MINIMIZED)
     with html.Div(
         v_show=("nov_panel_visible && nov_popup_open", False),
-        style=(
-            "position: fixed; left: 50%; transform: translateX(-50%); bottom: 1%; "
-            "width: 30vw; min-width: 560px; max-width: 1280px; "
-            "height: 30vh; min-height: 360px; max-height: 720px; "
-            "z-index: 300; border-radius: 8px; overflow: hidden; "
-            "box-shadow: 0 4px 20px rgba(0,0,0,0.35); background: #ffffff; border: 1px solid rgba(0,0,0,0.12); "
-            "display: flex; flex-direction: column;"
-        ),
+        style=("nov_popup_minimized ? nov_popup_style_minimized : nov_popup_style_full", _STYLE_FULL),
     ):
         # Header: white background, dark text so NOV next/prev, score, SVG are visible
         with html.Div(
