@@ -295,17 +295,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
             print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
             streamer.activate_channel(channel_id, color_hex)
-            
-            # Also load mesh overlay (tile 4_0 for now)
-            if mesh_mgr and mesh_mgr.is_available:
+            if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
+                tile_x = state.selected_tile["tile_x"]
+                tile_y = state.selected_tile["tile_y"]
                 color_rgb = _hex_to_rgb_tuple(color_hex)
                 mesh_mgr.activate_channel_mesh(
                     channel_idx=channel_id,
                     color_rgb=color_rgb,
-                    tile_x=6,
-                    tile_y=1,
+                    tile_x=tile_x,
+                    tile_y=tile_y,
                     opacity=1.0,
                 )
+                print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
+                
         
         if _refs["view"]:
             _refs["view"].update()
