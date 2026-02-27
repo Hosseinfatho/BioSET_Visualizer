@@ -63,10 +63,69 @@ def right_drawer(state, ctrl):
             
             vuetify.VDivider()
             
-            # Hierarchy level control
+            # Heatmap section
             with html.Div(classes="mb-4 mt-3"):
                 html.Div("Heatmap", classes="text-overline mb-3 text-center", style="color: white;")
                 
+                # Combination dropdown
+                with html.Div(classes="d-flex justify-center mb-3"):
+                    with vuetify.VMenu(
+                        offset_y=True,
+                        v_if="heatmap_available_combinations && heatmap_available_combinations.length > 0",
+                    ):
+                        with vuetify.Template(v_slot_activator="{ on, attrs }"):
+                            with vuetify.VBtn(
+                                v_bind="attrs",
+                                v_on="on",
+                                small=True,
+                                dark=True,
+                                classes="text-none",
+                                style="max-width: 300px; text-transform: none;",
+                            ):
+                                # Show selected combo as chips inside the button
+                                vuetify.Template(
+                                    """
+                                    <span v-if="!heatmap_combination || heatmap_combination.length === 0" style="color: #888;">
+                                        Select combination
+                                    </span>
+                                    <span v-else class="d-flex flex-wrap align-center" style="gap: 3px;">
+                                        <v-chip
+                                            v-for="(ch, ci) in heatmap_combination"
+                                            :key="ci"
+                                            x-small
+                                            :style="(function(){var c=channels.find(function(x){return x.name===ch});var clr=c?c.color:'#888';return 'background:'+clr+';border:1px solid '+clr+';color:#000'})()"
+                                        >{{ ch }}</v-chip>
+                                    </span>
+                                    <v-icon small class="ml-1">mdi-chevron-down</v-icon>
+                                    """
+                                )
+                        
+                        with vuetify.VList(dense=True, dark=True, classes="grey darken-4"):
+                            with vuetify.VListItem(
+                                v_for="(combo, idx) in heatmap_available_combinations",
+                                key=("idx",),
+                                dense=True,
+                                click="heatmap_combination = combo.channels",
+                                style="min-height: 32px;",
+                            ):
+                                with vuetify.VListItemContent():
+                                    vuetify.Template(
+                                        """
+                                        <div class="d-flex flex-wrap align-center" style="gap: 3px;">
+                                            <v-chip
+                                                v-for="(ch, ci) in combo.channels"
+                                                :key="ci"
+                                                x-small
+                                                :style="(function(){var c=channels.find(function(x){return x.name===ch});var clr=c?c.color:'#888';var sel=JSON.stringify(heatmap_combination)===JSON.stringify(combo.channels);return 'background:'+(sel?clr:'transparent')+';border:1px solid '+clr+';color:'+(sel?'#000':clr)})()"
+                                            >{{ ch }}</v-chip>
+                                            <span v-if="combo.iou !== null" style="color: #aaa; font-size: 10px; margin-left: 4px;">
+                                                IoU: {{ combo.iou.toFixed(4) }}
+                                            </span>
+                                        </div>
+                                        """
+                                    )
+                
+                # Granularity toggle
                 with html.Div(classes="d-flex justify-center"):
                     with vuetify.VBtnToggle(
                         v_model=("current_hierarchy_level",),
@@ -80,66 +139,7 @@ def right_drawer(state, ctrl):
                             small=True,
                             v_text="level === 0 ? 'Fine' : (level === 1 ? 'Medium' : (level === 2 ? 'Coarse' : 'Overview'))",
                         )
-                        
-            # Heatmap combination picker
-            with html.Div(classes="mb-4"):
-                html.Div("Distribution", classes="text-overline mb-2 text-center", style="color: white;")
-                
-                # Show active channels as colored chips
-                with html.Div(
-                    v_if="active_channels && active_channels.length > 0",
-                    classes="d-flex flex-wrap justify-center mb-2",
-                    style="gap: 4px;",
-                ):
-                    vuetify.VChip(
-                        v_for="ch in channels.filter(c => active_channels.includes(c.id))",
-                        key=("ch.id",),
-                        v_text=("ch.name",),
-                        x_small=True,
-                        outlined=True,
-                        style=("'border-color:' + ch.color + '; color:' + ch.color",),
-                    )
-                
-                # No channels message
-                with html.Div(
-                    v_if="!active_channels || active_channels.length === 0",
-                    style="color: #888; font-size: 12px; text-align: center;",
-                    classes="mb-2",
-                ):
-                    html.Span("No channels selected")
-                
-                # Combination list
-                with html.Div(
-                    v_if="heatmap_available_combinations && heatmap_available_combinations.length > 0",
-                    style="max-height: 200px; overflow-y: auto;",
-                ):
-                    with vuetify.VList(dense=True, dark=True, style="background: transparent;"):
-                        with vuetify.VListItemGroup(
-                            v_model=("heatmap_combo_index",),
-                            color="white",
-                        ):
-                            with vuetify.VListItem(
-                                v_for="(combo, idx) in heatmap_available_combinations",
-                                key=("idx",),
-                                dense=True,
-                                style="min-height: 32px;",
-                                click="trigger('on_heatmap_combo_click', combo.channels)",
-                            ):
-                                with vuetify.VListItemContent():
-                                    with html.Div(classes="d-flex flex-wrap align-center", style="gap: 3px;"):
-                                        vuetify.VChip(
-                                            v_for="(ch, ci) in combo.channels",
-                                            key=("ci",),
-                                            v_text=("ch",),
-                                            x_small=True,
-                                            style=("(function(){var c=channels.find(function(x){return x.name===ch});var clr=c?c.color:'#888';var sel=JSON.stringify(heatmap_combination)===JSON.stringify(combo.channels);return 'background:'+(sel?clr:'transparent')+';border:1px solid '+clr+';color:'+(sel?'#000':clr)})()",),
-                                        )
-                                        html.Span(
-                                            v_if="combo.iou !== null",
-                                            v_text="'IoU: ' + combo.iou.toFixed(4)",
-                                            style="color: #aaa; font-size: 10px; margin-left: 4px;",
-                                        )
-        
+            
         vuetify.VDivider()
         
         # UpSet plot container

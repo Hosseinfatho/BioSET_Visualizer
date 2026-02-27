@@ -310,12 +310,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
-    def on_heatmap_combo_click(combo_channels):
-        """Handle user selecting a heatmap combination from the UI."""
-        if combo_channels:
-            state.heatmap_combination = combo_channels
-            print(f"[callbacks] Heatmap combination selected: {combo_channels}")
-
     def update_heatmap_combinations():
         """Update available heatmap combinations based on active channels.
         """
@@ -958,8 +952,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.load_analysis_file = load_analysis_file  
     ctrl.update_heatmap = update_heatmap   
     ctrl.update_heatmap_combinations = update_heatmap_combinations
-    ctrl.on_heatmap_combo_click = on_heatmap_combo_click 
-    ctrl.trigger("on_heatmap_combo_click")(on_heatmap_combo_click)     
     ctrl.toggle_channel = toggle_channel
     ctrl.update_active_channels = update_active_channels
     ctrl.reset_camera = reset_camera
