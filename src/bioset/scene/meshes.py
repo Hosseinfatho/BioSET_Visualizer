@@ -127,22 +127,24 @@ class MeshManager:
 
         return pd
 
-    def _transform_to_world(self, polydata, offset_x: int, offset_y: int, tile_depth: int):
+    def _transform_to_world(self, polydata, offset_x: int, offset_y: int, offset_z: int):
         from vtkmodules.util.numpy_support import vtk_to_numpy, numpy_to_vtk
         import vtk
 
-        scale = self.base_sx
+        sx = self.base_sx
+        sy = self.base_sy
+        sz = self.base_sz
 
-        tx = offset_x * scale
-        ty = offset_y * scale
-        tz = tile_depth * scale  
+        tx = offset_x * sx
+        ty = offset_y * sy
+        tz = offset_z * sz
 
         pts = polydata.GetPoints()
         coords = vtk_to_numpy(pts.GetData()).copy().astype(np.float64)
 
-        coords[:, 0] = coords[:, 0] * scale + tx
-        coords[:, 1] = coords[:, 1] * scale + ty
-        coords[:, 2] = coords[:, 2] * scale + tz
+        coords[:, 0] = coords[:, 0] * sx + tx
+        coords[:, 1] = coords[:, 1] * sy + ty
+        coords[:, 2] = coords[:, 2] * sz + tz
 
         new_pts = vtk.vtkPoints()
         new_pts.SetData(numpy_to_vtk(coords, deep=True))
@@ -198,13 +200,13 @@ class MeshManager:
             polydata,
             tile_info.world_offset_x,
             tile_info.world_offset_y,
-            tile_info.tile_depth,
+            tile_info.world_offset_z,
         )
 
         # Diagnostics
         wb = world_pd.GetBounds()
         vol_z_top = tile_info.tile_depth * self.base_sz
-        print(f"[meshes] WORLD bounds (isotropic scale={self.base_sx}): "
+        print(f"[meshes] WORLD bounds (spacing=({self.base_sx}, {self.base_sy}, {self.base_sz})): "
               f"X[{wb[0]:.1f}, {wb[1]:.1f}] "
               f"Y[{wb[2]:.1f}, {wb[3]:.1f}] "
               f"Z[{wb[4]:.1f}, {wb[5]:.1f}]")
