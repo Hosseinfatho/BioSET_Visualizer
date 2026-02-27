@@ -168,6 +168,7 @@ class MeshManager:
         actor.GetProperty().SetDiffuse(0.8)
         actor.GetProperty().SetSpecular(0.0)
         actor.GetProperty().SetSpecularPower(1.0)
+        actor.SetPickable(False)
 
         return actor
     
@@ -260,6 +261,23 @@ class MeshManager:
 
     def get_active_channels(self) -> set:
         return set(self._actors.keys())
+    
+    def find_tile_at_voxel(self, channel_idx: int, vox_x: float, vox_y: float) -> Optional[MeshTileInfo]:
+        """Find the mesh tile whose footprint contains (vox_x, vox_y) in full-res voxel space."""
+        for t in self._tiles:
+            if t.channel_idx != channel_idx:
+                continue
+            if (t.world_offset_x <= vox_x < t.world_offset_x + t.tile_width and
+                    t.world_offset_y <= vox_y < t.world_offset_y + t.tile_height):
+                return t
+        return None
+
+    def get_tile_world_center(self, tile: 'MeshTileInfo') -> Tuple[float, float, float]:
+        """Get world-space center of a mesh tile."""
+        cx = (tile.world_offset_x + tile.tile_width / 2.0) * self.base_sx
+        cy = (tile.world_offset_y + tile.tile_height / 2.0) * self.base_sy
+        cz = (tile.tile_depth / 2.0) * self.base_sz
+        return (cx, cy, cz)
 
 
 # for debug

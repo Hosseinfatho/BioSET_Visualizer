@@ -36,6 +36,8 @@ class HeatmapRenderer:
         
         self._current_tiles: List[TileData] = []
         self._current_spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+        
+        self._actor_to_tile: Dict[vtkActor, TileData] = {}
     
     def update_tiles(
         self,
@@ -94,6 +96,7 @@ class HeatmapRenderer:
             
             tile_key = (tile.x0, tile.y0)
             self._actors[tile_key] = actor
+            self._actor_to_tile[actor] = tile
             
             if self._visible:
                 self.renderer.AddActor(actor)
@@ -152,6 +155,11 @@ class HeatmapRenderer:
             self.renderer.RemoveActor(actor)
         self._actors.clear()
         self._current_tiles = []
+        self._actor_to_tile.clear()
+        
+    def get_tile_for_actor(self, actor) -> Optional[TileData]:
+        """Reverse-lookup: given a picked vtkActor, return its TileData."""
+        return self._actor_to_tile.get(actor)
     
     def get_tile_at_position(self, x: float, y: float) -> Optional[TileData]:
         sx, sy, _ = self._current_spacing

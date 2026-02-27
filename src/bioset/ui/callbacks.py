@@ -867,6 +867,135 @@ def register_callbacks(ctrl, state, view, streamer=None):
             import traceback
             traceback.print_exc()
             return None
+        
+    def _fly_camera_to_tile(renderer, center, tile_info):
+        """Position camera looking at the tile center from above."""
+        cam = renderer.GetActiveCamera()
+        
+        mesh_mgr = _refs.get("mesh_manager")
+        sx = mesh_mgr.base_sx if mesh_mgr else 0.14
+        
+        tile_world_width = tile_info.tile_width * sx
+        
+        cam.SetFocalPoint(*center)
+        
+        distance = tile_world_width * 1.5
+        cam.SetPosition(center[0], center[1], center[2] + distance)
+        cam.SetViewUp(0, 1, 0)
+        
+        renderer.ResetCameraClippingRange()
+        
+        print(f"[callbacks] Camera moved to tile center "
+            f"({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f}), distance={distance:.1f}")
+
+    def setup_right_click_picker(interactor):
+        """Register a VTK prop picker on right-click to select heatmap tiles."""
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+        
+        picker = vtkPropPicker()
+        
+        def _on_right_button_press(obj, event):
+            click_pos = obj.GetEventPosition()
+            heatmap = _refs.get("heatmap")
+            mesh_mgr = _refs.get("mesh_manager")
+            streamer = _refs.get("streamer")
+            
+            if not heatmap or not streamer:
+                return
+            
+            renderer = streamer.renderer
+            
+            # Hide volumes so they don't block the picker
+            volumes = renderer.GetVolumes()
+            volumes.InitTraversal()
+            hidden_volumes = []
+            vol = volumes.GetNextVolume()
+            while vol:
+                hidden_volumes.append((vol, vol.GetVisibility()))
+                vol.SetVisibility(False)
+                vol = volumes.GetNextVolume()
+            
+            try:
+                picker.Pick(click_pos[0], click_pos[1], 0, renderer)
+                picked_actor = picker.GetActor()
+            finally:
+                for vol, was_visible in hidden_volumes:
+                    vol.SetVisibility(was_visible)
+            
+            if picked_actor is None:
+                print(f"[picker] No actor at ({click_pos[0]}, {click_pos[1]})")
+                return
+            
+            tile = heatmap.get_tile_for_actor(picked_actor)
+            if tile is None:
+                print(f"[picker] Picked actor is not a heatmap tile")
+                return
+            
+            print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
+                f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
+            
+            # --- 1. Zoom camera to this heatmap tile ---
+            sx = getattr(state, 'physical_size_x', 0.14)
+            sy = getattr(state, 'physical_size_y', 0.14)
+            sz = getattr(state, 'physical_size_z', 0.28)
+            
+            # Heatmap cubes have SetScale(128, 128, 1.0), so world coords are:
+            #   world_x = tile_coord * spacing * 128
+            tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
+            tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
+            tile_center_z = 0.0
+            
+            tile_width_world = (tile.x1 - tile.x0) * sx * 128
+            tile_height_world = (tile.y1 - tile.y0) * sy * 128
+            tile_extent = max(tile_width_world, tile_height_world)
+            
+            cam = renderer.GetActiveCamera()
+            cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
+            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+            cam.SetViewUp(0, 1, 0)
+            renderer.ResetCameraClippingRange()
+            
+            print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
+                f"extent={tile_extent:.1f}")
+            
+            # --- 2. Optionally load mesh at this location ---
+            active_channels = list(state.active_channels)
+            if mesh_mgr and mesh_mgr.is_available and active_channels:
+                # Convert heatmap tile center to full-res voxel coords
+                # World = voxel * spacing, so voxel = world / spacing
+                # But heatmap world has the 128 scale factor baked in
+                vox_x = (tile.x0 + tile.x1) / 2.0 * 128
+                vox_y = (tile.y0 + tile.y1) / 2.0 * 128
+                
+                first_ch = active_channels[0]
+                mesh_tile = mesh_mgr.find_tile_at_voxel(first_ch, vox_x, vox_y)
+                
+                if mesh_tile:
+                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
+                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                    
+                    for ch_id in active_channels:
+                        color_hex = "#FFFFFF"
+                        for ch in state.channels:
+                            if ch["id"] == ch_id:
+                                color_hex = ch["color"]
+                                break
+                        color_rgb = _hex_to_rgb_tuple(color_hex)
+                        mesh_mgr.activate_channel_mesh(
+                            channel_idx=ch_id,
+                            color_rgb=color_rgb,
+                            tile_x=mesh_tile.tile_x,
+                            tile_y=mesh_tile.tile_y,
+                            opacity=1.0,
+                        )
+                else:
+                    print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
+            
+            if _refs["view"]:
+                _refs["view"].update()
+        
+        interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
+        print("[callbacks] Right-click picker registered on interactor")
 
     # Bind to controller
     ctrl.set_streamer = set_streamer
@@ -892,4 +1021,5 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_clear = chatbot_clear
     ctrl.set_mesh_manager = set_mesh_manager
+    ctrl.setup_right_click_picker = setup_right_click_picker
 
