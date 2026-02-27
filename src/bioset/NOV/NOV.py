@@ -14,10 +14,25 @@ if TYPE_CHECKING:
 try:
     from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkSphereSource
     from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper, vtkPropPicker
+    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
     _VTK_BOX_AVAILABLE = True
 except Exception:
-    vtkCubeSource = vtkSphereSource = vtkActor = vtkPolyDataMapper = vtkPropPicker = None
+    vtkCubeSource = vtkSphereSource = vtkActor = vtkPolyDataMapper = vtkPropPicker = vtkInteractorStyleTrackballCamera = None
     _VTK_BOX_AVAILABLE = False
+
+
+def _make_nov_no_right_style():
+    """Interactor style that ignores right-button so right-click+drag is used only for NOV corner resize."""
+    if vtkInteractorStyleTrackballCamera is None:
+        return None
+    class _NoRightStyle(vtkInteractorStyleTrackballCamera):
+        def OnRightButtonDown(self):
+            pass
+        def OnRightButtonMove(self):
+            pass
+        def OnRightButtonUp(self):
+            pass
+    return _NoRightStyle()
 
 # --- Constants ---
 # 10 camera angles (theta, phi): 5 front + 5 back; sorted by score in compute_best_views
@@ -52,7 +67,7 @@ def box_corners(center: Tuple[float, float, float], length: float, width: float,
         (cx - hL, cy + hW, cz + hD), (cx + hL, cy + hW, cz + hD),
     ]
 
-PIN_RADIUS_FRACTION = 0.06  # pin radius = this fraction of min(L,W,D)
+PIN_RADIUS_FRACTION = 0.09  # pin radius = this fraction of min(L,W,D); half of previous for smaller spheres
 
 # --- Math helpers ---
 def _rad(d: float) -> float:
@@ -321,6 +336,15 @@ def register_nov_callbacks(ctrl, state, _refs):
         if not src or not actor:
             return
         if not visible or not center or len(center) < 3 or length <= 0 or width <= 0 or depth <= 0:
+            actor.SetPickable(1)
+            for vol in getattr(streamer, "volumes", {}).values():
+                vol.SetPickable(1)
+            # Restore original interactor style so right-drag rotates camera again
+            rw = getattr(streamer, "render_window", None)
+            if rw and _refs.get("_nov_original_style") is not None:
+                i = rw.GetInteractor()
+                if i:
+                    i.SetInteractorStyle(_refs["_nov_original_style"])
             if ren.HasViewProp(actor):
                 ren.RemoveActor(actor)
             for _, pin_actor in _ensure_nov_corner_pins():
@@ -340,7 +364,21 @@ def register_nov_callbacks(ctrl, state, _refs):
         src.Update()
         if not ren.HasViewProp(actor):
             ren.AddActor(actor)
-        # Update corner pins: position and size
+        actor.SetPickable(1)  # box pickable so right-click inside box can drag to move; pins also pickable for resize
+        # Disable picking on volumes so right-click drag hits corner pins instead of volume
+        for vol in getattr(streamer, "volumes", {}).values():
+            vol.SetPickable(0)
+        # Use interactor style that ignores right-button so right-click+drag only resizes box
+        rw = getattr(streamer, "render_window", None)
+        if rw:
+            i = rw.GetInteractor()
+            if i:
+                if _refs.get("_nov_original_style") is None:
+                    _refs["_nov_original_style"] = i.GetInteractorStyle()
+                no_right = _make_nov_no_right_style()
+                if no_right:
+                    i.SetInteractorStyle(no_right)
+        # Update corner pins: position and size (pins stay pickable for right-click resize)
         pins = _ensure_nov_corner_pins()
         if pins:
             pin_radius = max(min(L, W, D) * PIN_RADIUS_FRACTION, 2.0)
@@ -349,6 +387,7 @@ def register_nov_callbacks(ctrl, state, _refs):
                 sp_src.SetRadius(pin_radius)
                 sp_src.Update()
                 pin_actor.SetPosition(corners[i][0], corners[i][1], corners[i][2])
+                pin_actor.SetPickable(1)
                 if not ren.HasViewProp(pin_actor):
                     ren.AddActor(pin_actor)
         if _refs.get("view"):
@@ -424,6 +463,27 @@ def register_nov_callbacks(ctrl, state, _refs):
         for i, (_, pin_actor) in enumerate(pins):
             if picked == pin_actor:
                 return i
+        return None
+
+    def pick_box_or_pin(renderer, x: float, y: float):
+        """Pick at (x,y); return 'pin', pin_idx or 'box' or None."""
+        if not _VTK_BOX_AVAILABLE or vtkPropPicker is None:
+            return None
+        dx, dy = display_to_display_coords(renderer, x, y)
+        if dx is None:
+            return None
+        picker = vtkPropPicker()
+        picker.Pick(dx, dy, 0.0, renderer)
+        picked = picker.GetActor()
+        if picked is None:
+            return None
+        pins = _refs.get("_nov_pin_actors") or []
+        for i, (_, pin_actor) in enumerate(pins):
+            if picked == pin_actor:
+                return ("pin", i)
+        box_actor = _refs.get("_nov_box_actor")
+        if box_actor and picked == box_actor:
+            return ("box",)
         return None
 
     def ray_plane_intersection(renderer, x: float, y: float, plane_origin: Tuple[float, float, float], plane_normal: Tuple[float, float, float]):
@@ -522,6 +582,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_sphere_xy = []
         state.nov_panel_visible = False
         state.nov_popup_open = False
+        state.nov_dragging_box_center = False
 
     def nov_toggle():
         """1st press: show box, drag to set size, release = best views. 2nd press: turn off NOV, remove box from scene."""
@@ -582,13 +643,18 @@ def register_nov_callbacks(ctrl, state, _refs):
         center = getattr(state, "nov_box_center", None)
         if not center or len(center) < 3:
             return
-        pin_idx = pick_corner_pin(streamer.renderer, float(x), float(y))
-        if pin_idx is None:
+        hit = pick_box_or_pin(streamer.renderer, float(x), float(y))
+        if hit is None:
             return
-        corners = box_corners(center, getattr(state, "nov_box_length", 0), getattr(state, "nov_box_width", 0), getattr(state, "nov_box_depth", 0))
-        fixed_corner = corners[7 - pin_idx]
-        state.nov_dragging_corner = pin_idx
-        _refs["_nov_fixed_corner"] = fixed_corner
+        if hit[0] == "pin":
+            pin_idx = hit[1]
+            corners = box_corners(center, getattr(state, "nov_box_length", 0), getattr(state, "nov_box_width", 0), getattr(state, "nov_box_depth", 0))
+            fixed_corner = corners[7 - pin_idx]
+            state.nov_dragging_corner = pin_idx
+            _refs["_nov_fixed_corner"] = fixed_corner
+        else:
+            # hit[0] == "box" -> right-click inside box: drag to move box
+            state.nov_dragging_box_center = True
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -596,11 +662,44 @@ def register_nov_callbacks(ctrl, state, _refs):
         x, y = _parse_xy(*args)
         if x is None:
             return
-        corner_idx = getattr(state, "nov_dragging_corner", None)
-        if corner_idx is None:
-            return
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None):
+            return
+        center = getattr(state, "nov_box_center", None)
+        if not center or len(center) < 3:
+            return
+        L = getattr(state, "nov_box_length", 0)
+        W = getattr(state, "nov_box_width", 0)
+        D = getattr(state, "nov_box_depth", 0)
+
+        if getattr(state, "nov_dragging_box_center", False):
+            # Move entire box: ray-plane intersection with plane through box center
+            cam = streamer.renderer.GetActiveCamera()
+            fp = cam.GetFocalPoint()
+            pos = cam.GetPosition()
+            vx = fp[0] - pos[0]
+            vy = fp[1] - pos[1]
+            vz = fp[2] - pos[2]
+            n = math.sqrt(vx * vx + vy * vy + vz * vz)
+            if n < 1e-12:
+                return
+            view_normal = (vx / n, vy / n, vz / n)
+            pt = ray_plane_intersection(streamer.renderer, float(x), float(y), (center[0], center[1], center[2]), view_normal)
+            if pt is None:
+                return
+            _, b = _volume_center_bounds(streamer)
+            hL, hW, hD = L / 2.0, W / 2.0, D / 2.0
+            new_cx = max(b[0] + hL, min(b[1] - hL, pt[0]))
+            new_cy = max(b[2] + hW, min(b[3] - hW, pt[1]))
+            new_cz = max(b[4] + hD, min(b[5] - hD, pt[2]))
+            state.nov_box_center = [new_cx, new_cy, new_cz]
+            _update_nov_box(state.nov_box_center, L, W, D, True)
+            if _refs.get("view"):
+                _refs["view"].update()
+            return
+
+        corner_idx = getattr(state, "nov_dragging_corner", None)
+        if corner_idx is None:
             return
         fixed = _refs.get("_nov_fixed_corner")
         if not fixed or len(fixed) < 3:
@@ -615,13 +714,6 @@ def register_nov_callbacks(ctrl, state, _refs):
         if n < 1e-12:
             return
         view_normal = (vx / n, vy / n, vz / n)
-        # Plane through current moving corner (we use fixed + offset so plane moves with drag)
-        center = getattr(state, "nov_box_center", None)
-        if not center or len(center) < 3:
-            return
-        L = getattr(state, "nov_box_length", 0)
-        W = getattr(state, "nov_box_width", 0)
-        D = getattr(state, "nov_box_depth", 0)
         corners = box_corners(center, L, W, D)
         moving_corner = corners[corner_idx]
         pt = ray_plane_intersection(streamer.renderer, float(x), float(y), moving_corner, view_normal)
@@ -676,6 +768,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def nov_handle_release(*args):
+        state.nov_dragging_box_center = False
         corner_idx = getattr(state, "nov_dragging_corner", None)
         if corner_idx is None:
             if _refs.get("view"):

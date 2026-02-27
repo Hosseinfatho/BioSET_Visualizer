@@ -12,8 +12,8 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
         v_show=("nov_panel_visible && nov_popup_open", False),
         style=(
             "position: fixed; left: 50%; transform: translateX(-50%); bottom: 1%; "
-            "width: 15vw; min-width: 280px; max-width: 640px; "
-            "height: 15vh; min-height: 180px; max-height: 360px; "
+            "width: 30vw; min-width: 560px; max-width: 1280px; "
+            "height: 30vh; min-height: 360px; max-height: 720px; "
             "z-index: 300; border-radius: 8px; overflow: hidden; "
             "box-shadow: 0 4px 20px rgba(0,0,0,0.35); background: #ffffff; border: 1px solid rgba(0,0,0,0.12); "
             "display: flex; flex-direction: column;"

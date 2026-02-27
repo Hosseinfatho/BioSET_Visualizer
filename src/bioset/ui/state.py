@@ -149,6 +149,7 @@ def init_state(state):
     state.setdefault("nov_box_width", 0.0)
     state.setdefault("nov_box_depth", 0.0)
     state.setdefault("nov_dragging_corner", None)  # 0..7 when dragging a corner pin
+    state.setdefault("nov_dragging_box_center", False)  # True when right-drag inside box to move it
     state.setdefault("nov_panel_visible", False)
     state.setdefault("nov_candidates", [])
     state.setdefault("nov_current_index", 0)
