@@ -310,6 +310,97 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    def on_heatmap_combo_click(combo_channels):
+        """Handle user selecting a heatmap combination from the UI."""
+        if combo_channels:
+            state.heatmap_combination = combo_channels
+            print(f"[callbacks] Heatmap combination selected: {combo_channels}")
+
+    def update_heatmap_combinations():
+        """Update available heatmap combinations based on active channels.
+        """
+        loader = _refs.get("analysis_loader")
+        
+        if not loader or not loader.is_loaded:
+            state.heatmap_available_combinations = []
+            state.heatmap_combination = []
+            return
+        
+        active_channel_names = []
+        for ch_id in (state.active_channels or []):
+            for ch in (state.channels or []):
+                if ch["id"] == ch_id:
+                    active_channel_names.append(ch["name"])
+                    break
+        
+        if not active_channel_names:
+            state.heatmap_available_combinations = []
+            state.heatmap_combination = []
+            return
+        
+        print(f"[callbacks] Updating heatmap combinations for active channels: {active_channel_names}")
+        
+        available = []
+        
+        for name in active_channel_names:
+            available.append({
+                "channels": [name],
+                "label": name,
+                "iou": None,  
+            })
+        
+        if len(active_channel_names) >= 2:
+            try:
+                combinations = loader.get_filtered_combinations(
+                    channel_filter=active_channel_names,
+                    dilation=state.current_dilation,
+                    hierarchy_level=state.current_hierarchy_level,
+                    limit=50,
+                    exact_match=False,
+                )
+                
+                active_set = set(active_channel_names)
+                for combo in combinations:
+                    if len(combo.channels) >= 2 and set(combo.channels).issubset(active_set):
+                        available.append({
+                            "channels": combo.channels,
+                            "label": " + ".join(combo.channels),
+                            "iou": round(combo.iou, 4),
+                        })
+            except Exception as e:
+                print(f"[callbacks] Error querying heatmap combinations: {e}")
+        
+        state.heatmap_available_combinations = available
+        
+        print(f"[callbacks] Found {len(available)} heatmap combinations")
+        
+        # prefer selection of all active channels if available
+        current = state.heatmap_combination or []
+        current_set = set(current)
+
+        active_set = set(active_channel_names)
+        full_match = [c for c in available if set(c["channels"]) == active_set]
+        if full_match:
+            state.heatmap_combination = full_match[0]["channels"]
+            update_heatmap()
+            return
+        
+        if current and any(set(c["channels"]) == current_set for c in available):
+            update_heatmap()
+            return
+        
+        multi = [c for c in available if len(c["channels"]) >= 2]
+        if multi:
+            state.heatmap_combination = multi[0]["channels"]
+            update_heatmap()
+            return
+        
+        if available:
+            state.heatmap_combination = available[0]["channels"]
+        else:
+            state.heatmap_combination = []
+        update_heatmap()
+            
     def update_heatmap():
         """Update heatmap visualization based on current state.
         
@@ -324,22 +415,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot update heatmap - loader or heatmap not ready")
             return
         
-        selected_channel_names = []
-        for ch_id in state.active_channels:
-            for ch in state.channels:
-                if ch["id"] == ch_id:
-                    selected_channel_names.append(ch["name"])
-                    break
+        selected_channel_names = state.heatmap_combination or []
         
         if not selected_channel_names:
-            print("[callbacks] No channels selected - clearing heatmap")
+            print("[callbacks] No heatmap combination selected - clearing heatmap")
             heatmap.clear()
             state.heatmap_tile_count = 0
             if _refs["view"]:
                 _refs["view"].update()
             return
         
-        print(f"[callbacks] Updating heatmap for channels: {selected_channel_names}")
+        print(f"[callbacks] Updating heatmap for combination: {selected_channel_names}")
         print(f"[callbacks]   dilation={state.current_dilation}, level={state.current_hierarchy_level}")
         
         tiles = loader.get_combination_tiles(
@@ -870,7 +956,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.load_data = load_data
     ctrl.clear_data = clear_data
     ctrl.load_analysis_file = load_analysis_file  
-    ctrl.update_heatmap = update_heatmap         
+    ctrl.update_heatmap = update_heatmap   
+    ctrl.update_heatmap_combinations = update_heatmap_combinations
+    ctrl.on_heatmap_combo_click = on_heatmap_combo_click 
+    ctrl.trigger("on_heatmap_combo_click")(on_heatmap_combo_click)     
     ctrl.toggle_channel = toggle_channel
     ctrl.update_active_channels = update_active_channels
     ctrl.reset_camera = reset_camera

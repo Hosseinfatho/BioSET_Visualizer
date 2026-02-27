@@ -80,6 +80,65 @@ def right_drawer(state, ctrl):
                             small=True,
                             v_text="level === 0 ? 'Fine' : (level === 1 ? 'Medium' : (level === 2 ? 'Coarse' : 'Overview'))",
                         )
+                        
+            # Heatmap combination picker
+            with html.Div(classes="mb-4"):
+                html.Div("Distribution", classes="text-overline mb-2 text-center", style="color: white;")
+                
+                # Show active channels as colored chips
+                with html.Div(
+                    v_if="active_channels && active_channels.length > 0",
+                    classes="d-flex flex-wrap justify-center mb-2",
+                    style="gap: 4px;",
+                ):
+                    vuetify.VChip(
+                        v_for="ch in channels.filter(c => active_channels.includes(c.id))",
+                        key=("ch.id",),
+                        v_text=("ch.name",),
+                        x_small=True,
+                        outlined=True,
+                        style=("'border-color:' + ch.color + '; color:' + ch.color",),
+                    )
+                
+                # No channels message
+                with html.Div(
+                    v_if="!active_channels || active_channels.length === 0",
+                    style="color: #888; font-size: 12px; text-align: center;",
+                    classes="mb-2",
+                ):
+                    html.Span("No channels selected")
+                
+                # Combination list
+                with html.Div(
+                    v_if="heatmap_available_combinations && heatmap_available_combinations.length > 0",
+                    style="max-height: 200px; overflow-y: auto;",
+                ):
+                    with vuetify.VList(dense=True, dark=True, style="background: transparent;"):
+                        with vuetify.VListItemGroup(
+                            v_model=("heatmap_combo_index",),
+                            color="white",
+                        ):
+                            with vuetify.VListItem(
+                                v_for="(combo, idx) in heatmap_available_combinations",
+                                key=("idx",),
+                                dense=True,
+                                style="min-height: 32px;",
+                                click="trigger('on_heatmap_combo_click', combo.channels)",
+                            ):
+                                with vuetify.VListItemContent():
+                                    with html.Div(classes="d-flex flex-wrap align-center", style="gap: 3px;"):
+                                        vuetify.VChip(
+                                            v_for="(ch, ci) in combo.channels",
+                                            key=("ci",),
+                                            v_text=("ch",),
+                                            x_small=True,
+                                            style=("(function(){var c=channels.find(function(x){return x.name===ch});var clr=c?c.color:'#888';var sel=JSON.stringify(heatmap_combination)===JSON.stringify(combo.channels);return 'background:'+(sel?clr:'transparent')+';border:1px solid '+clr+';color:'+(sel?'#000':clr)})()",),
+                                        )
+                                        html.Span(
+                                            v_if="combo.iou !== null",
+                                            v_text="'IoU: ' + combo.iou.toFixed(4)",
+                                            style="color: #aaa; font-size: 10px; margin-left: 4px;",
+                                        )
         
         vuetify.VDivider()
         
