@@ -181,6 +181,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_box_depth = 0.0
         state.nov_panel_visible = False
         state.nov_candidates = []
+        state.nov_current_index = 0
+        state.nov_view_index_display = ""
+        state.nov_score_display = 0.0
+        state.nov_sphere_svg = ""
+        state.nov_sphere_xy = []
+        state.nov_view_side = ""
         if hasattr(ctrl, "nov_hide_box"):
             ctrl.nov_hide_box()
     

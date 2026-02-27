@@ -150,6 +150,12 @@ def init_state(state):
     state.setdefault("nov_dragging_corner", None)  # 0..7 when dragging a corner pin
     state.setdefault("nov_panel_visible", False)
     state.setdefault("nov_candidates", [])
+    state.setdefault("nov_current_index", 0)
+    state.setdefault("nov_view_index_display", "")  # e.g. "1/10"
+    state.setdefault("nov_score_display", 0.0)
+    state.setdefault("nov_sphere_xy", [])  # for SVG mini-map
+    state.setdefault("nov_sphere_svg", "")
+    state.setdefault("nov_view_side", "")  # "F" or "B"
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open

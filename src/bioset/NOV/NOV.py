@@ -29,7 +29,7 @@ NOV_MESH_SIZE = 500
 VISIBILITY_WEIGHT = 0.8
 OCCLUSION_WEIGHT = 0.2
 MIN_BOX_HALF = 25.0  # minimum half-extent for box
-MIN_CAMERA_RADIUS = 50.0  # minimum radius for camera placement around box
+MIN_CAMERA_RADIUS = 10.0  # minimum radius for camera placement around box
 CAMERA_DISTANCE_MULTIPLIER = 5.0  # camera distance from focal
 
 def box_circum_radius(length: float, width: float, depth: float) -> float:
@@ -223,9 +223,10 @@ def compute_best_views(
         vup = view_up_for_angle(t_deg, p_deg)
         sc = compute_view_score_mesh((pos[0], pos[1], pos[2]), center, (vup[0], vup[1], vup[2]), view_radius, roi_bounds, num_channels)
         raw_scores.append(sc)
+        side = "F" if i < 5 else "B"
         candidates.append({
             "camera": {"position": pos, "focalPoint": list(center), "viewUp": vup},
-            "score_raw": sc, "theta_deg": t_deg, "phi_deg": p_deg, "fixed_index": i,
+            "score_raw": sc, "theta_deg": t_deg, "phi_deg": p_deg, "fixed_index": i, "side": side,
         })
     normed = normalize_scores(raw_scores)
     for i, c in enumerate(candidates):
@@ -242,6 +243,25 @@ def compute_view_score_fraction(visible_roi_area: float, total_xy_area: float) -
 
 def visible_roi_area_from_roi(roi: "ROI") -> float:
     return float(max(0, roi.x1 - roi.x0) * max(0, roi.y1 - roi.y0))
+
+# --- SVG: sphere mini-map of camera positions ---
+def build_nov_sphere_svg(sphere_xy: list, current_index: int) -> str:
+    """Build SVG showing 10 camera positions on a sphere; current_index is highlighted."""
+    if not sphere_xy:
+        return ""
+    parts = [
+        '<svg width="28" height="28" viewBox="0 0 56 56" style="display:block">',
+        '<circle cx="28" cy="28" r="22" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>',
+    ]
+    for i, (x, y) in enumerate(sphere_xy):
+        active = i == current_index
+        r = 4 if active else 2.5
+        fill = "#fff" if active else "rgba(255,255,255,0.5)"
+        stroke = "#1976d2" if active else "transparent"
+        sw = 1.5 if active else 0
+        parts.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
+    parts.append("</svg>")
+    return "".join(parts)
 
 # --- Callbacks (box + corner pins) ---
 def register_nov_callbacks(ctrl, state, _refs):
@@ -447,7 +467,16 @@ def register_nov_callbacks(ctrl, state, _refs):
             if _refs.get("view"):
                 _refs["view"].update()
             return
+        points = get_nov_camera_angles()
+        r_svg, cx, cy = 22, 28, 28
+        sphere_xy = [[round(cx + r_svg * math.sin(_rad(t)) * math.sin(_rad(p)), 1), round(cy - r_svg * math.cos(_rad(t)), 1)] for t, p in points]
         state.nov_candidates = candidates
+        state.nov_current_index = 0
+        state.nov_sphere_xy = sphere_xy
+        state.nov_sphere_svg = build_nov_sphere_svg(sphere_xy, candidates[0]["fixed_index"])
+        state.nov_view_side = candidates[0].get("side", "F")
+        state.nov_score_display = candidates[0]["score_normalized"]
+        state.nov_view_index_display = f"1/{len(candidates)}"
         state.nov_panel_visible = True
         state.nov_box_center = list(center)
         state.nov_box_length = length
@@ -465,6 +494,12 @@ def register_nov_callbacks(ctrl, state, _refs):
 
     def _clear_nov_panel_state():
         state.nov_candidates = []
+        state.nov_current_index = 0
+        state.nov_view_index_display = ""
+        state.nov_score_display = 0.0
+        state.nov_sphere_svg = ""
+        state.nov_view_side = ""
+        state.nov_sphere_xy = []
         state.nov_panel_visible = False
 
     def nov_toggle():
@@ -502,6 +537,8 @@ def register_nov_callbacks(ctrl, state, _refs):
         init_side = cube_size_from_circum_radius(init_r)
         state.nov_box_length = state.nov_box_width = state.nov_box_depth = init_side
         _update_nov_box(state.nov_box_center, state.nov_box_length, state.nov_box_width, state.nov_box_depth, True)
+        # Run NOV immediately so 1/10 and sphere SVG appear without needing to drag a corner first
+        run_nov_for_box(state.nov_box_center, state.nov_box_length, state.nov_box_width, state.nov_box_depth)
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -654,11 +691,33 @@ def register_nov_callbacks(ctrl, state, _refs):
         comp, active_ch = get_lod(streamer)
         vol_bounds = streamer._volume_bounds_world(comp)
         nch = max(1, len(active_ch))
+        cur = getattr(state, "nov_current_index", 0)
+        fixed = cands[cur]["fixed_index"] if cur < len(cands) else 0
         cam_dist = max(CAMERA_DISTANCE_MULTIPLIER * circum_r, circum_r + 1.0)
         candidates = compute_best_views((center[0], center[1], center[2]), circum_r, vol_bounds, nch, camera_distance=cam_dist)
         if not candidates:
             return
         state.nov_candidates = candidates
+        new_idx = next((k for k, c in enumerate(candidates) if c["fixed_index"] == fixed), 0)
+        state.nov_current_index = new_idx
+        state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), candidates[new_idx]["fixed_index"])
+        state.nov_view_side = candidates[new_idx].get("side", "F")
+        state.nov_score_display = candidates[new_idx]["score_normalized"]
+        state.nov_view_index_display = f"{new_idx + 1}/{len(candidates)}"
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def switch(step):
+        cands = getattr(state, "nov_candidates", []) or []
+        if not cands:
+            return
+        idx = (getattr(state, "nov_current_index", 0) + step) % len(cands)
+        state.nov_current_index = idx
+        state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), cands[idx]["fixed_index"])
+        state.nov_view_side = cands[idx].get("side", "F")
+        state.nov_score_display = cands[idx]["score_normalized"]
+        state.nov_view_index_display = f"{idx + 1}/{len(cands)}"
+        apply_cam(cands[idx])
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -670,4 +729,6 @@ def register_nov_callbacks(ctrl, state, _refs):
     ctrl.nov_wheel_forward = lambda: nov_handle_wheel(1.0)
     ctrl.nov_wheel_backward = lambda: nov_handle_wheel(-1.0)
     ctrl.nov_hide_box = nov_hide_box
+    ctrl.nov_prev = lambda: switch(-1)
+    ctrl.nov_next = lambda: switch(1)
     ctrl.nov_recompute_scores_if_visible = lambda: recompute() if getattr(state, "nov_panel_visible", False) else None
