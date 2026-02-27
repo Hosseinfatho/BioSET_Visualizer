@@ -179,6 +179,12 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
             
+    @state.change("heatmap_visible")
+    def on_heatmap_visible_change(heatmap_visible, **kwargs):
+        print(f"[state] Heatmap visible changed: {heatmap_visible}")
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+            
     @state.change("heatmap_combination")
     def on_heatmap_combination_change(heatmap_combination, **kwargs):
         print(f"[state] Heatmap combination changed: {heatmap_combination}")
