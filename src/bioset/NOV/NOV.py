@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import math
-import time
 from typing import List, Tuple, TYPE_CHECKING
 
 from bioset.streaming.lod import camera_distance_to_focal, choose_component
@@ -12,7 +11,7 @@ from bioset.streaming.lod import camera_distance_to_focal, choose_component
 if TYPE_CHECKING:
     from bioset.streaming.lod import ROI
 
-# VTK for sphere overlay: wireframe sphere (mesh type, was visible before)
+# VTK for sphere overlay
 try:
     from vtkmodules.vtkFiltersSources import vtkSphereSource
     from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper
@@ -32,7 +31,9 @@ NOV_THETA_PHI: List[Tuple[float, float]] = [
 NOV_MESH_SIZE = 500
 VISIBILITY_WEIGHT = 0.8
 OCCLUSION_WEIGHT = 0.2
-MIN_SPHERE_RADIUS = 1.0
+MIN_SPHERE_RADIUS = 50.0
+CAMERA_DISTANCE_MULTIPLIER = 5.0  # camera at (this * sphere_radius) from focal to see sphere and inside
+DRAG_PIXEL_TO_RADIUS = 0.5  # 2D pixel drag -> radius change (reliable when 3D pick fails)
 
 # --- Math helpers ---
 def _rad(d: float) -> float:
@@ -106,10 +107,13 @@ def bounds_intersect(
     return (x0, x1, y0, y1, z0, z1)
 
 # --- Camera candidates ---
+# Geometry: (1) ROI sphere in scene: center C, radius R. (2) Camera sphere: same center C, radius 2*R.
+# Camera is placed on the surface of the 2*R sphere and looks at C (focal = center of both spheres).
 def get_nov_sphere_points() -> List[Tuple[float, float]]:
     return list(NOV_THETA_PHI)
 
 def camera_position_from_sphere(center: Tuple[float, float, float], radius: float, theta_deg: float, phi_deg: float) -> List[float]:
+    """Position on sphere of given radius around center; radius = distance from center (e.g. 2*R for camera sphere)."""
     th, ph = _rad(theta_deg), _rad(phi_deg)
     dx = radius * math.sin(th) * math.sin(ph)
     dy = radius * math.cos(th)
@@ -188,19 +192,20 @@ def compute_best_views_for_sphere(
     *,
     camera_distance: float | None = None,
 ) -> List[dict]:
-    """Camera at 2*sphere_radius from focal (center); scoring plane at focal, perpendicular to view, extent 2*sphere_radius."""
+    """Two spheres, same center C: (1) ROI sphere radius R in scene; (2) camera sphere radius 2*R.
+    Camera is placed on the 2*R sphere surface and looks at C. Focal point = C for both."""
     if sphere_radius < 1e-6:
         sphere_radius = MIN_SPHERE_RADIUS
     roi_bounds = bounds_intersect(volume_bounds, sphere_aabb(sphere_center, sphere_radius))
     if roi_bounds[1] <= roi_bounds[0] or roi_bounds[3] <= roi_bounds[2] or roi_bounds[5] <= roi_bounds[4]:
         return []
-    # Camera distance = 2 * sphere radius; plane for scoring = at focal, perpendicular to camera–focal, extent 2*radius
-    cam_r = camera_distance if camera_distance is not None and camera_distance >= 1e-6 else max(2.0 * sphere_radius, MIN_SPHERE_RADIUS)
+    R = sphere_radius
+    camera_sphere_radius = camera_distance if camera_distance is not None and camera_distance >= 1e-6 else max(CAMERA_DISTANCE_MULTIPLIER * R, MIN_SPHERE_RADIUS)
     center = (sphere_center[0], sphere_center[1], sphere_center[2])
     points = get_nov_sphere_points()
     raw_scores, candidates = [], []
     for i, (t_deg, p_deg) in enumerate(points):
-        pos = camera_position_from_sphere(center, cam_r, t_deg, p_deg)
+        pos = camera_position_from_sphere(center, camera_sphere_radius, t_deg, p_deg)
         vup = view_up_for_sphere_point(t_deg, p_deg)
         sc = compute_view_score_mesh((pos[0], pos[1], pos[2]), center, (vup[0], vup[1], vup[2]), sphere_radius, roi_bounds, num_channels)
         raw_scores.append(sc)
@@ -253,16 +258,19 @@ def register_nov_callbacks(ctrl, state, _refs):
             return None, None
         if "_nov_sphere_actor" not in _refs:
             src = vtkSphereSource()
-            src.SetPhiResolution(12)
-            src.SetThetaResolution(12)
+            src.SetPhiResolution(48)
+            src.SetThetaResolution(48)
             mapper = vtkPolyDataMapper()
             mapper.SetInputConnection(src.GetOutputPort())
             actor = vtkActor()
             actor.SetMapper(mapper)
-            actor.GetProperty().SetRepresentationToWireframe()
-            actor.GetProperty().SetColor(0.0, 1.0, 0.5)
-            actor.GetProperty().SetLineWidth(3.0)
-            actor.GetProperty().SetOpacity(0.95)
+            actor.GetProperty().SetColor(0.4, 1.0, 0.45)
+            actor.GetProperty().SetOpacity(0.2)
+            actor.GetProperty().SetAmbient(0.9)
+            actor.GetProperty().SetDiffuse(0.1)
+            actor.GetProperty().SetSpecular(0.15)
+            actor.GetProperty().SetSpecularPower(20.0)
+            actor.GetProperty().BackfaceCullingOff()
             _refs["_nov_sphere_source"] = src
             _refs["_nov_sphere_actor"] = actor
         return _refs.get("_nov_sphere_source"), _refs.get("_nov_sphere_actor")
@@ -344,7 +352,8 @@ def register_nov_callbacks(ctrl, state, _refs):
         comp, active_ch = get_lod(streamer)
         vol_bounds = streamer._volume_bounds_world(comp)
         nch = max(1, len(active_ch))
-        candidates = compute_best_views_for_sphere((center[0], center[1], center[2]), radius, vol_bounds, nch)
+        cam_dist = max(CAMERA_DISTANCE_MULTIPLIER * radius, MIN_SPHERE_RADIUS)
+        candidates = compute_best_views_for_sphere((center[0], center[1], center[2]), radius, vol_bounds, nch, camera_distance=cam_dist)
         if not candidates:
             state.nov_candidates = []
             state.nov_panel_visible = True
@@ -374,27 +383,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         b = streamer._volume_bounds_world(comp)
         return [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2], b
 
-    def nov_toggle():
-        """1st press: show sphere, drag to set radius, release = best views. 2nd press: turn off NOV, remove sphere from scene and update."""
-        streamer = _refs.get("streamer")
-        if not streamer or not getattr(streamer, "renderer", None):
-            state.nov_panel_visible = False
-            return
-        # If NOV is on (showing results) → turn off: remove sphere from scene, clear state, update view
-        if getattr(state, "nov_panel_visible", False):
-            state.nov_candidates = []
-            state.nov_current_index = 0
-            state.nov_view_index_display = ""
-            state.nov_score_display = 0.0
-            state.nov_sphere_svg = ""
-            state.nov_view_side = ""
-            state.nov_sphere_xy = []
-            state.nov_drag_started = False
-            state.nov_panel_visible = False
-            state.nov_drawing_sphere = False
-            nov_hide_sphere()
-            return
-        # Start NOV: remove any previous sphere, show new sphere at current focal
+    def _clear_nov_panel_state():
         state.nov_candidates = []
         state.nov_current_index = 0
         state.nov_view_index_display = ""
@@ -404,6 +393,19 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_sphere_xy = []
         state.nov_drag_started = False
         state.nov_panel_visible = False
+
+    def nov_toggle():
+        """1st press: show sphere, drag to set radius, release = best views. 2nd press: turn off NOV, remove sphere from scene and update."""
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "renderer", None):
+            state.nov_panel_visible = False
+            return
+        if getattr(state, "nov_panel_visible", False):
+            _clear_nov_panel_state()
+            state.nov_drawing_sphere = False
+            nov_hide_sphere()
+            return
+        _clear_nov_panel_state()
         _update_nov_sphere(None, 0.0, False)
         cam = streamer.renderer.GetActiveCamera()
         focal = list(cam.GetFocalPoint())
@@ -444,18 +446,17 @@ def register_nov_callbacks(ctrl, state, _refs):
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None):
             return
-        pt = display_to_world_xy(streamer.renderer, x, y)
-        if pt is None:
-            return
         center = getattr(state, "nov_sphere_center", None)
         if not center or len(center) < 3:
+            pt = display_to_world_xy(streamer.renderer, x, y)
+            if pt is None:
+                return
             state.nov_sphere_center = [pt[0], pt[1], pt[2]]
         state.nov_drag_started = True
-        state.nov_sphere_radius = math.sqrt(
-            (pt[0] - state.nov_sphere_center[0]) ** 2
-            + (pt[1] - state.nov_sphere_center[1]) ** 2
-            + (pt[2] - state.nov_sphere_center[2]) ** 2
-        )
+        r0 = max(getattr(state, "nov_sphere_radius", 0.0), MIN_SPHERE_RADIUS)
+        state.nov_sphere_radius = r0
+        _refs["_nov_drag_start_xy"] = (float(x), float(y))
+        _refs["_nov_drag_start_radius"] = r0
         _update_nov_sphere(state.nov_sphere_center, state.nov_sphere_radius, True)
         if _refs.get("view"):
             _refs["view"].update()
@@ -466,15 +467,15 @@ def register_nov_callbacks(ctrl, state, _refs):
             return
         if not getattr(state, "nov_drag_started", False) or not getattr(state, "nov_sphere_center", None):
             return
-        streamer = _refs.get("streamer")
-        if not streamer or not getattr(streamer, "renderer", None):
+        start_xy = _refs.get("_nov_drag_start_xy")
+        start_r = _refs.get("_nov_drag_start_radius")
+        if start_xy is None or start_r is None:
             return
-        pt = display_to_world_xy(streamer.renderer, x, y)
-        if pt is None:
-            return
-        c = state.nov_sphere_center
-        r = math.sqrt((pt[0]-c[0])**2 + (pt[1]-c[1])**2 + (pt[2]-c[2])**2)
-        state.nov_sphere_radius = max(r, 0.0)
+        dx = float(x) - start_xy[0]
+        dy = float(y) - start_xy[1]
+        pixel_dist = math.sqrt(dx * dx + dy * dy)
+        r = max(start_r + pixel_dist * DRAG_PIXEL_TO_RADIUS, MIN_SPHERE_RADIUS)
+        state.nov_sphere_radius = r
         _update_nov_sphere(state.nov_sphere_center, state.nov_sphere_radius, True)
         if _refs.get("view"):
             _refs["view"].update()
@@ -502,7 +503,6 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def nov_handle_release(*args):
-        x, y = _parse_xy(*args)
         if not getattr(state, "nov_drag_started", False):
             state.nov_drawing_sphere = False
             state.nov_drag_started = False
@@ -537,14 +537,10 @@ def register_nov_callbacks(ctrl, state, _refs):
         nch = max(1, len(active_ch))
         cur = getattr(state, "nov_current_index", 0)
         fixed = cands[cur]["fixed_index"] if cur < len(cands) else 0
-        cam_r = max(2.0 * radius, MIN_SPHERE_RADIUS)
-        candidates = compute_best_views_for_sphere((center[0], center[1], center[2]), radius, vol_bounds, nch, camera_distance=cam_r)
+        cam_dist = max(CAMERA_DISTANCE_MULTIPLIER * radius, MIN_SPHERE_RADIUS)
+        candidates = compute_best_views_for_sphere((center[0], center[1], center[2]), radius, vol_bounds, nch, camera_distance=cam_dist)
         if not candidates:
             return
-        normed = normalize_scores([c["score_raw"] for c in candidates])
-        for i, c in enumerate(candidates):
-            c["score_normalized"] = normed[i] if i < len(normed) else 0.0
-        candidates.sort(key=lambda x: x["score_normalized"], reverse=True)
         state.nov_candidates = candidates
         new_idx = next((k for k, c in enumerate(candidates) if c["fixed_index"] == fixed), 0)
         state.nov_current_index = new_idx
