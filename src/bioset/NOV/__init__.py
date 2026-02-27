@@ -1,12 +1,12 @@
-# NOV: Next Best View - single module.
+# NOV: Next Best View - box ROI, resize via corner pins.
 
 from .NOV import (
-    get_nov_sphere_points,
-    camera_position_from_sphere,
-    view_up_for_sphere_point,
+    get_nov_camera_angles,
+    camera_position_at_radius,
+    view_up_for_angle,
     compute_view_score_mesh,
-    compute_best_views_for_sphere,
-    sphere_aabb,
+    compute_best_views,
+    aabb_from_center_radius,
     bounds_intersect,
     normalize_scores,
     compute_view_score,
@@ -16,16 +16,15 @@ from .NOV import (
     VISIBILITY_WEIGHT,
     OCCLUSION_WEIGHT,
     register_nov_callbacks,
-    build_nov_sphere_svg,
 )
 
 __all__ = [
-    "get_nov_sphere_points",
-    "camera_position_from_sphere",
-    "view_up_for_sphere_point",
+    "get_nov_camera_angles",
+    "camera_position_at_radius",
+    "view_up_for_angle",
     "compute_view_score_mesh",
-    "compute_best_views_for_sphere",
-    "sphere_aabb",
+    "compute_best_views",
+    "aabb_from_center_radius",
     "bounds_intersect",
     "normalize_scores",
     "compute_view_score",
@@ -35,5 +34,4 @@ __all__ = [
     "VISIBILITY_WEIGHT",
     "OCCLUSION_WEIGHT",
     "register_nov_callbacks",
-    "build_nov_sphere_svg",
 ]

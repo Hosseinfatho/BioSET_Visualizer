@@ -140,20 +140,16 @@ def init_state(state):
     state.setdefault("bar_filter_dialog", False)
     state.setdefault("bar_expanded", False)
     
-    # NOV (Next Best View) — sphere ROI: click = center, drag = radius, release = run
+    # NOV (Next Best View) — box ROI; resize via right-click and drag on corner pins
     state.setdefault("nov_open", False)
-    state.setdefault("nov_drawing_sphere", False)
-    state.setdefault("nov_drag_started", False)
-    state.setdefault("nov_sphere_center", None)  # [x,y,z] when set
-    state.setdefault("nov_sphere_radius", 0.0)
+    state.setdefault("nov_drawing_box", False)
+    state.setdefault("nov_box_center", None)
+    state.setdefault("nov_box_length", 0.0)
+    state.setdefault("nov_box_width", 0.0)
+    state.setdefault("nov_box_depth", 0.0)
+    state.setdefault("nov_dragging_corner", None)  # 0..7 when dragging a corner pin
     state.setdefault("nov_panel_visible", False)
-    state.setdefault("nov_current_index", 0)
     state.setdefault("nov_candidates", [])
-    state.setdefault("nov_score_display", 0.0)
-    state.setdefault("nov_view_index_display", "")
-    state.setdefault("nov_sphere_xy", [])
-    state.setdefault("nov_sphere_svg", "")
-    state.setdefault("nov_view_side", "")
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open

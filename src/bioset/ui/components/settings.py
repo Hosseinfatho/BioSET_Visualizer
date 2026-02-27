@@ -107,21 +107,6 @@ def settings_section(state, ctrl):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         with html.Div(style="display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; min-width: 0;"):
                             html.Span("NOV", style="cursor: pointer; flex-shrink: 0;", click=ctrl.nov_toggle)
-                            with html.Div(
-                                v_show=("nov_panel_visible", False),
-                                style="display: inline-flex; align-items: center; gap: 1px; flex-shrink: 0;",
-                            ):
-                                with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_prev):
-                                    vuetify.VIcon("mdi-chevron-left", small=True)
-                                html.Span("{{ nov_view_index_display }}", style="min-width: 3ch; font-size: 0.7em;")
-                                with vuetify.VBtn(icon=True, x_small=True, dense=True, small=True, click=ctrl.nov_next):
-                                    vuetify.VIcon("mdi-chevron-right", small=True)
-                            with html.Div(
-                                v_show=("nov_panel_visible && nov_sphere_svg", False),
-                                style="display: inline-flex; align-items: center; margin-left: 3px; flex-shrink: 0; gap: 2px;",
-                            ):
-                                html.Span("{{ nov_view_side }}", style="font-size: 0.75em; font-weight: 600; min-width: 1ch;")
-                                html.Div(v_html=("nov_sphere_svg", ""), style="flex-shrink: 0;")
                 # Bookmark (saved views / snapshots)
                 with vuetify.VListItem(
                     class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),

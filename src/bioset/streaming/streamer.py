@@ -90,7 +90,10 @@ class VolumeStreamer:
         self._active_channels: set[int] = set() 
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {} 
         
-        self._channel_data_range: Dict[int, Tuple[float, float]] = {}  
+        self._channel_data_range: Dict[int, Tuple[float, float]] = {}
+
+        # NOV box clip: when set, only voxels inside the box (center, length, width, depth) are shown
+        self._nov_box_clip: Optional[Tuple[Tuple[float, float, float], float, float, float]] = None
 
         if self.cfg.channels:
             self._init_low_res_full()
@@ -409,6 +412,25 @@ class VolumeStreamer:
         """Return the set of currently active channel IDs."""
         return self._active_channels.copy()
 
+    def set_nov_box_clip(self, center: Tuple[float, float, float], length: float, width: float, depth: float) -> None:
+        """Clip volume display to inside box (center, length=X, width=Y, depth=Z). Call reload_current_volumes() after to apply."""
+        self._nov_box_clip = (
+            (float(center[0]), float(center[1]), float(center[2])),
+            float(length), float(width), float(depth),
+        )
+
+    def clear_nov_box_clip(self) -> None:
+        """Remove NOV box clip so full volume is shown again. Call reload_current_volumes() after to apply."""
+        self._nov_box_clip = None
+
+    def reload_current_volumes(self) -> None:
+        """Reload and redisplay all active channels with current component/ROI (e.g. after NOV box clip change)."""
+        for ch in list(self._active_channels):
+            st = self.state.get(ch)
+            if st is None:
+                continue
+            self._load_and_display_channel(ch, st.component, st.roi, reset_camera=False)
+
     def _spacing_for_component(self, component: int) -> SpacingConfig:
         scale = float(2 ** component)
         return SpacingConfig(
@@ -533,6 +555,23 @@ class VolumeStreamer:
                 sz=sz * (oz / nz) if nz else sz,
             )
             print(f"[stream] Downsampled volume to ({z},{y},{x}) for OpenGL 2048 limit")
+
+        # Apply NOV box clip: only show voxels inside the box (mask outside to 0)
+        clip = getattr(self, "_nov_box_clip", None)
+        if clip is not None:
+            (cx, cy, cz), length, width, depth = clip
+            hL, hW, hD = length / 2.0, width / 2.0, depth / 2.0
+            ox, oy, oz = origin_xyz[0], origin_xyz[1], origin_xyz[2]
+            sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
+            np_vol_zyx = np_vol_zyx.copy()
+            wz = oz + np.arange(z, dtype=np.float64) * sz
+            wy = oy + np.arange(y, dtype=np.float64) * sy
+            wx = ox + np.arange(x, dtype=np.float64) * sx
+            in_x = (wx >= cx - hL) & (wx <= cx + hL)
+            in_y = (wy >= cy - hW) & (wy <= cy + hW)
+            in_z = (wz >= cz - hD) & (wz <= cz + hD)
+            inside = in_z.reshape(-1, 1, 1) & in_y.reshape(1, -1, 1) & in_x.reshape(1, 1, -1)
+            np_vol_zyx[~inside] = 0
 
         vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)
         vtk_arr.SetName("scalars")
