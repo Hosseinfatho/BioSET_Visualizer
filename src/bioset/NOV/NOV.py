@@ -67,7 +67,7 @@ def box_corners(center: Tuple[float, float, float], length: float, width: float,
         (cx - hL, cy + hW, cz + hD), (cx + hL, cy + hW, cz + hD),
     ]
 
-PIN_RADIUS_FRACTION = 0.09  # pin radius = this fraction of min(L,W,D); half of previous for smaller spheres
+PIN_RADIUS_FRACTION = 0.05  # pin radius = this fraction of min(L,W,D); small spheres at corners
 
 # --- Math helpers ---
 def _rad(d: float) -> float:
@@ -439,31 +439,6 @@ def register_nov_callbacks(ctrl, state, _refs):
             dx = min(max(x, 0), w - 1)
             dy = min(max((1.0 - y) * (h - 1) if 0 <= y <= 1 else h - 1 - y, 0), h - 1)
         return dx, dy
-
-    def display_to_world_xy(renderer, x: float, y: float):
-        dx, dy = display_to_display_coords(renderer, x, y)
-        if dx is None:
-            return None
-        pt = _display_to_world(renderer, dx, dy, 0.5)
-        return pt
-
-    def pick_corner_pin(renderer, x: float, y: float):
-        """Pick at (x,y) client coords; return corner index 0..7 if a pin was hit, else None."""
-        if not _VTK_BOX_AVAILABLE or vtkPropPicker is None:
-            return None
-        dx, dy = display_to_display_coords(renderer, x, y)
-        if dx is None:
-            return None
-        picker = vtkPropPicker()
-        picker.Pick(dx, dy, 0.0, renderer)
-        picked = picker.GetActor()
-        if picked is None:
-            return None
-        pins = _refs.get("_nov_pin_actors") or []
-        for i, (_, pin_actor) in enumerate(pins):
-            if picked == pin_actor:
-                return i
-        return None
 
     def pick_box_or_pin(renderer, x: float, y: float):
         """Pick at (x,y); return 'pin', pin_idx or 'box' or None."""
