@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import math
 import threading
-from typing import Callable, List, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, List, Optional, Tuple
 
 from bioset.streaming.lod import camera_distance_to_focal, choose_component
-
-if TYPE_CHECKING:
-    from bioset.streaming.lod import ROI
 
 # VTK for box overlay and corner pins
 try:
@@ -38,8 +35,8 @@ def _make_nov_no_right_style():
 # --- Constants ---
 # 10 camera angles (theta, phi): 5 front + 5 back; sorted by score in compute_best_views
 NOV_THETA_PHI: List[Tuple[float, float]] = [
-    (90.0, 180.0), (45.0, 135.0), (135.0, 135.0), (45.0, 225.0), (135.0, 225.0),   # front
-    (90.0, 0.0), (45.0, 45.0), (135.0, 45.0), (45.0, -45.0), (135.0, -45.0),       # back
+    (90.0, 180.0), (60.0, 135.0), (120.0, 135.0), (60.0, 225.0), (120.0, 225.0),   # front
+    (90.0, 0.0), (60.0, 45.0), (120.0, 45.0), (60.0, -45.0), (120.0, -45.0),       # back
 ]
 # Smaller mesh = faster ranking (geometry-only); 64–128 is enough for 10 views.
 NOV_MESH_SIZE = 128
@@ -50,22 +47,17 @@ MIN_CAMERA_RADIUS = 10.0  # fallback when view_radius tiny
 # Camera distance = 5 * box diameter for main scene / candidate list (overview)
 CAMERA_DISTANCE_DIAMETER_MULT = 5.0
 # In popup only: camera 1.5x box diameter so view is closer (main scene unchanged)
-POPUP_CAMERA_DISTANCE_DIAMETER_MULT = 1.5
+POPUP_CAMERA_DISTANCE_DIAMETER_MULT = 1.25
 
 
 def min_box_side_for_component(component: int) -> float:
-    """Minimum box (full) side length from LOD: (comp+1)*5."""
+    """Minimum box (full) side length from LOD: (comp+1)*3."""
     return float((component + 1) * 5)
 
 
 def box_circum_radius(length: float, width: float, depth: float) -> float:
     """Distance from box center to corner (used for camera placement)."""
     return 0.5 * math.sqrt(length * length + width * width + depth * depth)
-
-
-def box_diameter(length: float, width: float, depth: float) -> float:
-    """Diameter of sphere circumscribing the box (= 2 * circum_radius)."""
-    return 2.0 * box_circum_radius(length, width, depth)
 
 
 def cube_size_from_circum_radius(radius: float) -> float:
@@ -158,9 +150,6 @@ def bounds_intersect(
     return (x0, x1, y0, y1, z0, z1)
 
 # --- Camera candidates (positions on radius around center) ---
-def get_nov_camera_angles() -> List[Tuple[float, float]]:
-    return list(NOV_THETA_PHI)
-
 def camera_position_at_radius(center: Tuple[float, float, float], radius: float, theta_deg: float, phi_deg: float) -> List[float]:
     """Position at given radius around center (theta, phi in degrees)."""
     th, ph = _rad(theta_deg), _rad(phi_deg)
@@ -307,7 +296,7 @@ def compute_best_views(
         return []
     # When not provided, camera distance = 5 * box diameter = 5 * (2 * view_radius)
     cam_dist = camera_distance if camera_distance is not None and camera_distance >= 1e-6 else CAMERA_DISTANCE_DIAMETER_MULT * (2.0 * view_radius)
-    points = get_nov_camera_angles()
+    points = list(NOV_THETA_PHI)
     raw_scores, candidates = [], []
     for i, (t_deg, p_deg) in enumerate(points):
         pos = camera_position_at_radius(center, cam_dist, t_deg, p_deg)
@@ -334,16 +323,6 @@ def compute_best_views(
         c["score_normalized"] = normed[i] if i < len(normed) else 0.0
     candidates.sort(key=lambda x: x["score_normalized"], reverse=True)
     return candidates
-
-# --- Legacy (optional) ---
-def compute_view_score(visible_roi_area: float, occlusion: float = 0.0, alpha: float = 0.5, beta: float = 0.5) -> float:
-    return max(0.0, alpha * visible_roi_area - beta * occlusion)
-
-def compute_view_score_fraction(visible_roi_area: float, total_xy_area: float) -> float:
-    return float(visible_roi_area) / float(total_xy_area) if total_xy_area > 0 else 0.0
-
-def visible_roi_area_from_roi(roi: "ROI") -> float:
-    return float(max(0, roi.x1 - roi.x0) * max(0, roi.y1 - roi.y0))
 
 # --- SVG: sphere mini-map of camera positions ---
 def build_nov_sphere_svg(sphere_xy: list, current_index: int) -> str:
@@ -491,7 +470,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def apply_cam(cam_dict):
-        """Apply camera to NOV popup view only (never to main scene). Uses 1.5x box diameter so popup is closer; main scene keeps 5x for overview."""
+        """Apply camera to NOV popup view only (never to main scene). Uses POPUP_CAMERA_DISTANCE_DIAMETER_MULT * box diameter; main scene keeps 5x for overview."""
         streamer = _refs.get("streamer")
         if not streamer:
             return
@@ -505,12 +484,12 @@ def register_nov_callbacks(ctrl, state, _refs):
         if fp and len(fp) >= 3:
             cam.SetFocalPoint(fp[0], fp[1], fp[2])
         if pos and len(pos) >= 3 and fp and len(fp) >= 3:
-            # Same direction as candidate, but distance = 2 * box diameter (closer in popup)
+            # Same direction as candidate, but distance = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * box diameter
             L = getattr(state, "nov_box_length", 0.0)
             W = getattr(state, "nov_box_width", 0.0)
             D = getattr(state, "nov_box_depth", 0.0)
             if L > 0 and W > 0 and D > 0:
-                diam = box_diameter(L, W, D)
+                diam = 2.0 * box_circum_radius(L, W, D)
                 popup_dist = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * diam
                 dx = pos[0] - fp[0]
                 dy = pos[1] - fp[1]
@@ -640,7 +619,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             if _refs.get("view"):
                 _refs["view"].update()
             return
-        points = get_nov_camera_angles()
+        points = list(NOV_THETA_PHI)
         r_svg, cx, cy = 22, 28, 28
         sphere_xy = [[round(cx + r_svg * math.sin(_rad(t)) * math.sin(_rad(p)), 1), round(cy - r_svg * math.cos(_rad(t)), 1)] for t, p in points]
         state.nov_candidates = candidates
@@ -899,7 +878,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         cands = getattr(state, "nov_candidates", []) or []
         if not streamer or not cands:
             return
-        comp, _ = get_lod(streamer)
+        comp, active_ch = get_lod(streamer)
         min_side = min_box_side_for_component(comp)
         center = getattr(state, "nov_box_center", None)
         L = max(getattr(state, "nov_box_length", 0.0), min_side)
@@ -908,7 +887,6 @@ def register_nov_callbacks(ctrl, state, _refs):
         if not center or len(center) < 3:
             center = cands[0]["camera"]["focalPoint"]
         circum_r = box_circum_radius(L, W, D)
-        comp, active_ch = get_lod(streamer)
         vol_bounds = streamer._volume_bounds_world(comp)
         nch = max(1, len(active_ch))
         cur = getattr(state, "nov_current_index", 0)
