@@ -5,7 +5,7 @@ import time
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple, Callable
 import numpy as np
 
 import dask.array as da
@@ -94,6 +94,8 @@ class VolumeStreamer:
 
         # NOV box clip: when set, only voxels inside the box are shown in the NOV popup view (main view stays full)
         self._nov_box_clip: Optional[Tuple[Tuple[float, float, float], float, float, float]] = None
+        # NOV scoring: cached 3D arrays for entropy+occlusion scoring (prepare_nov_scoring / sample_nov_ray_channels)
+        self._nov_scoring_cache: Optional[dict] = None
         self.nov_renderer = None
         self.nov_render_window = None
         self.nov_volumes: Dict[int, vtkVolume] = {}
@@ -489,6 +491,148 @@ class VolumeStreamer:
             self.nov_render_window.Render()
         if self.render_callback is not None:
             self.render_callback()
+
+    def prepare_nov_scoring(
+        self,
+        bounds_world: Tuple[float, float, float, float, float, float],
+        component: int,
+    ) -> None:
+        """Load the 3D region given by bounds_world at component for all active channels and cache for sample_nov_ray_channels.
+        World bounds = (xmin, xmax, ymin, ymax, zmin, zmax). Per-channel p10/p99 are computed for normalization."""
+        if not self._active_channels:
+            self._nov_scoring_cache = None
+            return
+        xmin, xmax, ymin, ymax, zmin, zmax = bounds_world
+        if xmax <= xmin or ymax <= ymin or zmax <= zmin:
+            self._nov_scoring_cache = None
+            return
+        spacing = self._spacing_for_component(component)
+        sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
+        z_dim, y_dim, x_dim = self._dims_for_component(component)
+        vx0 = max(0, int(xmin / sx))
+        vx1 = min(x_dim, max(vx0 + 1, int(np.ceil(xmax / sx))))
+        vy0 = max(0, int(ymin / sy))
+        vy1 = min(y_dim, max(vy0 + 1, int(np.ceil(ymax / sy))))
+        vz0 = max(0, int(zmin / sz))
+        vz1 = min(z_dim, max(vz0 + 1, int(np.ceil(zmax / sz))))
+        if vx1 <= vx0 or vy1 <= vy0 or vz1 <= vz0:
+            self._nov_scoring_cache = None
+            return
+        roi = ROI(vx0, vx1, vy0, vy1)
+        channel_ids = sorted(self._active_channels)
+        arrays: Dict[int, np.ndarray] = {}
+        p10_p99: Dict[int, Tuple[float, float]] = {}
+        for ch in channel_ids:
+            try:
+                arr = self._load_channel_data(component, ch, roi)
+            except Exception:
+                continue
+            if arr.size == 0 or arr.ndim != 3:
+                continue
+            # arr shape (Z, Y, X); slice z to [vz0:vz1]
+            arr = np.asarray(arr[vz0:vz1, :, :], dtype=np.float64)
+            if arr.size == 0:
+                continue
+            arrays[ch] = arr
+            flat = arr.ravel()
+            if flat.size > 0:
+                p10, p99 = float(np.percentile(flat, 10)), float(np.percentile(flat, 99))
+                p10_p99[ch] = (p10, p99)
+            else:
+                p10_p99[ch] = (0.0, 1.0)
+        if not arrays:
+            self._nov_scoring_cache = None
+            return
+        self._nov_scoring_cache = {
+            "bounds_world": bounds_world,
+            "component": component,
+            "channel_ids": channel_ids,
+            "arrays": arrays,
+            "voxel_origin": (vx0, vy0, vz0),
+            "spacing": (sx, sy, sz),
+            "p10_p99": p10_p99,
+        }
+
+    @staticmethod
+    def _ray_aabb_tnear_tfar(
+        ray_origin: Tuple[float, float, float],
+        ray_dir: Tuple[float, float, float],
+        bounds: Tuple[float, float, float, float, float, float],
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Ray-AABB intersection. Returns (t_near, t_far) for ray P(t)=ray_origin+t*ray_dir, or (None, None) if no hit."""
+        x0, x1, y0, y1, z0, z1 = bounds
+        ox, oy, oz = ray_origin[0], ray_origin[1], ray_origin[2]
+        dx, dy, dz = ray_dir[0], ray_dir[1], ray_dir[2]
+        eps = 1e-12
+        tnear = -np.inf
+        tfar = np.inf
+        for (lo, hi, o, d) in [(x0, x1, ox, dx), (y0, y1, oy, dy), (z0, z1, oz, dz)]:
+            if abs(d) < eps:
+                if o < lo or o > hi:
+                    return (None, None)
+                continue
+            t0 = (lo - o) / d
+            t1 = (hi - o) / d
+            if t0 > t1:
+                t0, t1 = t1, t0
+            tnear = max(tnear, t0)
+            tfar = min(tfar, t1)
+            if tnear > tfar:
+                return (None, None)
+        if tfar < 0:
+            return (None, None)
+        tnear = max(0.0, tnear)
+        return (tnear, tfar)
+
+    def sample_nov_ray_channels(
+        self,
+        ray_origin: Tuple[float, float, float],
+        ray_dir: Tuple[float, float, float],
+        bounds: Tuple[float, float, float, float, float, float],
+        num_samples: int = 64,
+    ) -> List[float]:
+        """Integrate along ray inside bounds; return per-channel energy (normalized with p10/p99, bottom 10% set to 0).
+        Returns list of length len(active_channels) in same order as prepare_nov_scoring cache."""
+        cache = self._nov_scoring_cache
+        if cache is None or not cache.get("arrays"):
+            channel_ids = sorted(self._active_channels) if self._active_channels else []
+            return [0.0] * len(channel_ids)
+        channel_ids = cache["channel_ids"]
+        arrays = cache["arrays"]
+        vx0, vy0, vz0 = cache["voxel_origin"]
+        sx, sy, sz = cache["spacing"]
+        p10_p99 = cache["p10_p99"]
+        tnear, tfar = self._ray_aabb_tnear_tfar(ray_origin, ray_dir, bounds)
+        if tnear is None or tfar is None or tfar <= tnear:
+            return [0.0] * len(channel_ids)
+        nch = len(channel_ids)
+        energies = [0.0] * nch
+        for k in range(num_samples):
+            t = tnear + (tfar - tnear) * (k + 0.5) / num_samples
+            wx = ray_origin[0] + t * ray_dir[0]
+            wy = ray_origin[1] + t * ray_dir[1]
+            wz = ray_origin[2] + t * ray_dir[2]
+            vx = int((wx / sx) - vx0)
+            vy = int((wy / sy) - vy0)
+            vz = int((wz / sz) - vz0)
+            for c, ch in enumerate(channel_ids):
+                arr = arrays.get(ch)
+                if arr is None:
+                    continue
+                nz, ny, nx = arr.shape
+                if 0 <= vz < nz and 0 <= vy < ny and 0 <= vx < nx:
+                    val = float(arr[vz, vy, vx])
+                    p10, p99 = p10_p99.get(ch, (0.0, 1.0))
+                    if p99 > p10:
+                        norm = (val - p10) / (p99 - p10)
+                        if val <= p10:
+                            norm = 0.0
+                        else:
+                            norm = max(0.0, min(1.0, norm))
+                    else:
+                        norm = 0.0 if val <= p10 else 1.0
+                    energies[c] += norm
+        return energies
 
     def reload_current_volumes(self) -> None:
         """Reload and redisplay all active channels with current component/ROI (e.g. after NOV box clip change)."""

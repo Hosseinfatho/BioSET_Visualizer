@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import List, Tuple, TYPE_CHECKING
+from typing import Callable, List, Optional, Tuple, TYPE_CHECKING
 
 from bioset.streaming.lod import camera_distance_to_focal, choose_component
 
@@ -166,6 +166,17 @@ def view_up_for_angle(theta_deg: float, phi_deg: float) -> List[float]:
     return [vx/n, vy/n, vz/n] if n >= 1e-9 else [0.0, 0.0, 1.0]
 
 # --- View score (plane at focal, perpendicular to camera–focal line) ---
+# Sampler: (ray_origin, ray_dir, bounds) -> List[float] per-channel energy along ray
+SampleChannelsFn = Callable[
+    [
+        Tuple[float, float, float],
+        Tuple[float, float, float],
+        Tuple[float, float, float, float, float, float],
+    ],
+    List[float],
+]
+
+
 def compute_view_score_mesh(
     camera_pos: Tuple[float, float, float],
     center: Tuple[float, float, float],
@@ -177,8 +188,14 @@ def compute_view_score_mesh(
     mesh_size: int = NOV_MESH_SIZE,
     visibility_weight: float = VISIBILITY_WEIGHT,
     occlusion_weight: float = OCCLUSION_WEIGHT,
+    sample_channels_at_world: Optional[SampleChannelsFn] = None,
+    presence_thresh: float = 0.05,
+    lambda_occl: float = OCCLUSION_WEIGHT,
+    eps: float = 1e-12,
 ) -> float:
-    """Score one viewpoint: plane at center (focal), perpendicular to (camera_pos -> center); mesh square has half-size view_radius (total extent 2*view_radius)."""
+    """Score one viewpoint: plane at center (focal), perpendicular to (camera_pos -> center).
+    If sample_channels_at_world is provided, score = entropy - lambda_occl * occlusion_fraction.
+    Otherwise uses legacy geometry-only score (visibility_weight * filled - occlusion_weight * occluded)."""
     if num_channels <= 0:
         return 0.0
     normal = _norm3((center[0]-camera_pos[0], center[1]-camera_pos[1], center[2]-camera_pos[2]))
@@ -190,7 +207,6 @@ def compute_view_score_mesh(
     hull = _hull2(uv)
     if len(hull) < 3:
         return 0.0
-    total = mesh_size * mesh_size
     cell = (2.0 * view_radius) / mesh_size
     umin, umax = min(p[0] for p in hull), max(p[0] for p in hull)
     vmin, vmax = min(p[1] for p in hull), max(p[1] for p in hull)
@@ -198,6 +214,45 @@ def compute_view_score_mesh(
     i1 = min(mesh_size, int((umax + view_radius) / (2.0 * view_radius) * mesh_size) + 1)
     j0 = max(0, int((vmin + view_radius) / (2.0 * view_radius) * mesh_size))
     j1 = min(mesh_size, int((vmax + view_radius) / (2.0 * view_radius) * mesh_size) + 1)
+
+    if sample_channels_at_world is not None:
+        # Channel-aware: entropy + real inter-channel occlusion in projection
+        overlap_pixels = 0
+        total_pixels = 0
+        E_total: List[float] = [0.0] * num_channels
+        cam = (camera_pos[0], camera_pos[1], camera_pos[2])
+        for i in range(i0, i1):
+            for j in range(j0, j1):
+                uc = -view_radius + (i + 0.5) * cell
+                vc = -view_radius + (j + 0.5) * cell
+                if not _in_poly((uc, vc), hull):
+                    continue
+                pt = (
+                    center[0] + uc * u_axis[0] + vc * v_axis[0],
+                    center[1] + uc * u_axis[1] + vc * v_axis[1],
+                    center[2] + uc * u_axis[2] + vc * v_axis[2],
+                )
+                ray_dir = _norm3((pt[0] - cam[0], pt[1] - cam[1], pt[2] - cam[2]))
+                E_ray = sample_channels_at_world(cam, ray_dir, bounds_world)
+                if len(E_ray) != num_channels:
+                    E_ray = list(E_ray) + [0.0] * max(0, num_channels - len(E_ray))
+                present = sum(1 for e in E_ray if e >= presence_thresh)
+                if present >= 2:
+                    overlap_pixels += 1
+                total_pixels += 1
+                for c in range(min(num_channels, len(E_ray))):
+                    E_total[c] += E_ray[c]
+        if total_pixels == 0:
+            return 0.0
+        den = sum(E_total) + eps
+        p = [(e + eps) / (den + num_channels * eps) for e in E_total]
+        H = -sum(pc * math.log(pc + eps) for pc in p)
+        O = overlap_pixels / total_pixels
+        score = H - lambda_occl * O
+        return max(0.0, min(1.0, score))
+
+    # Legacy: geometry-only
+    total = mesh_size * mesh_size
     filled = 0
     for i in range(i0, i1):
         for j in range(j0, j1):
@@ -223,8 +278,12 @@ def compute_best_views(
     num_channels: int,
     *,
     camera_distance: float | None = None,
+    sample_channels_at_world: Optional[SampleChannelsFn] = None,
+    presence_thresh: float = 0.05,
+    lambda_occl: float = OCCLUSION_WEIGHT,
 ) -> List[dict]:
-    """Compute candidate camera positions at camera_distance around center; score by visibility of ROI (view_radius)."""
+    """Compute candidate camera positions at camera_distance around center.
+    If sample_channels_at_world is provided, score by entropy - lambda_occl * occlusion; else geometry-only."""
     if view_radius < 1e-6:
         view_radius = MIN_CAMERA_RADIUS
     roi_bounds = bounds_intersect(volume_bounds, aabb_from_center_radius(center, view_radius))
@@ -236,7 +295,17 @@ def compute_best_views(
     for i, (t_deg, p_deg) in enumerate(points):
         pos = camera_position_at_radius(center, cam_dist, t_deg, p_deg)
         vup = view_up_for_angle(t_deg, p_deg)
-        sc = compute_view_score_mesh((pos[0], pos[1], pos[2]), center, (vup[0], vup[1], vup[2]), view_radius, roi_bounds, num_channels)
+        sc = compute_view_score_mesh(
+            (pos[0], pos[1], pos[2]),
+            center,
+            (vup[0], vup[1], vup[2]),
+            view_radius,
+            roi_bounds,
+            num_channels,
+            sample_channels_at_world=sample_channels_at_world,
+            presence_thresh=presence_thresh,
+            lambda_occl=lambda_occl,
+        )
         raw_scores.append(sc)
         side = "F" if i < 5 else "B"
         candidates.append({
@@ -508,7 +577,20 @@ def register_nov_callbacks(ctrl, state, _refs):
         nch = max(1, len(active_ch))
         circum_r = box_circum_radius(length, width, depth)
         cam_dist = max(CAMERA_DISTANCE_MULTIPLIER * circum_r, circum_r + 1.0)
-        candidates = compute_best_views((center[0], center[1], center[2]), circum_r, vol_bounds, nch, camera_distance=cam_dist)
+        roi_bounds = bounds_intersect(vol_bounds, aabb_from_center_radius(center, circum_r))
+        if getattr(streamer, "prepare_nov_scoring", None) and getattr(streamer, "sample_nov_ray_channels", None):
+            streamer.prepare_nov_scoring(roi_bounds, comp)
+        sample_fn = getattr(streamer, "sample_nov_ray_channels", None)
+        candidates = compute_best_views(
+            (center[0], center[1], center[2]),
+            circum_r,
+            vol_bounds,
+            nch,
+            camera_distance=cam_dist,
+            sample_channels_at_world=sample_fn,
+            presence_thresh=0.05,
+            lambda_occl=OCCLUSION_WEIGHT,
+        )
         if not candidates:
             state.nov_candidates = []
             state.nov_panel_visible = True
@@ -783,7 +865,20 @@ def register_nov_callbacks(ctrl, state, _refs):
         cur = getattr(state, "nov_current_index", 0)
         fixed = cands[cur]["fixed_index"] if cur < len(cands) else 0
         cam_dist = max(CAMERA_DISTANCE_MULTIPLIER * circum_r, circum_r + 1.0)
-        candidates = compute_best_views((center[0], center[1], center[2]), circum_r, vol_bounds, nch, camera_distance=cam_dist)
+        roi_bounds = bounds_intersect(vol_bounds, aabb_from_center_radius(center, circum_r))
+        if getattr(streamer, "prepare_nov_scoring", None) and getattr(streamer, "sample_nov_ray_channels", None):
+            streamer.prepare_nov_scoring(roi_bounds, comp)
+        sample_fn = getattr(streamer, "sample_nov_ray_channels", None)
+        candidates = compute_best_views(
+            (center[0], center[1], center[2]),
+            circum_r,
+            vol_bounds,
+            nch,
+            camera_distance=cam_dist,
+            sample_channels_at_world=sample_fn,
+            presence_thresh=0.05,
+            lambda_occl=OCCLUSION_WEIGHT,
+        )
         if not candidates:
             return
         state.nov_candidates = candidates
