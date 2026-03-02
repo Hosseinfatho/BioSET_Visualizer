@@ -71,7 +71,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             nov_render_window.AddRenderer(nov_renderer)
             nov_render_window.SetOffScreenRendering(1)
             nov_render_window.SetShowWindow(False)
-            nov_render_window.SetSize(320, 200)
+            # Large size so the 3D view fills the popup (client scales to container); ~90% of max popup body
+            nov_render_window.SetSize(1152, 648)
             nov_renderer.SetBackground(colors.GetColor3d(cfg.background))
             nov_interactor = vtkRenderWindowInteractor()
             nov_interactor.SetRenderWindow(nov_render_window)

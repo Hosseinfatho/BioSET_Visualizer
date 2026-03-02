@@ -12,7 +12,7 @@ _STYLE_FULL = (
     "height: 30vh; min-height: 360px; max-height: 720px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
     "box-shadow: 0 4px 20px rgba(0,0,0,0.35); background: #ffffff; border: 1px solid rgba(0,0,0,0.12); "
-    "display: flex; flex-direction: column;"
+    "display: flex; flex-direction: column; "
 )
 _STYLE_MINIMIZED = (
     "position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; "
@@ -32,9 +32,9 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
         v_show=("nov_panel_visible && nov_popup_open", False),
         style=("nov_popup_minimized ? nov_popup_style_minimized : nov_popup_style_full", _STYLE_FULL),
     ):
-        # Header: white background, dark text so NOV next/prev, score, SVG are visible
+        # Header: ~10% height so body can be ~90% for the 3D view
         with html.Div(
-            style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: #ffffff; border-bottom: 1px solid rgba(0,0,0,0.12); flex-shrink: 0; color: #1a1a1a;",
+            style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: #ffffff; border-bottom: 1px solid rgba(0,0,0,0.12); flex: 0 0 auto; height: 10%; min-height: 36px; max-height: 48px; color: #1a1a1a;",
         ):
             with html.Div(style="display: flex; align-items: center; gap: 6px; min-width: 0; color: #1a1a1a;"):
                 with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.nov_prev):
@@ -61,16 +61,16 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                 with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.nov_toggle):
                     vuetify.VIcon("mdi-close", small=True)
 
-        # Body: 3D view (only when not minimized)
+        # Body: 3D view — explicit size so client/server use full area (90% of popup)
         with html.Div(
             v_show=("!nov_popup_minimized", True),
-            style="flex: 1; min-height: 0; position: relative;",
+            style="flex: 1 1 0; min-height: 0; position: relative; width: 100%; height: 27vh; min-height: 280px; display: flex; align-items: stretch; justify-content: stretch;",
         ):
             if nov_render_window is not None:
                 nov_view = vtk.VtkRemoteView(
                     nov_render_window,
                     interactive_ratio=1.0,
-                    style="width: 100%; height: 100%; min-height: 60px;",
+                    style="width: 100%; height: 100%; min-width: 100%; min-height: 100%; display: block;",
                 )
                 if hasattr(ctrl, "set_nov_view"):
                     ctrl.set_nov_view(nov_view)

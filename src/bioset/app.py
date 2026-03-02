@@ -70,11 +70,13 @@ def main():
         import asyncio
 
         async def _check_loaded_data_loop():
-            """Periodically check if background loading has finished and apply to VTK"""
+            """Periodically check if background loading has finished and apply to VTK; also apply NOV progressive resolution updates."""
             while True:
                 await asyncio.sleep(0.1)
                 try:
                     if scene.streamer.check_and_apply_loaded_data():
+                        view.update()
+                    if scene.streamer.process_nov_progressive_queue():
                         view.update()
                 except Exception as e:
                     print(f"[error] check_loaded_data: {e}")

@@ -100,6 +100,8 @@ class VolumeStreamer:
         self.nov_render_window = None
         self.nov_volumes: Dict[int, vtkVolume] = {}
         self.nov_mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
+        # Progressive NOV: queue of (component, {ch_id: (np_arr, roi)}) loaded in background, applied on main thread
+        self._nov_progressive_queue: queue.Queue = queue.Queue()
 
         if self.cfg.channels:
             self._init_low_res_full()
@@ -444,6 +446,12 @@ class VolumeStreamer:
         """Remove all volumes from NOV popup renderer and clear NOV volume caches."""
         if self.nov_renderer is None:
             return
+        # Drain progressive queue so no stale updates apply after popup is closed
+        try:
+            while True:
+                self._nov_progressive_queue.get_nowait()
+        except queue.Empty:
+            pass
         for ch, vol in list(self.nov_volumes.items()):
             if self.nov_renderer.HasViewProp(vol):
                 self.nov_renderer.RemoveVolume(vol)
@@ -454,22 +462,45 @@ class VolumeStreamer:
         if self.render_callback is not None:
             self.render_callback()
 
-    def sync_nov_volumes(self) -> None:
-        """Update NOV popup volumes with clipped data from current state. No-op if no nov_renderer or no clip."""
+    def _nov_box_roi_at_component(self, component: int) -> Optional[ROI]:
+        """Voxel ROI (x0, x1, y0, y1) that contains the NOV box in world space at the given component. Adds 2-voxel margin."""
+        clip = self._nov_box_clip
+        if not clip:
+            return None
+        (cx, cy, cz), length, width, depth = clip
+        hL, hW, hD = length / 2.0, width / 2.0, depth / 2.0
+        xmin_w = cx - hL
+        xmax_w = cx + hL
+        ymin_w = cy - hW
+        ymax_w = cy + hW
+        spacing = self._spacing_for_component(component)
+        sx, sy = spacing.sx, spacing.sy
+        z_dim, y_dim, x_dim = self._dims_for_component(component)
+        margin = 2
+        x0 = max(0, int(np.floor(xmin_w / sx)) - margin)
+        x1 = min(x_dim, int(np.ceil(xmax_w / sx)) + margin)
+        y0 = max(0, int(np.floor(ymin_w / sy)) - margin)
+        y1 = min(y_dim, int(np.ceil(ymax_w / sy)) + margin)
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return ROI(x0, x1, y0, y1)
+
+    def sync_nov_volumes_at_component(self, component: int) -> None:
+        """Update NOV popup volumes with clipped data at exactly the given component (for one resolution level)."""
         if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
             return
         for ch in list(self._active_channels):
-            st = self.state.get(ch)
-            if st is None:
+            roi_nov = self._nov_box_roi_at_component(component)
+            if roi_nov is None:
                 continue
             try:
-                np_arr = self._load_channel_data(st.component, ch, st.roi)
+                np_arr = self._load_channel_data(component, ch, roi_nov)
             except Exception:
                 continue
             if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
                 continue
-            spacing = self._spacing_for_component(st.component)
-            origin_xyz = (st.roi.x0 * spacing.sx, st.roi.y0 * spacing.sy, 0.0)
+            spacing = self._spacing_for_component(component)
+            origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
             try:
                 img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
             except ValueError:
@@ -491,6 +522,71 @@ class VolumeStreamer:
             self.nov_render_window.Render()
         if self.render_callback is not None:
             self.render_callback()
+
+    def sync_nov_volumes(self) -> None:
+        """Update NOV popup: show first frame at coarsest level for speed, then progressively load comp-1 down to min_component."""
+        if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
+            return
+        # First frame: show at coarsest (max_component) so popup appears immediately
+        start_comp = self.cfg.max_component
+        self.sync_nov_volumes_at_component(start_comp)
+        # Queue progressive load from max_component down to min_component (smooth upgrade to highest res)
+        VolumeStreamer._executor.submit(self._run_nov_progressive_load)
+
+    def _run_nov_progressive_load(self) -> None:
+        """Background thread: load NOV box at each component from coarse to fine and put in queue for main thread."""
+        if not self._nov_box_clip or not self._active_channels:
+            return
+        try:
+            for comp in range(self.cfg.max_component, self.cfg.min_component - 1, -1):
+                roi_nov = self._nov_box_roi_at_component(comp)
+                if roi_nov is None:
+                    continue
+                channel_arrays: Dict[int, Tuple[np.ndarray, ROI]] = {}
+                for ch in list(self._active_channels):
+                    try:
+                        np_arr = self._load_channel_data(comp, ch, roi_nov)
+                        if np_arr.size > 0 and all(s > 0 for s in np_arr.shape):
+                            channel_arrays[ch] = (np_arr, roi_nov)
+                    except Exception:
+                        continue
+                if channel_arrays:
+                    self._nov_progressive_queue.put((comp, channel_arrays))
+        except Exception as e:
+            print(f"[nov] progressive load error: {e}")
+
+    def process_nov_progressive_queue(self) -> bool:
+        """Main thread: apply one resolution level from the queue (coarse→fine). Returns True if view was updated."""
+        try:
+            item = self._nov_progressive_queue.get_nowait()
+        except queue.Empty:
+            return False
+        if not self.nov_renderer or not self._nov_box_clip:
+            return False
+        comp, channel_arrays = item
+        for ch, (np_arr, roi_nov) in channel_arrays.items():
+            try:
+                spacing = self._spacing_for_component(comp)
+                origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
+                img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
+                vol, mapper = self._get_or_create_nov_volume(ch)
+                mapper.SetInputData(img)
+                mapper.Modified()
+                if ch in self._channel_tfs:
+                    color_tf, opacity_tf = self._channel_tfs[ch]
+                    prop = vol.GetProperty()
+                    prop.SetColor(color_tf)
+                    prop.SetScalarOpacity(opacity_tf)
+                    prop.SetScalarOpacityUnitDistance(
+                        max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+                if not self.nov_renderer.HasViewProp(vol):
+                    self.nov_renderer.AddVolume(vol)
+            except Exception:
+                continue
+        self.nov_renderer.ResetCameraClippingRange()
+        if self.nov_render_window:
+            self.nov_render_window.Render()
+        return True
 
     def prepare_nov_scoring(
         self,
