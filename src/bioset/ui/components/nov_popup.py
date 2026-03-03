@@ -61,53 +61,21 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                 with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.nov_toggle):
                     vuetify.VIcon("mdi-close", small=True)
 
-        # Body: left = segmentation panel, right = 3D view
+        # Body: 3D view — explicit size so client/server use full area (90% of popup)
         with html.Div(
             v_show=("!nov_popup_minimized", True),
-            style="flex: 1 1 0; min-height: 0; width: 100%; height: 27vh; min-height: 280px; display: flex; flex-direction: row; align-items: stretch;",
+            style="flex: 1 1 0; min-height: 0; position: relative; width: 100%; height: 27vh; min-height: 280px; display: flex; align-items: stretch; justify-content: stretch;",
         ):
-            # Left: Segmentation — per-channel intensity filter to show particle borders
-            with html.Div(
-                style="width: 200px; min-width: 200px; max-width: 220px; background: #1e1e1e; border-right: 1px solid rgba(255,255,255,0.12); padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;",
-            ):
-                html.Span("Segmentation", style="font-size: 0.7rem; font-weight: 600; color: rgba(255,255,255,0.9); display: block; margin-bottom: 4px;")
-                with html.Div(
-                    v_for="channel in channels.filter(c => active_channels.includes(c.id))",
-                    key="channel.id",
-                    style="display: flex; flex-direction: column; gap: 2px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.08);",
-                ):
-                    with html.Div(style="display: flex; align-items: center; gap: 6px; min-height: 24px;"):
-                        html.Div(
-                            style=("`width: 10px; height: 10px; border-radius: 50%; background: ${channel.color || '#fff'}; flex-shrink: 0;`",),
-                        )
-                        html.Span(
-                            "{{ channel.name }}",
-                            style="font-size: 0.65rem; color: rgba(255,255,255,0.85); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                        )
-                    with html.Div(style="padding-left: 16px;"):
-                        vuetify.VRangeSlider(
-                            dense=True,
-                            hide_details=True,
-                            min=0,
-                            max=100,
-                            value=("nov_segment_ranges[String(channel.id)] || [0, 100]", [0, 100]),
-                            style="max-width: 100%;",
-                            __events=["end", "input"],
-                            end=(ctrl.on_nov_segment_range_change, "[channel.id, $event]"),
-                            input=(ctrl.on_nov_segment_range_change, "[channel.id, $event]"),
-                        )
-            # Right: 3D view
-            with html.Div(style="flex: 1 1 0; min-width: 0; position: relative;"):
-                if nov_render_window is not None:
-                    nov_view = vtk.VtkRemoteView(
-                        nov_render_window,
-                        interactive_ratio=1.0,
-                        style="width: 100%; height: 100%; min-width: 100%; min-height: 100%; display: block;",
-                    )
-                    if hasattr(ctrl, "set_nov_view"):
-                        ctrl.set_nov_view(nov_view)
-                else:
-                    html.Div(
-                        "NOV view",
-                        style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: rgba(255,255,255,0.5);",
-                    )
+            if nov_render_window is not None:
+                nov_view = vtk.VtkRemoteView(
+                    nov_render_window,
+                    interactive_ratio=1.0,
+                    style="width: 100%; height: 100%; min-width: 100%; min-height: 100%; display: block;",
+                )
+                if hasattr(ctrl, "set_nov_view"):
+                    ctrl.set_nov_view(nov_view)
+            else:
+                html.Div(
+                    "NOV view",
+                    style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: rgba(255,255,255,0.5);",
+                )

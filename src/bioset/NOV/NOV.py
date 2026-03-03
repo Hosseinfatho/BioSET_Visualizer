@@ -948,18 +948,6 @@ def register_nov_callbacks(ctrl, state, _refs):
                 streamer.set_nov_box_clip((center[0], center[1], center[2]), L, W, D)
             if getattr(streamer, "sync_nov_volumes", None):
                 streamer.sync_nov_volumes()
-        channels = getattr(state, "channels", []) or []
-        active = getattr(state, "active_channels", []) or []
-        seg = dict(getattr(state, "nov_segment_ranges", None) or {})
-        for ch in channels:
-            cid = ch.get("id")
-            if cid is not None and cid in active:
-                r = ch.get("range", [0, 100])
-                if isinstance(r, (list, tuple)) and len(r) >= 2:
-                    seg[str(cid)] = [float(r[0]), float(r[1])]
-                else:
-                    seg[str(cid)] = [0, 100]
-        state.nov_segment_ranges = seg
         state.nov_popup_open = True
         if _refs.get("nov_view"):
             _refs["nov_view"].update()

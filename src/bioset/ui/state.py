@@ -160,8 +160,6 @@ def init_state(state):
     state.setdefault("nov_view_side", "")  # "F" or "B"
     state.setdefault("nov_popup_minimized", False)  # minimize NOV popup (header only)
     state.setdefault("nov_popup_open", False)  # True after "Set" → popup visible; "Reset" closes it
-    # NOV popup segmentation: per-channel intensity range [min%, max%] for border display; key = channel id (string)
-    state.setdefault("nov_segment_ranges", {})
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
