@@ -696,9 +696,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     prop = vol.GetProperty()
                     prop.SetColor(color_tf)
                     prop.SetScalarOpacity(opacity_tf)
+
+            if hasattr(streamer, "apply_main_channel_to_nov"):
+                streamer.apply_main_channel_to_nov(channel_id)
         
         if _refs["view"]:
             _refs["view"].update()
+        nov_view = _refs.get("nov_view")
+        if nov_view and hasattr(nov_view, "update"):
+            nov_view.update()
             
     def on_channel_range_change(channel_id, range_value):
         """Handle intensity range slider change."""
@@ -715,9 +721,39 @@ def register_callbacks(ctrl, state, view, streamer=None):
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
             streamer.update_channel_intensity_range(channel_id, tuple(range_value))
+            if hasattr(streamer, "apply_main_channel_to_nov"):
+                streamer.apply_main_channel_to_nov(channel_id)
+            key = str(channel_id)
+            current = getattr(state, "nov_segment_ranges", None) or {}
+            state.nov_segment_ranges = {**current, key: list(range_value)}
+            if hasattr(streamer, "update_nov_segment_borders"):
+                streamer.update_nov_segment_borders(channel_id, tuple(range_value))
         
         if _refs["view"]:
             _refs["view"].update()
+        nov_view = _refs.get("nov_view")
+        if nov_view and hasattr(nov_view, "update"):
+            nov_view.update()
+
+    def on_nov_segment_range_change(channel_id, range_value):
+        """Update NOV popup segmentation range for a channel and redraw borders."""
+        try:
+            r = list(range_value) if range_value is not None else [0, 100]
+            if len(r) < 2:
+                r = [0, 100]
+        except (TypeError, ValueError):
+            r = [0, 100]
+        key = str(channel_id)
+        current = getattr(state, "nov_segment_ranges", None) or {}
+        state.nov_segment_ranges = {**current, key: r}
+        streamer = _refs.get("streamer")
+        if streamer and hasattr(streamer, "update_nov_segment_borders"):
+            streamer.update_nov_segment_borders(channel_id, (float(r[0]), float(r[1])))
+        nov_view = _refs.get("nov_view")
+        if nov_view and hasattr(nov_view, "update"):
+            nov_view.update()
+
+    ctrl.on_nov_segment_range_change = on_nov_segment_range_change
 
     _refs["biomni_client"] = None
     

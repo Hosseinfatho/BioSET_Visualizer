@@ -11,15 +11,22 @@ import numpy as np
 import dask.array as da
 
 from vtkmodules.vtkCommonDataModel import vtkImageData
-from vtkmodules.util.numpy_support import numpy_to_vtk
+from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 
 from .lod import ROI, camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
 from .zarr_source import ZarrMultiscaleSource
 from ..scene.volumes import SpacingConfig, color_name_to_rgb, build_histogram_tf, build_tf_with_range
 
 from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
-from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
+from vtkmodules.vtkRenderingCore import (
+    vtkActor,
+    vtkColorTransferFunction,
+    vtkPolyDataMapper,
+    vtkVolume,
+    vtkVolumeProperty,
+)
 from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
+from vtkmodules.vtkFiltersCore import vtkFeatureEdges, vtkMarchingCubes
 
 
 @dataclass
@@ -100,6 +107,7 @@ class VolumeStreamer:
         self.nov_render_window = None
         self.nov_volumes: Dict[int, vtkVolume] = {}
         self.nov_mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
+        self._nov_segment_actors: Dict[int, vtkActor] = {}  # border/contour actors per channel for NOV popup
         # Progressive NOV: queue of (component, {ch_id: (np_arr, roi)}) loaded in background, applied on main thread
         self._nov_progressive_queue: queue.Queue = queue.Queue()
 
@@ -457,6 +465,10 @@ class VolumeStreamer:
                 self.nov_renderer.RemoveVolume(vol)
         self.nov_volumes.clear()
         self.nov_mappers.clear()
+        for ac in list(self._nov_segment_actors.values()):
+            if self.nov_renderer.HasViewProp(ac):
+                self.nov_renderer.RemoveActor(ac)
+        self._nov_segment_actors.clear()
         if self.nov_render_window:
             self.nov_render_window.Render()
         if self.render_callback is not None:
@@ -489,49 +501,60 @@ class VolumeStreamer:
         """Update NOV popup volumes with clipped data at exactly the given component (for one resolution level)."""
         if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
             return
-        for ch in list(self._active_channels):
-            roi_nov = self._nov_box_roi_at_component(component)
-            if roi_nov is None:
-                continue
-            try:
-                np_arr = self._load_channel_data(component, ch, roi_nov)
-            except Exception:
-                continue
-            if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
-                continue
-            spacing = self._spacing_for_component(component)
-            origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
-            try:
-                img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
-            except ValueError:
-                continue
-            vol, mapper = self._get_or_create_nov_volume(ch)
-            mapper.SetInputData(img)
-            mapper.Modified()
-            if ch in self._channel_tfs:
-                color_tf, opacity_tf = self._channel_tfs[ch]
-                prop = vol.GetProperty()
-                prop.SetColor(color_tf)
-                prop.SetScalarOpacity(opacity_tf)
-                prop.SetScalarOpacityUnitDistance(
-                    max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
-            if not self.nov_renderer.HasViewProp(vol):
-                self.nov_renderer.AddVolume(vol)
-        self.nov_renderer.ResetCameraClippingRange()
-        if self.nov_render_window:
-            self.nov_render_window.Render()
-        if self.render_callback is not None:
-            self.render_callback()
+        try:
+            for ch in list(self._active_channels):
+                roi_nov = self._nov_box_roi_at_component(component)
+                if roi_nov is None:
+                    continue
+                try:
+                    np_arr = self._load_channel_data(component, ch, roi_nov)
+                except Exception:
+                    continue
+                if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
+                    continue
+                spacing = self._spacing_for_component(component)
+                origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
+                try:
+                    img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
+                except ValueError:
+                    continue
+                try:
+                    vol, mapper = self._get_or_create_nov_volume(ch)
+                    mapper.SetInputData(img)
+                    mapper.Modified()
+                    if ch in self._channel_tfs:
+                        color_tf, opacity_tf = self._channel_tfs[ch]
+                        prop = vol.GetProperty()
+                        prop.SetColor(color_tf)
+                        prop.SetScalarOpacity(opacity_tf)
+                        prop.SetScalarOpacityUnitDistance(
+                            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+                    if not self.nov_renderer.HasViewProp(vol):
+                        self.nov_renderer.AddVolume(vol)
+                except Exception:
+                    continue
+            self.nov_renderer.ResetCameraClippingRange()
+            if self.nov_render_window:
+                self.nov_render_window.Render()
+            if self.render_callback is not None:
+                self.render_callback()
+        except Exception as e:
+            import traceback
+            print(f"[nov] sync_nov_volumes_at_component error: {e}")
+            traceback.print_exc()
 
     def sync_nov_volumes(self) -> None:
         """Update NOV popup: show first frame at coarsest level for speed, then progressively load comp-1 down to min_component."""
         if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
             return
-        # First frame: show at coarsest (max_component) so popup appears immediately
-        start_comp = self.cfg.max_component
-        self.sync_nov_volumes_at_component(start_comp)
-        # Queue progressive load from max_component down to min_component (smooth upgrade to highest res)
-        VolumeStreamer._executor.submit(self._run_nov_progressive_load)
+        try:
+            start_comp = self.cfg.max_component
+            self.sync_nov_volumes_at_component(start_comp)
+            VolumeStreamer._executor.submit(self._run_nov_progressive_load)
+        except Exception as e:
+            import traceback
+            print(f"[nov] sync_nov_volumes error: {e}")
+            traceback.print_exc()
 
     def _run_nov_progressive_load(self) -> None:
         """Background thread: load NOV box at each component from coarse to fine and put in queue for main thread."""
@@ -553,7 +576,9 @@ class VolumeStreamer:
                 if channel_arrays:
                     self._nov_progressive_queue.put((comp, channel_arrays))
         except Exception as e:
+            import traceback
             print(f"[nov] progressive load error: {e}")
+            traceback.print_exc()
 
     def process_nov_progressive_queue(self) -> bool:
         """Main thread: apply one resolution level from the queue (coarse→fine). Returns True if view was updated."""
@@ -563,30 +588,136 @@ class VolumeStreamer:
             return False
         if not self.nov_renderer or not self._nov_box_clip:
             return False
-        comp, channel_arrays = item
-        for ch, (np_arr, roi_nov) in channel_arrays.items():
-            try:
-                spacing = self._spacing_for_component(comp)
-                origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
-                img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
-                vol, mapper = self._get_or_create_nov_volume(ch)
-                mapper.SetInputData(img)
-                mapper.Modified()
-                if ch in self._channel_tfs:
-                    color_tf, opacity_tf = self._channel_tfs[ch]
-                    prop = vol.GetProperty()
-                    prop.SetColor(color_tf)
-                    prop.SetScalarOpacity(opacity_tf)
+        try:
+            comp, channel_arrays = item
+            for ch, (np_arr, roi_nov) in channel_arrays.items():
+                try:
+                    spacing = self._spacing_for_component(comp)
+                    origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
+                    img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
+                    vol, mapper = self._get_or_create_nov_volume(ch)
+                    mapper.SetInputData(img)
+                    mapper.Modified()
+                    if ch in self._channel_tfs:
+                        color_tf, opacity_tf = self._channel_tfs[ch]
+                        prop = vol.GetProperty()
+                        prop.SetColor(color_tf)
+                        prop.SetScalarOpacity(opacity_tf)
+                        prop.SetScalarOpacityUnitDistance(
+                            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+                    if not self.nov_renderer.HasViewProp(vol):
+                        self.nov_renderer.AddVolume(vol)
+                except Exception:
+                    continue
+            self.nov_renderer.ResetCameraClippingRange()
+            if self.nov_render_window:
+                self.nov_render_window.Render()
+            return True
+        except Exception as e:
+            import traceback
+            print(f"[nov] process_nov_progressive_queue error: {e}")
+            traceback.print_exc()
+            return False
+
+    def update_nov_segment_borders(self, channel_id: int, range_pct: Tuple[float, float]) -> None:
+        """Update segmentation borders in NOV popup: threshold channel by intensity range [min%, max%], show boundary in channel color."""
+        if self.nov_renderer is None or channel_id not in self.nov_mappers:
+            return
+        try:
+            # Remove previous border actor for this channel
+            if channel_id in self._nov_segment_actors:
+                old = self._nov_segment_actors.pop(channel_id)
+                if self.nov_renderer.HasViewProp(old):
+                    self.nov_renderer.RemoveActor(old)
+
+            mapper = self.nov_mappers[channel_id]
+            img_in = mapper.GetInput()
+            if img_in is None:
+                return
+            dims = img_in.GetDimensions()
+            if dims[0] < 2 or dims[1] < 2 or dims[2] < 2:
+                return
+            scalars = img_in.GetPointData().GetScalars()
+            if scalars is None:
+                return
+            arr = vtk_to_numpy(scalars).reshape((dims[0], dims[1], dims[2]))
+            r0, r1 = self._channel_data_range.get(channel_id, (float(np.min(arr)), float(np.max(arr))))
+            if r1 <= r0:
+                r1 = r0 + 1.0
+            plo, phi = max(0.0, min(100.0, range_pct[0])), max(0.0, min(100.0, range_pct[1]))
+            low = r0 + (r1 - r0) * (plo / 100.0)
+            high = r0 + (r1 - r0) * (phi / 100.0)
+            mask = ((arr >= low) & (arr <= high)).astype(np.uint8)
+            mask_flat = np.ravel(mask)
+
+            mask_img = vtkImageData()
+            mask_img.SetDimensions(dims)
+            mask_img.SetSpacing(img_in.GetSpacing())
+            mask_img.SetOrigin(img_in.GetOrigin())
+            vtk_arr = numpy_to_vtk(mask_flat, deep=True, array_type=0x0C)
+            mask_img.GetPointData().SetScalars(vtk_arr)
+
+            mc = vtkMarchingCubes()
+            mc.SetInputData(mask_img)
+            mc.SetValue(0, 0.5)
+            mc.Update()
+            fe = vtkFeatureEdges()
+            fe.SetInputConnection(mc.GetOutputPort())
+            fe.BoundaryEdgesOn()
+            fe.FeatureEdgesOff()
+            fe.ManifoldEdgesOff()
+            fe.Update()
+            out = fe.GetOutput()
+            if out is None or out.GetNumberOfPoints() == 0:
+                if self.nov_render_window:
+                    self.nov_render_window.Render()
+                return
+            pm = vtkPolyDataMapper()
+            pm.SetInputConnection(fe.GetOutputPort())
+            ac = vtkActor()
+            ac.SetMapper(pm)
+            rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
+            ac.GetProperty().SetColor(rgb[0], rgb[1], rgb[2])
+            ac.GetProperty().SetLineWidth(1.5)
+            self.nov_renderer.AddActor(ac)
+            self._nov_segment_actors[channel_id] = ac
+            self.nov_renderer.ResetCameraClippingRange()
+            if self.nov_render_window:
+                self.nov_render_window.Render()
+            if self.render_callback:
+                self.render_callback()
+        except Exception as e:
+            import traceback
+            print(f"[nov] update_nov_segment_borders error: {e}")
+            traceback.print_exc()
+
+    def apply_main_channel_to_nov(self, channel_id: int) -> None:
+        """Apply current main-scene channel color and TF to NOV popup volume and segment border for this channel."""
+        if self.nov_renderer is None:
+            return
+        try:
+            if channel_id in self.nov_volumes and channel_id in self._channel_tfs:
+                vol = self.nov_volumes[channel_id]
+                color_tf, opacity_tf = self._channel_tfs[channel_id]
+                prop = vol.GetProperty()
+                prop.SetColor(color_tf)
+                prop.SetScalarOpacity(opacity_tf)
+                if channel_id in self.nov_mappers and self.nov_mappers[channel_id].GetInput():
+                    spacing = self.nov_mappers[channel_id].GetInput().GetSpacing()
                     prop.SetScalarOpacityUnitDistance(
-                        max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
-                if not self.nov_renderer.HasViewProp(vol):
-                    self.nov_renderer.AddVolume(vol)
-            except Exception:
-                continue
-        self.nov_renderer.ResetCameraClippingRange()
-        if self.nov_render_window:
-            self.nov_render_window.Render()
-        return True
+                        max(1e-6, 1.0 * min(spacing[0], spacing[1], spacing[2])))
+            if channel_id in self._nov_segment_actors:
+                ac = self._nov_segment_actors[channel_id]
+                rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
+                ac.GetProperty().SetColor(rgb[0], rgb[1], rgb[2])
+            if self.nov_render_window:
+                self.nov_render_window.Render()
+            if self.render_callback:
+                self.render_callback()
+        except Exception as e:
+            import traceback
+            print(f"[nov] apply_main_channel_to_nov error: {e}")
+            traceback.print_exc()
 
     def prepare_nov_scoring(
         self,
