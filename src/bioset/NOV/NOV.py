@@ -689,13 +689,18 @@ def register_nov_callbacks(ctrl, state, _refs):
                         cam_z = float(pos[2])
                     except (TypeError, ValueError):
                         pass
-        state.nov_drawing_box = True
-        state.nov_box_center = focal
+        data_center, b = _volume_center_bounds(streamer)
         comp, _ = get_lod(streamer)
         min_side = min_box_side_for_component(comp)
+        zmin, zmax = b[4], b[5]
+        data_depth = max(zmax - zmin, min_side)
         init_r = max(0.05 * abs(cam_z), math.sqrt(3.0) * min_side * 0.5)
         init_side = max(cube_size_from_circum_radius(init_r), min_side)
-        state.nov_box_length = state.nov_box_width = state.nov_box_depth = init_side
+        state.nov_drawing_box = True
+        state.nov_box_center = [focal[0], focal[1], (zmin + zmax) * 0.5]
+        state.nov_box_length = init_side
+        state.nov_box_width = init_side
+        state.nov_box_depth = data_depth
         _update_nov_box(state.nov_box_center, state.nov_box_length, state.nov_box_width, state.nov_box_depth, True)
         # Run NOV immediately so 1/10 and sphere SVG appear without needing to drag a corner first
         run_nov_for_box(state.nov_box_center, state.nov_box_length, state.nov_box_width, state.nov_box_depth)
