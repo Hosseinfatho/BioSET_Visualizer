@@ -45,6 +45,26 @@ MIN_CAMERA_RADIUS = 10.0  # fallback when view_radius tiny
 CAMERA_DISTANCE_DIAMETER_MULT = 5.0
 # In popup only: camera 1.5x box diameter so view is closer (main scene unchanged)
 POPUP_CAMERA_DISTANCE_DIAMETER_MULT = 1.25
+# Minimum angular separation (degrees) between top-10 views so they are distinct
+MIN_TOP10_ANGULAR_SEPARATION_DEG = 30.0
+
+
+def _direction_vector_deg(t: float, p: float) -> Tuple[float, float, float]:
+    """Unit direction vector from sphere center for (t, p) in degrees (same convention as _camera_pos_sphere)."""
+    th, ph = _rad(t), _rad(p)
+    dx = math.sin(th) * math.sin(ph)
+    dy = math.cos(th)
+    dz = -math.sin(th) * math.cos(ph)
+    return (dx, dy, dz)
+
+
+def _angular_distance_deg(t1: float, p1: float, t2: float, p2: float) -> float:
+    """Angle in degrees between two viewing directions (t, p) in degrees."""
+    u = _direction_vector_deg(t1, p1)
+    v = _direction_vector_deg(t2, p2)
+    dot = u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+    dot = max(-1.0, min(1.0, dot))
+    return math.degrees(math.acos(dot))
 
 
 def min_box_side_for_component(component: int) -> float:
@@ -256,14 +276,14 @@ def compute_top10_views_by_entropy(
     sample_visibility_fn: Optional[SampleVisibilityFn] = None,
     presence_thresh: float = 0.05,
     mesh_size: int = 64,
-    top_k: int = 1,
+    top_k: int = 10,
     entropy_weight: float = 1.0,
     min_intensity_weight: float = 0.3,
     eps: float = 1e-12,
 ) -> List[dict]:
     """Compute top-k views by maximum entropy H(O|v) and minimum max_o p(o|v) (avoid single-channel dominance).
-    Samples directions on the sphere, scores each view, sorts by score, returns top_k candidates.
-    Returns list of dicts with camera (position, focalPoint, viewUp), fixed_index, score_normalized."""
+    Views are sorted descending by score. Each view is at least MIN_TOP10_ANGULAR_SEPARATION_DEG (30°) from the others.
+    Returns list of dicts with camera (position, focalPoint, viewUp), fixed_index, score_normalized (first=best score)."""
     if not channel_ids or sample_visibility_fn is None:
         return []
     n_objects = len(channel_ids)
@@ -293,18 +313,27 @@ def compute_top10_views_by_entropy(
         score = entropy_weight * H - min_intensity_weight * max_p
         scored.append((score, H, max_p, vis, idx))
     scored.sort(key=lambda x: x[0], reverse=True)
-    candidates = []
-    for rank, (score, H, max_p, vis, idx) in enumerate(scored[:top_k]):
+    # Greedily pick up to top_k views with at least MIN_TOP10_ANGULAR_SEPARATION_DEG between each pair
+    selected_dirs: List[Tuple[float, float]] = []
+    candidates: List[dict] = []
+    for score, H, max_p, vis, idx in scored:
+        if len(candidates) >= top_k:
+            break
         t, p = directions[idx]
-        pos = _camera_pos_sphere(center, cam_dist, t, p)
-        vup = _view_up_sphere(t, p)
-        norm_score = max(0.0, min(1.0, (H + 1.0 - max_p) / 2.0)) if scored else 0.0
-        candidates.append({
-            "camera": {"position": pos, "focalPoint": list(center), "viewUp": vup},
-            "score_raw": score,
-            "fixed_index": rank,
-            "score_normalized": norm_score,
-        })
+        if all(
+            _angular_distance_deg(t, p, td, pd) >= MIN_TOP10_ANGULAR_SEPARATION_DEG
+            for (td, pd) in selected_dirs
+        ):
+            selected_dirs.append((t, p))
+            pos = _camera_pos_sphere(center, cam_dist, t, p)
+            vup = _view_up_sphere(t, p)
+            norm_score = max(0.0, min(1.0, (H + 1.0 - max_p) / 2.0)) if scored else 0.0
+            candidates.append({
+                "camera": {"position": pos, "focalPoint": list(center), "viewUp": vup},
+                "score_raw": score,
+                "fixed_index": len(candidates),
+                "score_normalized": norm_score,
+            })
     return candidates
 
 
@@ -626,6 +655,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             streamer.set_nov_box_clip((center[0], center[1], center[2]), length, width, depth)
         if not compute_entropy:
             state.nov_candidates = []
+            state.nov_has_results = False
             state.nov_sphere_xy = []
             state.nov_sphere_svg = ""
             state.nov_view_index_display = "—"
@@ -641,6 +671,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             return
         if not active_list:
             state.nov_candidates = []
+            state.nov_has_results = False
             state.nov_sphere_xy = []
             state.nov_sphere_svg = ""
             state.nov_view_index_display = ""
@@ -671,10 +702,11 @@ def register_nov_callbacks(ctrl, state, _refs):
             sample_visibility_fn=sample_vis,
             presence_thresh=presence_thresh,
             mesh_size=64,
-            top_k=1,
+            top_k=10,
         )
         if not candidates:
             state.nov_candidates = []
+            state.nov_has_results = False
             state.nov_sphere_xy = []
             state.nov_sphere_svg = ""
             state.nov_view_index_display = ""
@@ -685,6 +717,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         center_t = (center[0], center[1], center[2])
         sphere_xy = sphere_xy_from_camera_positions(center_t, [c["camera"]["position"] for c in candidates])
         state.nov_candidates = candidates
+        state.nov_has_results = True
         state.nov_current_index = 0
         state.nov_sphere_xy = sphere_xy
         state.nov_sphere_svg = build_nov_sphere_svg(sphere_xy, 0)
@@ -702,6 +735,7 @@ def register_nov_callbacks(ctrl, state, _refs):
 
     def _clear_nov_panel_state():
         state.nov_candidates = []
+        state.nov_has_results = False
         state.nov_current_index = 0
         state.nov_view_index_display = ""
         state.nov_score_display = 0.0
@@ -978,7 +1012,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             sample_visibility_fn=sample_vis,
             presence_thresh=presence_thresh,
             mesh_size=64,
-            top_k=1,
+            top_k=10,
         )
         if not candidates:
             return
@@ -1063,12 +1097,13 @@ def register_nov_callbacks(ctrl, state, _refs):
             sample_visibility_fn=sample_vis,
             presence_thresh=presence_thresh,
             mesh_size=64,
-            top_k=1,
+            top_k=10,
         )
         if candidates:
             center_t = (center[0], center[1], center[2])
             sphere_xy = sphere_xy_from_camera_positions(center_t, [c["camera"]["position"] for c in candidates])
             state.nov_candidates = candidates
+            state.nov_has_results = True
             state.nov_current_index = 0
             state.nov_sphere_xy = sphere_xy
             state.nov_sphere_svg = build_nov_sphere_svg(sphere_xy, 0)

@@ -160,6 +160,7 @@ def init_state(state):
     state.setdefault("nov_popup_minimized", False)  # minimize NOV popup (header only)
     state.setdefault("nov_popup_open", False)  # True after "Set" → popup visible; "Reset" closes it
     state.setdefault("nov_selected_channels", [])  # Channel ids selected in NOV popup for top-10 entropy views
+    state.setdefault("nov_has_results", False)  # True after Set computed candidates; drives single Set vs Reset button
     state.setdefault("nov_active_channel_items", [])  # [{id, name, color}] for active channels only (same as main scene)
     state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
 
