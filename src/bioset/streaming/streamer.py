@@ -98,6 +98,7 @@ class VolumeStreamer:
         self._nov_scoring_cache: Optional[dict] = None
         self.nov_renderer = None
         self.nov_render_window = None
+        self.nov_render_callback = None  # optional: called after each NOV window render (e.g. update scale bar)
         self.nov_volumes: Dict[int, vtkVolume] = {}
         self.nov_mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
         # Progressive NOV: queue of (component, {ch_id: (np_arr, roi)}) loaded in background, applied on main thread
@@ -526,6 +527,11 @@ class VolumeStreamer:
                 self.nov_render_window.Render()
             if self.render_callback is not None:
                 self.render_callback()
+            if self.nov_render_callback is not None:
+                try:
+                    self.nov_render_callback()
+                except Exception:
+                    pass
         except Exception as e:
             import traceback
             print(f"[nov] sync_nov_volumes_at_component error: {e}")
@@ -551,6 +557,11 @@ class VolumeStreamer:
                 self.nov_render_window.Render()
             if self.render_callback:
                 self.render_callback()
+            if self.nov_render_callback is not None:
+                try:
+                    self.nov_render_callback()
+                except Exception:
+                    pass
         except Exception as e:
             import traceback
             print(f"[nov] apply_main_channel_to_nov error: {e}")
@@ -567,6 +578,11 @@ class VolumeStreamer:
             self.nov_render_window.Render()
         if self.render_callback is not None:
             self.render_callback()
+        if self.nov_render_callback is not None:
+            try:
+                self.nov_render_callback()
+            except Exception:
+                pass
 
     def sync_nov_volumes(self) -> None:
         """Update NOV popup: show first frame at coarsest level for speed, then progressively load comp-1 down to min_component."""
@@ -637,6 +653,11 @@ class VolumeStreamer:
             self.nov_renderer.ResetCameraClippingRange()
             if self.nov_render_window:
                 self.nov_render_window.Render()
+            if self.nov_render_callback is not None:
+                try:
+                    self.nov_render_callback()
+                except Exception:
+                    pass
             return True
         except Exception as e:
             import traceback

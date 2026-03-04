@@ -69,8 +69,10 @@ def main():
     if scene.streamer is not None:
         import asyncio
 
+        _scale_bar_tick = [0]  # mutable so inner function can update
+
         async def _check_loaded_data_loop():
-            """Periodically check if background loading has finished and apply to VTK; also apply NOV progressive resolution updates."""
+            """Periodically check if background loading has finished and apply to VTK; also apply NOV progressive resolution updates and adaptive scale bar."""
             while True:
                 await asyncio.sleep(0.1)
                 try:
@@ -78,6 +80,15 @@ def main():
                         view.update()
                     if scene.streamer.process_nov_progressive_queue():
                         view.update()
+                    _scale_bar_tick[0] += 1
+                    if _scale_bar_tick[0] >= 5:
+                        _scale_bar_tick[0] = 0
+                        if getattr(server.state, "nov_panel_visible", False) and hasattr(ctrl, "update_nov_scale_bar"):
+                            try:
+                                ctrl.update_nov_scale_bar()
+                                view.update()
+                            except Exception:
+                                pass
                 except Exception as e:
                     print(f"[error] check_loaded_data: {e}")
 

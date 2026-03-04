@@ -163,7 +163,8 @@ def init_state(state):
     state.setdefault("nov_has_results", False)  # True after Set computed candidates; drives single Set vs Reset button
     state.setdefault("nov_active_channel_items", [])  # [{id, name, color}] for active channels only (same as main scene)
     state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
-    state.setdefault("nov_popup_pos", "")  # "left_px,bottom_px" set by client on drag end; server parses and rebuilds style
+    state.setdefault("nov_scale_bar_label", "")  # e.g. "10 µm" for scale bar in NOV popup
+    state.setdefault("nov_scale_bar_width_px", 0)  # pixel width of scale bar (updates with zoom)
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
@@ -216,23 +217,6 @@ def register_state_change_handlers(state, ctrl):
         """When user checks/unchecks channels in NOV popup, show only selected channels in the NOV window."""
         if hasattr(ctrl, 'nov_update_visibility'):
             ctrl.nov_update_visibility()
-
-    @state.change("nov_popup_pos")
-    def on_nov_popup_pos_change(nov_popup_pos, **kwargs):
-        """When client sets nov_popup_pos to 'left,bottom' after drag, rebuild popup style with that position."""
-        if not nov_popup_pos or "," not in nov_popup_pos:
-            return
-        try:
-            parts = nov_popup_pos.strip().split(",", 1)
-            left_px = int(float(parts[0]))
-            bottom_px = int(float(parts[1]))
-            from .components.nov_popup import build_nov_popup_styles
-            full_style, min_style = build_nov_popup_styles(left_px, bottom_px)
-            state.nov_popup_style_full = full_style
-            state.nov_popup_style_minimized = min_style
-            state.nov_popup_pos = ""
-        except (ValueError, IndexError):
-            pass
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):

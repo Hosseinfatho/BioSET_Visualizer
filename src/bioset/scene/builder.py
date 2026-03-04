@@ -86,7 +86,16 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             def _on_end_interaction(obj, evt):
                 streamer.on_interaction_end()
 
+            def _on_nov_end_interaction(obj, evt):
+                nov_render_window.Render()
+                if getattr(streamer, "nov_render_callback", None):
+                    try:
+                        streamer.nov_render_callback()
+                    except Exception:
+                        pass
+
             interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
+            nov_interactor.AddObserver("EndInteractionEvent", _on_nov_end_interaction)
         except Exception as e:
             streamer = None
             nov_renderer = None

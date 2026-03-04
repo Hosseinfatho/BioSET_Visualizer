@@ -1,69 +1,44 @@
 # nov_popup.py
-"""NOV popup: 3D view only; channels overlay (transparent); single Set/Reset button. Smaller window. Draggable by header."""
+"""NOV popup: 3D view only; channels overlay (transparent); single Set/Reset button. Fixed position."""
 
 from __future__ import annotations
 
 from trame.widgets import html, vtk, vuetify
 
-_TRANS = "transparent"
-# Base style parts (without position)
-_STYLE_BASE_FULL = (
+# Fixed position: centered at bottom
+_STYLE_FULL = (
+    "position: fixed; left: 50%; transform: translateX(-50%); bottom: 1%; "
     "width: 26vw; min-width: 340px; max-width: 640px; "
     "height: 22vh; min-height: 220px; max-height: 360px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
     "box-shadow: 0 4px 20px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); "
     "display: flex; flex-direction: column; "
 )
-_STYLE_BASE_MIN = (
+_STYLE_MIN = (
+    "position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; "
     "width: 26vw; min-width: 340px; max-width: 640px; "
     "height: auto; min-height: 36px; max-height: 36px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
     "box-shadow: 0 -2px 12px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); border-bottom: none; "
     "display: flex; flex-direction: column;"
 )
-_POS_DEFAULT = "left: 50%; transform: translateX(-50%); bottom: 1%; "
-_POS_DEFAULT_MIN = "left: 50%; transform: translateX(-50%); bottom: 0; "
-
-
-def build_nov_popup_styles(left_px=None, bottom_px=None):
-    """Build full style strings for NOV popup. If left_px/bottom_px are set, use them; else use default centered position."""
-    if left_px is not None and bottom_px is not None:
-        pos = f"left: {int(left_px)}px; bottom: {int(bottom_px)}px; transform: none; "
-        return (
-            "position: fixed; " + pos + _STYLE_BASE_FULL,
-            "position: fixed; " + pos + _STYLE_BASE_MIN,
-        )
-    return (
-        "position: fixed; " + _POS_DEFAULT + _STYLE_BASE_FULL,
-        "position: fixed; " + _POS_DEFAULT_MIN + _STYLE_BASE_MIN,
-    )
 
 _BTN_STYLE = "background: transparent !important; color: rgba(255,255,255,0.95);"
 
 
 def nov_popup_panel(state, ctrl, nov_render_window=None):
-    """Floating NOV panel: 3D view full; channels as overlay with transparent bg; single Set/Reset in header. Draggable by header."""
-    default_full, default_min = build_nov_popup_styles()
-    state.setdefault("nov_popup_style_full", default_full)
-    state.setdefault("nov_popup_style_minimized", default_min)
+    """Floating NOV panel: 3D view full; channels as overlay; single Set/Reset in header. Fixed position."""
+    state.setdefault("nov_popup_style_full", _STYLE_FULL)
+    state.setdefault("nov_popup_style_minimized", _STYLE_MIN)
     with html.Div(
         v_show=("nov_panel_visible", False),
-        style=("nov_popup_minimized ? nov_popup_style_minimized : nov_popup_style_full", default_full),
+        style=("nov_popup_minimized ? nov_popup_style_minimized : nov_popup_style_full", _STYLE_FULL),
         class_="nov-popup-panel",
-        attrs={"data-nov-drag": "panel"},
     ):
-        # Hidden input: client drag script sets value to "left,bottom" on mouseup to persist position
-        html.Input(
-            type="text",
-            v_model=("nov_popup_pos", ""),
-            style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
-            attrs={"id": "nov-popup-pos-input", "aria-hidden": "true", "tabindex": "-1"},
-        )
-        # Header: draggable handle (class for script) + nav + Set/Reset + bookmark + minimize + close
+        # Header: nav + Set/Reset + bookmark + minimize + close
         with html.Div(
             class_="nov-popup-header",
-            attrs={"data-nov-drag": "header"},
-            style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: transparent; border-bottom: 1px solid rgba(255,255,255,0.2); flex: 0 0 auto; min-height: 32px; max-height: 40px; color: rgba(255,255,255,0.95); cursor: move; user-select: none;",
+            style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: transparent; border-bottom: 1px solid rgba(255,255,255,0.2); flex: 0 0 auto; min-height: 32px; max-height: 40px; color: rgba(255,255,255,0.95);",
         ):
             with html.Div(style="display: flex; align-items: center; gap: 4px; min-width: 0; color: rgba(255,255,255,0.95);"):
                 with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.nov_prev, style=_BTN_STYLE):
@@ -133,3 +108,21 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                             dark=True,
                         )
                         html.Span("{{ ch.name }}", style="font-size: 0.7rem; color: rgba(255,255,255,0.95); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;")
+            # Scale bar: right-bottom, small; two perpendicular ticks at start/end; adaptive with zoom (spacing 0.14,0.14,0.28 µm)
+            with html.Div(
+                v_show=("nov_scale_bar_width_px > 0", False),
+                style="position: absolute; right: 6px; bottom: 6px; left: auto; z-index: 10; "
+                "display: flex; flex-direction: column; align-items: flex-end; gap: 1px; "
+                "background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; "
+                "color: rgba(255,255,255,0.92); font-size: 0.55rem;",
+            ):
+                with html.Div(style="display: flex; align-items: center; height: 5px;"):
+                    html.Div(style="width: 1px; height: 5px; min-width: 1px; background: rgba(255,255,255,0.95); border-radius: 0;")
+                    html.Div(
+                        style=(
+                            "'width: ' + nov_scale_bar_width_px + 'px; height: 1.5px; min-width: 2px; background: rgba(255,255,255,0.95); border-radius: 0;'",
+                            "width: 50px; height: 1.5px; background: rgba(255,255,255,0.95);",
+                        ),
+                    )
+                    html.Div(style="width: 1px; height: 5px; min-width: 1px; background: rgba(255,255,255,0.95); border-radius: 0;")
+                html.Span("{{ nov_scale_bar_label }}", style="font-size: 0.55rem; line-height: 1;")

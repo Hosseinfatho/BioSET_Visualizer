@@ -557,6 +557,60 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["view"].update()
         if _refs.get("nov_view"):
             _refs["nov_view"].update()
+        if getattr(streamer, "nov_render_callback", None):
+            try:
+                streamer.nov_render_callback()
+            except Exception:
+                pass
+
+    def update_nov_scale_bar():
+        """Compute scale bar (µm per pixel) from NOV camera and set state for UI. Uses voxel spacing (0.14, 0.14, 0.28) µm."""
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "nov_renderer", None) or not getattr(streamer, "nov_render_window", None):
+            return
+        ren = streamer.nov_renderer
+        rw = streamer.nov_render_window
+        cam = ren.GetActiveCamera()
+        w, h = rw.GetSize()
+        if w < 10 or h < 10:
+            state.nov_scale_bar_label = ""
+            state.nov_scale_bar_width_px = 0
+            return
+        pos = cam.GetPosition()
+        fp = cam.GetFocalPoint()
+        dist = math.sqrt(
+            (pos[0] - fp[0]) ** 2 + (pos[1] - fp[1]) ** 2 + (pos[2] - fp[2]) ** 2
+        )
+        if dist < 1e-9:
+            state.nov_scale_bar_label = ""
+            state.nov_scale_bar_width_px = 0
+            return
+        view_angle_deg = cam.GetViewAngle()
+        view_angle_rad = math.radians(view_angle_deg)
+        world_height_um = 2.0 * dist * math.tan(view_angle_rad / 2.0)
+        um_per_pixel = world_height_um / float(h)
+        if um_per_pixel <= 0:
+            state.nov_scale_bar_label = ""
+            state.nov_scale_bar_width_px = 0
+            return
+        target_px = 90
+        raw_um = target_px * um_per_pixel
+        nice = (0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500)
+        scale_um = min(nice, key=lambda x: abs(x - raw_um))
+        if raw_um < 0.25:
+            scale_um = 0.5
+        elif raw_um > 400:
+            scale_um = 500
+        bar_width_px = scale_um / um_per_pixel
+        state.nov_scale_bar_label = (
+            f"{scale_um:.0f} µm" if scale_um >= 1 else f"{scale_um} µm"
+        )
+        state.nov_scale_bar_width_px = int(round(min(bar_width_px, 400)))
+
+    _s = _refs.get("streamer")
+    if _s is not None and getattr(_s, "nov_render_callback", None) is None:
+        _s.nov_render_callback = update_nov_scale_bar
+    ctrl.update_nov_scale_bar = update_nov_scale_bar
 
     def display_to_display_coords(renderer, x: float, y: float):
         """Convert client (x,y) 0-1 to VTK display coords (origin bottom-left)."""
