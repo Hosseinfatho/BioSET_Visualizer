@@ -869,26 +869,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             import traceback
             traceback.print_exc()
             return None
-        
-    def _fly_camera_to_tile(renderer, center, tile_info):
-        """Position camera looking at the tile center from above."""
-        cam = renderer.GetActiveCamera()
-        
-        mesh_mgr = _refs.get("mesh_manager")
-        sx = mesh_mgr.base_sx if mesh_mgr else 0.14
-        
-        tile_world_width = tile_info.tile_width * sx
-        
-        cam.SetFocalPoint(*center)
-        
-        distance = tile_world_width * 1.5
-        cam.SetPosition(center[0], center[1], center[2] + distance)
-        cam.SetViewUp(0, 1, 0)
-        
-        renderer.ResetCameraClippingRange()
-        
-        print(f"[callbacks] Camera moved to tile center "
-            f"({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f}), distance={distance:.1f}")
 
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
@@ -907,7 +887,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             renderer = streamer.renderer
             
-            # Hide volumes so they don't block the picker
             volumes = renderer.GetVolumes()
             volumes.InitTraversal()
             hidden_volumes = []
@@ -936,12 +915,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
                 f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
             
-            # --- 1. Zoom camera to this heatmap tile ---
             sx = getattr(state, 'physical_size_x', 0.14)
             sy = getattr(state, 'physical_size_y', 0.14)
             sz = getattr(state, 'physical_size_z', 0.28)
-            
-            # Heatmap cubes have SetScale(128, 128, 1.0), so world coords are:
+        
             #   world_x = tile_coord * spacing * 128
             tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
             tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
@@ -960,12 +937,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
                 f"extent={tile_extent:.1f}")
             
-            # --- 2. Optionally load mesh at this location ---
             active_channels = list(state.active_channels)
             if mesh_mgr and mesh_mgr.is_available and active_channels:
-                # Convert heatmap tile center to full-res voxel coords
-                # World = voxel * spacing, so voxel = world / spacing
-                # But heatmap world has the 128 scale factor baked in
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
                 vox_y = (tile.y0 + tile.y1) / 2.0 * 128
                 
@@ -996,8 +969,63 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if _refs["view"]:
                 _refs["view"].update()
         
+
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
+
+    _hover_last_actor = [None]
+    def on_hover(px, py):
+        """Handle throttled mousemove from client JS"""
+        heatmap = _refs.get("heatmap")
+        streamer = _refs.get("streamer")
+        if not heatmap or not streamer:
+            return
+
+        renderer = streamer.renderer
+        render_window = renderer.GetRenderWindow()
+        win_size = render_window.GetSize()
+
+        vtk_y = win_size[1] - int(py)
+        vtk_x = int(px)
+
+        # Hide volumes so picker can reach the cube actors
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+        hover_picker = vtkPropPicker()
+
+        volumes = renderer.GetVolumes()
+        volumes.InitTraversal()
+        hidden = []
+        vol = volumes.GetNextVolume()
+        while vol:
+            hidden.append((vol, vol.GetVisibility()))
+            vol.SetVisibility(False)
+            vol = volumes.GetNextVolume()
+
+        try:
+            hover_picker.Pick(vtk_x, vtk_y, 0, renderer)
+            picked_actor = hover_picker.GetActor()
+        finally:
+            for vol, was_visible in hidden:
+                vol.SetVisibility(was_visible)
+
+        prev = _hover_last_actor[0]
+
+        if picked_actor is prev:
+            return
+
+        if prev is not None:
+            prev.GetProperty().EdgeVisibilityOff()
+
+        if picked_actor is not None and heatmap.get_tile_for_actor(picked_actor) is not None:
+            picked_actor.GetProperty().EdgeVisibilityOn()
+            picked_actor.GetProperty().SetEdgeColor(0.0, 0.0, 0.0)
+            picked_actor.GetProperty().SetLineWidth(5.0)
+            _hover_last_actor[0] = picked_actor
+        else:
+            _hover_last_actor[0] = None
+
+        if _refs["view"]:
+            _refs["view"].update()
 
     # Bind to controller
     ctrl.set_streamer = set_streamer
@@ -1024,4 +1052,5 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_clear = chatbot_clear
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
+    ctrl.trigger("on_hover")(on_hover)
 

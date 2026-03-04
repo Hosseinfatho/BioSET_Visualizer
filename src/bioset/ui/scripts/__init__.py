@@ -10,3 +10,4 @@ def _read_js(filename: str) -> str:
 def register_scripts(client):
     client.Script(_read_js("upset.js"))
     client.Script(_read_js("bar.js"))
+    client.Script(_read_js("mousemove.js"))
