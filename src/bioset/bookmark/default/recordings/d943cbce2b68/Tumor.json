@@ -1,0 +1,165 @@
+{
+  "id": "1e489fc9-ccb3-4213-a054-5e1a73f6260a",
+  "title": "Tumor",
+  "created": "2026-03-04T05:25:29Z",
+  "updated": "2026-03-04T05:29:56Z",
+  "notes": "Interaction between Mart1 and Sox10 ",
+  "camera": {
+    "position": [
+      707.0425224900533,
+      301.8144635984989,
+      358.1303793758167
+    ],
+    "focalPoint": [
+      707.0425224900533,
+      301.8144635984989,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        7.0,
+        29.0
+      ]
+    },
+    {
+      "id": 7,
+      "name": "SOX10",
+      "color": "#00FF00",
+      "range": [
+        0.0,
+        11.0
+      ]
+    },
+    {
+      "id": 10,
+      "name": "MITF",
+      "color": "#0000FF",
+      "range": [
+        0.0,
+        38.0
+      ]
+    },
+    {
+      "id": 47,
+      "name": "PMEL",
+      "color": "#FFFF00",
+      "range": [
+        0.0,
+        14.0
+      ]
+    }
+  ],
+  "active_channels": [
+    3,
+    7,
+    10,
+    47
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1699,
+    "height": 844
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          707.0425224900533,
+          301.8144635984989,
+          358.1303793758167
+        ],
+        "focalPoint": [
+          707.0425224900533,
+          301.8144635984989,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "Interaction between Mart1 and Sox10 ",
+      "comments": [],
+      "channels": [
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            7.0,
+            29.0
+          ]
+        },
+        {
+          "id": 7,
+          "name": "SOX10",
+          "color": "#00FF00",
+          "range": [
+            0.0,
+            11.0
+          ]
+        },
+        {
+          "id": 10,
+          "name": "MITF",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            38.0
+          ]
+        },
+        {
+          "id": 47,
+          "name": "PMEL",
+          "color": "#FFFF00",
+          "range": [
+            0.0,
+            14.0
+          ]
+        }
+      ],
+      "active_channels": [
+        3,
+        7,
+        10,
+        47
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1699,
+        "height": 844
+      },
+      "optional_LOD": {
+        "component": 2,
+        "roi": {
+          "x0": 901,
+          "x1": 1624,
+          "y0": 351,
+          "y1": 726
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 2,
+    "roi": {
+      "x0": 901,
+      "x1": 1624,
+      "y0": 351,
+      "y1": 726
+    }
+  },
+  "description": "Interaction between Mart1 and Sox10 "
+}

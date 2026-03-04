@@ -1,43 +1,69 @@
 # nov_popup.py
-"""NOV popup: 3D view only; channels overlay (transparent); single Set/Reset button. Smaller window."""
+"""NOV popup: 3D view only; channels overlay (transparent); single Set/Reset button. Smaller window. Draggable by header."""
 
 from __future__ import annotations
 
 from trame.widgets import html, vtk, vuetify
 
 _TRANS = "transparent"
-# Smaller window
-_STYLE_FULL = (
-    "position: fixed; left: 50%; transform: translateX(-50%); bottom: 1%; "
+# Base style parts (without position)
+_STYLE_BASE_FULL = (
     "width: 26vw; min-width: 340px; max-width: 640px; "
     "height: 22vh; min-height: 220px; max-height: 360px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
     "box-shadow: 0 4px 20px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); "
     "display: flex; flex-direction: column; "
 )
-_STYLE_MINIMIZED = (
-    "position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; "
+_STYLE_BASE_MIN = (
     "width: 26vw; min-width: 340px; max-width: 640px; "
     "height: auto; min-height: 36px; max-height: 36px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
     "box-shadow: 0 -2px 12px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); border-bottom: none; "
     "display: flex; flex-direction: column;"
 )
+_POS_DEFAULT = "left: 50%; transform: translateX(-50%); bottom: 1%; "
+_POS_DEFAULT_MIN = "left: 50%; transform: translateX(-50%); bottom: 0; "
+
+
+def build_nov_popup_styles(left_px=None, bottom_px=None):
+    """Build full style strings for NOV popup. If left_px/bottom_px are set, use them; else use default centered position."""
+    if left_px is not None and bottom_px is not None:
+        pos = f"left: {int(left_px)}px; bottom: {int(bottom_px)}px; transform: none; "
+        return (
+            "position: fixed; " + pos + _STYLE_BASE_FULL,
+            "position: fixed; " + pos + _STYLE_BASE_MIN,
+        )
+    return (
+        "position: fixed; " + _POS_DEFAULT + _STYLE_BASE_FULL,
+        "position: fixed; " + _POS_DEFAULT_MIN + _STYLE_BASE_MIN,
+    )
 
 _BTN_STYLE = "background: transparent !important; color: rgba(255,255,255,0.95);"
 
 
 def nov_popup_panel(state, ctrl, nov_render_window=None):
-    """Floating NOV panel: 3D view full; channels as overlay with transparent bg; single Set/Reset in header."""
-    state.setdefault("nov_popup_style_full", _STYLE_FULL)
-    state.setdefault("nov_popup_style_minimized", _STYLE_MINIMIZED)
+    """Floating NOV panel: 3D view full; channels as overlay with transparent bg; single Set/Reset in header. Draggable by header."""
+    default_full, default_min = build_nov_popup_styles()
+    state.setdefault("nov_popup_style_full", default_full)
+    state.setdefault("nov_popup_style_minimized", default_min)
     with html.Div(
         v_show=("nov_panel_visible", False),
-        style=("nov_popup_minimized ? nov_popup_style_minimized : nov_popup_style_full", _STYLE_FULL),
+        style=("nov_popup_minimized ? nov_popup_style_minimized : nov_popup_style_full", default_full),
+        class_="nov-popup-panel",
+        attrs={"data-nov-drag": "panel"},
     ):
-        # Header: nav + Set or Reset (single button) + bookmark + minimize + close
+        # Hidden input: client drag script sets value to "left,bottom" on mouseup to persist position
+        html.Input(
+            type="text",
+            v_model=("nov_popup_pos", ""),
+            style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
+            attrs={"id": "nov-popup-pos-input", "aria-hidden": "true", "tabindex": "-1"},
+        )
+        # Header: draggable handle (class for script) + nav + Set/Reset + bookmark + minimize + close
         with html.Div(
-            style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: transparent; border-bottom: 1px solid rgba(255,255,255,0.2); flex: 0 0 auto; min-height: 32px; max-height: 40px; color: rgba(255,255,255,0.95);",
+            class_="nov-popup-header",
+            attrs={"data-nov-drag": "header"},
+            style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: transparent; border-bottom: 1px solid rgba(255,255,255,0.2); flex: 0 0 auto; min-height: 32px; max-height: 40px; color: rgba(255,255,255,0.95); cursor: move; user-select: none;",
         ):
             with html.Div(style="display: flex; align-items: center; gap: 4px; min-width: 0; color: rgba(255,255,255,0.95);"):
                 with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.nov_prev, style=_BTN_STYLE):
