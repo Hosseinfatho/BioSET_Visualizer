@@ -191,7 +191,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_score_display = 0.0
         state.nov_sphere_svg = ""
         state.nov_sphere_xy = []
-        state.nov_view_side = ""
         if hasattr(ctrl, "nov_hide_box"):
             ctrl.nov_hide_box()
     

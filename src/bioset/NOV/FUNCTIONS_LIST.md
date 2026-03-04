@@ -18,11 +18,11 @@
 | 13 | `_aabb_corners(b)` | AABB (x0,x1,y0,y1,z0,z1) | List of 8 3D corners | Internal (compute_view_score_mesh) |
 | 14 | `aabb_from_center_radius(center, radius)` | Center, radius | `Tuple` (xmin,xmax,ymin,ymax,zmin,zmax) | Internal + export |
 | 15 | `bounds_intersect(vol, box)` | Two AABBs | Intersection AABB or (0,0,0,0,0,0) | Internal + export |
-| 16 | `camera_position_at_radius(center, radius, theta_deg, phi_deg)` | Center, radius, two angles (deg) | `List[float]` camera position [x,y,z] | Internal + export |
-| 17 | `view_up_for_angle(theta_deg, phi_deg)` | Two angles (deg) | `List[float]` viewUp vector [x,y,z] | Internal + export |
-| 18 | `compute_view_score_mesh(...)` | camera_pos, center, view_up, view_radius, bounds_world, num_channels + optional | `float` score 0–1 | Internal (only in compute_best_views) + export |
-| 19 | `normalize_scores(scores)` | `list[float]` | `list[float]` normalized with max=1 | Internal + export |
-| 20 | `compute_best_views(center, view_radius, volume_bounds, num_channels, ...)` | Center, radius, volume bounds, channel count + optional | `List[dict]` camera candidates with camera/score/... | Internal + export |
+| 16 | `_camera_pos_sphere(center, radius, t, p)` | Center, radius, internal spherical coords | `List[float]` camera position | Internal only |
+| 17 | `_view_up_sphere(t, p)` | Internal spherical coords (deg) | `List[float]` viewUp vector | Internal only |
+| 18 | `_sample_directions_on_sphere()` | — | `List[Tuple[float,float]]` (t, p) directions | Internal only |
+| 19 | `compute_top10_views_by_entropy(center, view_radius, volume_bounds, channel_ids, ...)` | Center, radius, bounds, channel IDs, sample_visibility_fn, ... | `List[dict]` candidates with camera/score_normalized/fixed_index (no angles) | Internal + export |
+| 20 | `sphere_xy_from_camera_positions(center, positions, r_svg, cx, cy)` | Scene center, list of camera positions | `List[Tuple[float,float]]` SVG (x,y) for mini-map | Internal |
 | 21 | `build_nov_sphere_svg(sphere_xy, current_index)` | List of (x,y) for 10 points, current index | `str` SVG sphere mini-map | Internal (state UI) + possibly from outside |
 
 ---

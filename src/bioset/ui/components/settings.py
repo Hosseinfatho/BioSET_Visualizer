@@ -97,7 +97,7 @@ def settings_section(state, ctrl):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Reset Camera")
 
-                # NOV: press to show box and "Set"; Set opens popup and becomes "Reset"; Reset closes popup and removes box
+                # NOV: press to show box and panel; Set/Reset are in the popup window
                 with vuetify.VListItem(class_="nav-item nav-item--nested", style="overflow: visible;"):
                     with vuetify.VListItemIcon():
                         with vuetify.VTooltip(right=True):
@@ -105,29 +105,7 @@ def settings_section(state, ctrl):
                                 vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
                             html.Span("Next Best View (popup)")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        with html.Div(style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;"):
-                            html.Span("NOV", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;", click=ctrl.nov_toggle)
-                            with html.Span(v_show=("nov_panel_visible", False), style="display: inline-flex; align-items: center; font-size: 0.6875rem;"):
-                                with vuetify.VBtn(
-                                    v_show=("!nov_popup_open", True),
-                                    x_small=True,
-                                    dense=True,
-                                    text=True,
-                                    small=True,
-                                    click=ctrl.nov_set,
-                                    style="font-size: 0.6875rem; min-width: auto; padding: 0 6px;",
-                                ):
-                                    html.Span("Set")
-                                with vuetify.VBtn(
-                                    v_show=("nov_popup_open", False),
-                                    x_small=True,
-                                    dense=True,
-                                    text=True,
-                                    small=True,
-                                    click=ctrl.nov_reset,
-                                    style="font-size: 0.6875rem; min-width: auto; padding: 0 6px;",
-                                ):
-                                    html.Span("Reset")
+                        html.Span("NOV", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;", click=ctrl.nov_toggle)
                 # Bookmark (saved views / snapshots)
                 with vuetify.VListItem(
                     class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),

@@ -556,6 +556,18 @@ class VolumeStreamer:
             print(f"[nov] apply_main_channel_to_nov error: {e}")
             traceback.print_exc()
 
+    def set_nov_channel_visibility(self, selected_channel_ids: List[int]) -> None:
+        """Show only NOV volumes whose channel id is in selected_channel_ids; hide others. Does not remove volumes."""
+        if not self.nov_renderer:
+            return
+        sel = set(selected_channel_ids) if selected_channel_ids else set()
+        for ch, vol in self.nov_volumes.items():
+            vol.SetVisibility(1 if ch in sel else 0)
+        if self.nov_render_window:
+            self.nov_render_window.Render()
+        if self.render_callback is not None:
+            self.render_callback()
+
     def sync_nov_volumes(self) -> None:
         """Update NOV popup: show first frame at coarsest level for speed, then progressively load comp-1 down to min_component."""
         if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
@@ -636,9 +648,11 @@ class VolumeStreamer:
         self,
         bounds_world: Tuple[float, float, float, float, float, float],
         component: int,
+        channel_ids: Optional[List[int]] = None,
     ) -> None:
-        """Load the 3D region given by bounds_world at component for all active channels and cache for sample_nov_ray_channels.
-        World bounds = (xmin, xmax, ymin, ymax, zmin, zmax). Per-channel p10/p99 are computed for normalization."""
+        """Load the 3D region given by bounds_world at component and cache for sample_nov_ray_channels / sample_nov_ray_channels_occlusion.
+        World bounds = (xmin, xmax, ymin, ymax, zmin, zmax). Per-channel p10/p99 for normalization.
+        If channel_ids is None, uses all active channels; otherwise uses the intersection with active channels."""
         if not self._active_channels:
             self._nov_scoring_cache = None
             return
@@ -659,7 +673,13 @@ class VolumeStreamer:
             self._nov_scoring_cache = None
             return
         roi = ROI(vx0, vx1, vy0, vy1)
-        channel_ids = sorted(self._active_channels)
+        if channel_ids is not None:
+            channel_ids = sorted(c for c in channel_ids if c in self._active_channels)
+        else:
+            channel_ids = sorted(self._active_channels)
+        if not channel_ids:
+            self._nov_scoring_cache = None
+            return
         arrays: Dict[int, np.ndarray] = {}
         p10_p99: Dict[int, Tuple[float, float]] = {}
         for ch in channel_ids:
@@ -773,6 +793,76 @@ class VolumeStreamer:
                         norm = 0.0 if val <= p10 else 1.0
                     energies[c] += norm
         return energies
+
+    def sample_nov_ray_channels_occlusion(
+        self,
+        ray_origin: Tuple[float, float, float],
+        ray_dir: Tuple[float, float, float],
+        bounds: Tuple[float, float, float, float, float, float],
+        channel_ids: Optional[List[int]] = None,
+        presence_thresh: float = 0.05,
+        num_samples: int = 64,
+        step_scale: float = 0.15,
+        eps: float = 1e-12,
+    ) -> List[float]:
+        """Front-to-back ray march with occlusion; return per-object visibility Vis(o) for each channel (object).
+        Normalized intensity below presence_thresh is treated as 0. T(r,i) = prod(1-alpha(r,j)) for j<i;
+        delta_vis(r,i) = T(r,i)*alpha(r,i); contribution to object o = delta_vis * m_o(x) with m_o = normalized intensity (0 if below threshold).
+        Returns list of length len(channel_ids) from cache, or len(active_channels) if channel_ids is None."""
+        cache = self._nov_scoring_cache
+        if cache is None or not cache.get("arrays"):
+            cids = channel_ids if channel_ids is not None else sorted(self._active_channels)
+            return [0.0] * len(cids)
+        cids = cache["channel_ids"]
+        arrays = cache["arrays"]
+        vx0, vy0, vz0 = cache["voxel_origin"]
+        sx, sy, sz = cache["spacing"]
+        p10_p99 = cache["p10_p99"]
+        tnear, tfar = self._ray_aabb_tnear_tfar(ray_origin, ray_dir, bounds)
+        if tnear is None or tfar is None or tfar <= tnear:
+            return [0.0] * len(cids)
+        step = (tfar - tnear) / num_samples
+        nch = len(cids)
+        vis = [0.0] * nch
+        T = 1.0
+        for k in range(num_samples):
+            t = tnear + (tfar - tnear) * (k + 0.5) / num_samples
+            wx = ray_origin[0] + t * ray_dir[0]
+            wy = ray_origin[1] + t * ray_dir[1]
+            wz = ray_origin[2] + t * ray_dir[2]
+            vx = int((wx / sx) - vx0)
+            vy = int((wy / sy) - vy0)
+            vz = int((wz / sz) - vz0)
+            norms = []
+            for ch in cids:
+                arr = arrays.get(ch)
+                if arr is None:
+                    norms.append(0.0)
+                    continue
+                nz, ny, nx = arr.shape
+                if 0 <= vz < nz and 0 <= vy < ny and 0 <= vx < nx:
+                    val = float(arr[vz, vy, vx])
+                    p10, p99 = p10_p99.get(ch, (0.0, 1.0))
+                    if p99 > p10 and val > p10:
+                        norm = max(0.0, min(1.0, (val - p10) / (p99 - p10)))
+                    else:
+                        norm = 0.0 if val <= p10 else 1.0
+                    if norm < presence_thresh:
+                        norm = 0.0
+                else:
+                    norm = 0.0
+                norms.append(norm)
+            density = sum(norms) + eps
+            alpha = 1.0 - np.exp(-density * step * step_scale)
+            alpha = min(1.0, alpha)
+            delta_vis = T * alpha
+            T = T * (1.0 - alpha)
+            if delta_vis > eps and density > eps:
+                for c in range(nch):
+                    vis[c] += delta_vis * (norms[c] / density)
+            if T <= eps:
+                break
+        return vis
 
     def reload_current_volumes(self) -> None:
         """Reload and redisplay all active channels with current component/ROI (e.g. after NOV box clip change)."""

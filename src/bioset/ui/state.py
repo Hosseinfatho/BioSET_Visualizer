@@ -157,9 +157,11 @@ def init_state(state):
     state.setdefault("nov_score_display", 0.0)
     state.setdefault("nov_sphere_xy", [])  # for SVG mini-map
     state.setdefault("nov_sphere_svg", "")
-    state.setdefault("nov_view_side", "")  # "F" or "B"
     state.setdefault("nov_popup_minimized", False)  # minimize NOV popup (header only)
     state.setdefault("nov_popup_open", False)  # True after "Set" → popup visible; "Reset" closes it
+    state.setdefault("nov_selected_channels", [])  # Channel ids selected in NOV popup for top-10 entropy views
+    state.setdefault("nov_active_channel_items", [])  # [{id, name, color}] for active channels only (same as main scene)
+    state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
@@ -206,6 +208,12 @@ def register_state_change_handlers(state, ctrl):
         """When channel list or per-channel range changes, update NOV scores if panel is open."""
         if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
             ctrl.nov_recompute_scores_if_visible()
+
+    @state.change("nov_selected_channels")
+    def on_nov_selected_channels_change(nov_selected_channels, **kwargs):
+        """When user checks/unchecks channels in NOV popup, show only selected channels in the NOV window."""
+        if hasattr(ctrl, 'nov_update_visibility'):
+            ctrl.nov_update_visibility()
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):

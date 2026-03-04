@@ -1,13 +1,9 @@
-# NOV: Next Best View - box ROI, resize via corner pins.
+# NOV: Next Best View - box ROI, top-10 views by entropy, resize via corner pins.
 
 from .NOV import (
-    camera_position_at_radius,
-    view_up_for_angle,
-    compute_view_score_mesh,
-    compute_best_views,
+    compute_top10_views_by_entropy,
     aabb_from_center_radius,
     bounds_intersect,
-    normalize_scores,
     NOV_MESH_SIZE,
     VISIBILITY_WEIGHT,
     OCCLUSION_WEIGHT,
@@ -15,13 +11,9 @@ from .NOV import (
 )
 
 __all__ = [
-    "camera_position_at_radius",
-    "view_up_for_angle",
-    "compute_view_score_mesh",
-    "compute_best_views",
+    "compute_top10_views_by_entropy",
     "aabb_from_center_radius",
     "bounds_intersect",
-    "normalize_scores",
     "NOV_MESH_SIZE",
     "VISIBILITY_WEIGHT",
     "OCCLUSION_WEIGHT",
