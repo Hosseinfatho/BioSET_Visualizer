@@ -1097,3 +1097,12 @@ def register_nov_callbacks(ctrl, state, _refs):
     ctrl.nov_next = lambda: switch(1)
     ctrl.nov_recompute_scores_if_visible = lambda: recompute() if getattr(state, "nov_panel_visible", False) else None
     ctrl.nov_update_visibility = nov_update_visibility
+
+    def _nov_drag_report_test():
+        """Append a test line to nov_drag_report so we can confirm the report area updates (debug)."""
+        import time
+        r = getattr(state, "nov_drag_report", "") or ""
+        lines = (r + "\nTest server " + str(round(time.time(), 1))).strip().split("\n")
+        state.nov_drag_report = "\n".join(lines[-5:])
+
+    ctrl.nov_drag_report_test = _nov_drag_report_test

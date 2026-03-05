@@ -1,5 +1,5 @@
 # viewer.py
-"""VTK viewer component. Includes 2D NOV rectangle (position/size from state); +/- for size only."""
+"""VTK viewer component. Includes 2D NOV rectangle; drag to move (script + hidden input) and +/- for size."""
 
 from __future__ import annotations
 
@@ -20,20 +20,59 @@ def viewer(ctrl, render_window):
                 interactive_ratio=1.0,
             )
             ctrl.view_update = view.update
-            # 2D NOV lens: position/size from state; +/- for size only (no drag, no JS).
+            # 2D NOV lens: drag to move via Trame v_on (no custom JS); +/- for size.
+            # Overlay: pointer-events auto when lens visible so lens can receive clicks (script needs this to start drag)
+            _overlay_style = (
+                "'position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; pointer-events: ' + (nov_show_rect ? 'auto' : 'none')",
+                "position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; pointer-events: auto;",
+            )
+            # Immediate DOM capture so overlay gets mousemove/mouseup without waiting for state sync
+            _mousedown = (
+                "if ($event.target.closest('.nov-rect-controls')) return; "
+                "var el = $event.currentTarget.closest('.nov-rect-overlay'); if (el) el.style.pointerEvents = 'auto'; "
+                "nov_dragging = true; "
+                "nov_drag_start_rect_x = nov_rect_x; nov_drag_start_rect_y = nov_rect_y; "
+                "nov_drag_start_client_x = $event.clientX; nov_drag_start_client_y = $event.clientY; "
+                "nov_viewport_w = window.innerWidth; nov_viewport_h = window.innerHeight; "
+                "nov_drag_delta_x = 0; nov_drag_delta_y = 0"
+            )
+            _mousemove = (
+                "if (nov_dragging) { "
+                "nov_drag_delta_x = ($event.clientX - nov_drag_start_client_x) / nov_viewport_w; "
+                "nov_drag_delta_y = -(($event.clientY - nov_drag_start_client_y) / nov_viewport_h); "
+                "}"
+            )
+            _mouseup = (
+                "var el = $event.currentTarget.closest ? $event.currentTarget.closest('.nov-rect-overlay') : $event.currentTarget; "
+                "if (el) el.style.pointerEvents = 'none'; "
+                "if (nov_dragging) { var s = Math.min(nov_rect_w, nov_rect_h); "
+                "var x = Math.max(0, Math.min(1 - s, nov_drag_start_rect_x + nov_drag_delta_x)); "
+                "var y = Math.max(0, Math.min(1 - s, nov_drag_start_rect_y + nov_drag_delta_y)); "
+                "nov_drag_end = x + ',' + y + ',' + nov_rect_w + ',' + nov_rect_h; } "
+                "nov_dragging = false"
+            )
             with html.Div(
                 v_show=("nov_show_rect", False),
                 class_="nov-rect-overlay",
-                style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; pointer-events: none;",
+                style=_overlay_style,
+                v_on={"mousemove": _mousemove, "mouseup": _mouseup},
             ):
+                _lens_left = "(nov_dragging ? (nov_drag_start_rect_x + nov_drag_delta_x) : nov_rect_x) * 100"
+                _lens_bottom = "(nov_dragging ? (nov_drag_start_rect_y + nov_drag_delta_y) : nov_rect_y) * 100"
+                _lens_style = (
+                    "'left: ' + " + _lens_left + " + '%; bottom: ' + " + _lens_bottom + " + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); box-sizing: border-box; border-radius: 4px; pointer-events: auto;'",
+                    "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); border-radius: 4px; pointer-events: auto;",
+                )
+                _start_drag = "if(window.novStartDrag){ $event.preventDefault(); $event.stopPropagation(); window.novStartDrag($event); }"
                 with html.Div(
                     class_="nov-rect-lens",
-                    style=(
-                        "'left: ' + (nov_rect_x * 100) + '%; bottom: ' + (nov_rect_y * 100) + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1 / 1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); box-sizing: border-box; border-radius: 4px; pointer-events: none;'",
-                        "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); border-radius: 4px; pointer-events: none;",
-                    ),
+                    style=_lens_style,
+                    mousedown=_start_drag,
                 ):
-                    # Controls: - + for size only
+                    html.Div(
+                        class_="nov-rect-drag-handle",
+                        style="position: absolute; inset: 0; border-radius: 4px; cursor: move; z-index: 0;",
+                    )
                     _btn = "cursor: pointer; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.95);"
                     _pm = "width: 24px; height: 24px; font-size: 0.95rem; font-weight: bold; " + _btn
                     with html.Div(
@@ -44,6 +83,31 @@ def viewer(ctrl, render_window):
                             html.Span("−")
                         with html.Div(style=_pm, click=ctrl.nov_rect_size_plus):
                             html.Span("+")
+                html.Input(
+                    type="text",
+                    v_model=("nov_drag_live_str", ""),
+                    attrs={"id": "nov-rect-drag-live", "aria-hidden": "true", "tabindex": "-1"},
+                    style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
+                )
+                html.Input(
+                    type="text",
+                    v_model=("nov_drag_end", ""),
+                    attrs={"id": "nov-rect-drag-end", "aria-hidden": "true", "tabindex": "-1"},
+                    style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
+                )
+                # Debug report: last server-side drag messages (to find why drag does not work)
+                with html.Div(
+                    style="position: absolute; left: 4px; bottom: 4px; right: 4px; max-height: 80px; overflow: auto; font: 11px monospace; color: lime; background: rgba(0,0,0,0.75); padding: 4px; border-radius: 4px; white-space: pre-wrap;",
+                    v_show=("nov_show_rect", False),
+                ):
+                    html.Span("NOV drag report (server): {{ nov_drag_report || '(none yet)' }}")
+                    with html.Div(style="margin-top: 4px; pointer-events: auto;"):
+                        with vuetify.VBtn(
+                            small=True, dense=True,
+                            click=ctrl.nov_drag_report_test,
+                            style="font-size: 10px; min-width: auto; padding: 0 6px;",
+                        ):
+                            html.Span("Report test")
         
         with vuetify.VBtn(
             v_if="analysis_loaded && !right_drawer_open",

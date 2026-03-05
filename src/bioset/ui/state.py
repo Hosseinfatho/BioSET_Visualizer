@@ -147,6 +147,19 @@ def init_state(state):
     state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
     state.setdefault("nov_rect_w", 0.3)
     state.setdefault("nov_rect_h", 0.3)
+    # Lens drag (Trame-only: client sets these via v_on; server commits on nov_dragging -> false)
+    state.setdefault("nov_dragging", False)
+    state.setdefault("nov_drag_start_rect_x", 0.35)
+    state.setdefault("nov_drag_start_rect_y", 0.35)
+    state.setdefault("nov_drag_start_client_x", 0)
+    state.setdefault("nov_drag_start_client_y", 0)
+    state.setdefault("nov_viewport_w", 1)
+    state.setdefault("nov_viewport_h", 1)
+    state.setdefault("nov_drag_delta_x", 0.0)
+    state.setdefault("nov_drag_delta_y", 0.0)
+    state.setdefault("nov_drag_end", "")  # "x,y,w,h" set on mouseup so server commits once
+    state.setdefault("nov_drag_live_str", "")  # "x,y" during drag so lens position updates in UI
+    state.setdefault("nov_drag_report", "")  # last few debug lines (server-side) to find drag problem
     state.setdefault("nov_open", False)
     state.setdefault("nov_drawing_box", False)
     state.setdefault("nov_lens_center", None)
@@ -225,6 +238,52 @@ def register_state_change_handlers(state, ctrl):
         """When user checks/unchecks channels in NOV popup, show only selected channels in the NOV window."""
         if hasattr(ctrl, 'nov_update_visibility'):
             ctrl.nov_update_visibility()
+
+    def _append_report(line: str):
+        report = getattr(state, "nov_drag_report", "") or ""
+        lines = (report + "\n" + line).strip().split("\n")
+        state.nov_drag_report = "\n".join(lines[-5:])  # keep last 5 lines
+
+    @state.change("nov_drag_live_str")
+    def on_nov_drag_live_change(nov_drag_live_str, **kwargs):
+        """During drag: update nov_rect_x/y from script so the lens moves in the UI (no 3D update)."""
+        if not nov_drag_live_str:
+            return
+        print("[NOV] server received nov_drag_live_str:", nov_drag_live_str[:60])
+        _append_report("live: " + nov_drag_live_str[:40])
+        state.nov_drag_live_str = ""
+        try:
+            parts = nov_drag_live_str.strip().split(",")
+            if len(parts) >= 2:
+                side = float(getattr(state, "nov_rect_w", 0.3))
+                side = max(0.05, min(0.9, side))
+                x = max(0, min(1 - side, float(parts[0])))
+                y = max(0, min(1 - side, float(parts[1])))
+                state.nov_rect_x = x
+                state.nov_rect_y = y
+        except (TypeError, ValueError):
+            pass
+
+    @state.change("nov_drag_end")
+    def on_nov_drag_end_change(nov_drag_end, **kwargs):
+        """When client sets nov_drag_end to 'x,y,w,h' on mouseup, commit lens position and 3D."""
+        if not nov_drag_end:
+            return
+        print("[NOV] server received nov_drag_end:", nov_drag_end)
+        _append_report("end: " + nov_drag_end[:50])
+        state.nov_drag_end = ""
+        try:
+            parts = nov_drag_end.strip().split(",")
+            if len(parts) >= 4:
+                x = max(0, min(1, float(parts[0])))
+                y = max(0, min(1, float(parts[1])))
+                w = max(0.05, min(0.9, float(parts[2])))
+                h = max(0.05, min(0.9, float(parts[3])))
+                if hasattr(ctrl, "nov_update_rect"):
+                    ctrl.nov_update_rect(x, y, w, h)
+                _append_report("ok x=%s y=%s" % (x, y))
+        except (TypeError, ValueError) as ex:
+            _append_report("err: " + str(ex))
 
     @state.change("nov_popup_size_str")
     def on_nov_popup_size_str_change(nov_popup_size_str, **kwargs):
