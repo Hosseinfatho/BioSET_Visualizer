@@ -177,13 +177,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         state.right_drawer_open = False
 
-        # Reset NOV and hide box overlay
+        # Reset NOV and hide 2D rect overlay
+        state.nov_show_rect = False
         state.nov_drawing_box = False
         state.nov_dragging_corner = None
-        state.nov_box_center = None
-        state.nov_box_length = 0.0
-        state.nov_box_width = 0.0
-        state.nov_box_depth = 0.0
+        state.nov_lens_center = None
+        state.nov_lens_length = 0.0
+        state.nov_lens_width = 0.0
+        state.nov_lens_depth = 0.0
         state.nov_panel_visible = False
         state.nov_candidates = []
         state.nov_current_index = 0
@@ -191,8 +192,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_score_display = 0.0
         state.nov_sphere_svg = ""
         state.nov_sphere_xy = []
-        if hasattr(ctrl, "nov_hide_box"):
-            ctrl.nov_hide_box()
+        if hasattr(ctrl, "nov_hide_lens"):
+            ctrl.nov_hide_lens()
     
         if _refs["view"]:
             _refs["view"].update()

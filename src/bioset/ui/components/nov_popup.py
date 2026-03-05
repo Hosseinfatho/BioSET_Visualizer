@@ -1,23 +1,21 @@
 # nov_popup.py
-"""NOV popup: 3D view only; channels overlay (transparent); single Set/Reset button. Fixed position."""
+"""NOV popup: 3D view; channels overlay; Set (run best view) / Reset (clear results, keep popup open). Resizable."""
 
 from __future__ import annotations
 
 from trame.widgets import html, vtk, vuetify
 
-# Fixed position: centered at bottom
-_STYLE_FULL = (
+# Base style: position + min/max; width/height come from state (nov_popup_width_px, nov_popup_height_px)
+_STYLE_BASE_FULL = (
     "position: fixed; left: 50%; transform: translateX(-50%); bottom: 1%; "
-    "width: 26vw; min-width: 340px; max-width: 640px; "
-    "height: 22vh; min-height: 220px; max-height: 360px; "
-    "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
+    "min-width: 280px; max-width: 720px; min-height: 200px; max-height: 420px; "
+    "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; resize: both; "
     "box-shadow: 0 4px 20px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); "
     "display: flex; flex-direction: column; "
 )
-_STYLE_MIN = (
+_STYLE_BASE_MIN = (
     "position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; "
-    "width: 26vw; min-width: 340px; max-width: 640px; "
-    "height: auto; min-height: 36px; max-height: 36px; "
+    "width: 400px; height: auto; min-height: 36px; max-height: 36px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
     "box-shadow: 0 -2px 12px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); border-bottom: none; "
     "display: flex; flex-direction: column;"
@@ -27,14 +25,24 @@ _BTN_STYLE = "background: transparent !important; color: rgba(255,255,255,0.95);
 
 
 def nov_popup_panel(state, ctrl, nov_render_window=None):
-    """Floating NOV panel: 3D view full; channels as overlay; single Set/Reset in header. Fixed position."""
-    state.setdefault("nov_popup_style_full", _STYLE_FULL)
-    state.setdefault("nov_popup_style_minimized", _STYLE_MIN)
+    """Floating NOV panel. Size from state (initial from box); user can resize."""
+    state.setdefault("nov_popup_style_full", _STYLE_BASE_FULL)
+    state.setdefault("nov_popup_style_minimized", _STYLE_BASE_MIN)
     with html.Div(
         v_show=("nov_panel_visible", False),
-        style=("nov_popup_minimized ? nov_popup_style_minimized : nov_popup_style_full", _STYLE_FULL),
+        style=(
+            "nov_popup_minimized ? nov_popup_style_minimized : ('width: ' + nov_popup_width_px + 'px; height: ' + nov_popup_height_px + 'px; ' + nov_popup_style_full)",
+            "width: 400px; height: 300px; " + _STYLE_BASE_FULL,
+        ),
         class_="nov-popup-panel",
+        attrs={"data-nov-popup": "1"},
     ):
+        html.Input(
+            type="text",
+            v_model=("nov_popup_size_str", ""),
+            attrs={"id": "nov-popup-size-input", "aria-hidden": "true", "tabindex": "-1"},
+            style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
+        )
         # Header: nav + Set/Reset + bookmark + minimize + close
         with html.Div(
             class_="nov-popup-header",

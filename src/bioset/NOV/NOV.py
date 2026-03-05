@@ -1,4 +1,4 @@
-# NOV (Next Best View): box ROI, camera candidates. Resize by right-click and drag on corner pins.
+# NOV (Next Best View): lens ROI, camera candidates.
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Callable, List, Optional, Tuple
 
 from bioset.streaming.lod import camera_distance_to_focal, choose_component
 
-# VTK for box overlay and corner pins
+# VTK for lens overlay
 try:
     from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkSphereSource
     from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper, vtkPropPicker
@@ -39,11 +39,11 @@ _SPHERE_STEP = 30.0
 NOV_MESH_SIZE = 128
 VISIBILITY_WEIGHT = 0.8
 OCCLUSION_WEIGHT = 0.2
-MIN_BOX_HALF = 25.0  # fallback when component unknown
+MIN_LENS_HALF = 25.0  # fallback when component unknown
 MIN_CAMERA_RADIUS = 10.0  # fallback when view_radius tiny
-# Camera distance = 5 * box diameter for main scene / candidate list (overview)
+# Camera distance = 5 * lens diameter for main scene / candidate list (overview)
 CAMERA_DISTANCE_DIAMETER_MULT = 5.0
-# In popup only: camera 1.5x box diameter so view is closer (main scene unchanged)
+# In popup only: camera 1.25x lens diameter so view is closer (main scene unchanged)
 POPUP_CAMERA_DISTANCE_DIAMETER_MULT = 1.25
 # Minimum angular separation (degrees) between top-10 views so they are distinct
 MIN_TOP10_ANGULAR_SEPARATION_DEG = 30.0
@@ -67,23 +67,34 @@ def _angular_distance_deg(t1: float, p1: float, t2: float, p2: float) -> float:
     return math.degrees(math.acos(dot))
 
 
-def min_box_side_for_component(component: int) -> float:
-    """Minimum box (full) side length from LOD: (comp+1)*3."""
-    return float((component + 1) * 5)
+def nov_min_lens_side_for_comp(comp: int) -> float:
+    """Minimum lens (full) side length from LOD component: (comp+1)*3."""
+    return float((comp + 1) * 3)
 
 
-def box_circum_radius(length: float, width: float, depth: float) -> float:
-    """Distance from box center to corner (used for camera placement)."""
+def nov_lens_circum_radius(length: float, width: float, depth: float) -> float:
+    """Distance from lens center to corner (used for camera placement)."""
     return 0.5 * math.sqrt(length * length + width * width + depth * depth)
 
 
-def cube_size_from_circum_radius(radius: float) -> float:
+def nov_cube_size_from_circum_radius(radius: float) -> float:
     """For a cube, side length such that circumscribing sphere has given radius."""
-    return 2.0 * radius / math.sqrt(3.0) if radius > 1e-9 else 2.0 * MIN_BOX_HALF
+    return 2.0 * radius / math.sqrt(3.0) if radius > 1e-9 else 2.0 * MIN_LENS_HALF
+
+
+def nov_popup_initial_size(length: float, width: float, depth: float, comp: Optional[int]) -> Tuple[int, int]:
+    """Initial NOV popup size (width_px, height_px) from lens and LOD. Uses nov_lens_circum_radius and nov_min_lens_side_for_comp."""
+    circum_r = nov_lens_circum_radius(length, width, depth)
+    min_side = nov_min_lens_side_for_comp(comp) if comp is not None else MIN_LENS_HALF * 2
+    # Scale window from lens size; keep within [min, max] like before
+    w = max(340, min(640, 300 + int(circum_r * 0.04)))
+    h = max(220, min(360, 200 + int(circum_r * 0.03)))
+    return (w, h)
+
 
 # Corner order: 0=(-,-,-), 1=(+,-,-), 2=(-,+,-), 3=(+,+,-), 4=(-,-,+), 5=(+,-,+), 6=(-,+,+), 7=(+,+,+). Opposite of i is 7-i.
-def box_corners(center: Tuple[float, float, float], length: float, width: float, depth: float) -> List[Tuple[float, float, float]]:
-    """Return 8 corner positions (x,y,z) of the box."""
+def nov_lens_corners(center: Tuple[float, float, float], length: float, width: float, depth: float) -> List[Tuple[float, float, float]]:
+    """Return 8 corner positions (x,y,z) of the lens."""
     cx, cy, cz = center[0], center[1], center[2]
     hL, hW, hD = length / 2.0, width / 2.0, depth / 2.0
     return [
@@ -153,15 +164,15 @@ def aabb_from_center_radius(center: Tuple[float, float, float], radius: float) -
 
 def bounds_intersect(
     vol: Tuple[float, float, float, float, float, float],
-    box: Tuple[float, float, float, float, float, float],
+    lens: Tuple[float, float, float, float, float, float],
 ) -> Tuple[float, float, float, float, float, float]:
     """Intersect two AABBs; return degenerate (0,0,0,0,0,0) if no overlap."""
-    x0 = max(vol[0], box[0])
-    x1 = min(vol[1], box[1])
-    y0 = max(vol[2], box[2])
-    y1 = min(vol[3], box[3])
-    z0 = max(vol[4], box[4])
-    z1 = min(vol[5], box[5])
+    x0 = max(vol[0], lens[0])
+    x1 = min(vol[1], lens[1])
+    y0 = max(vol[2], lens[2])
+    y1 = min(vol[3], lens[3])
+    z0 = max(vol[4], lens[4])
+    z1 = min(vol[5], lens[5])
     if x0 >= x1 or y0 >= y1 or z0 >= z1:
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     return (x0, x1, y0, y1, z0, z1)
@@ -383,134 +394,154 @@ def build_nov_sphere_svg(sphere_xy: list, current_index: int) -> str:
     parts.append("</svg>")
     return "".join(parts)
 
-# --- Callbacks (box + corner pins) ---
+# --- Callbacks (lens) ---
 def register_nov_callbacks(ctrl, state, _refs):
-    """Register nov_toggle, nov_handle_click/drag/release (corner resize), nov_hide_box."""
+    """Register nov_toggle, nov_update_rect (2D rect), nov_hide_lens. No 3D lens in scene."""
     from bioset.streaming.lod import _display_to_world
 
-    def _ensure_nov_box_actor():
-        if not _VTK_BOX_AVAILABLE or vtkCubeSource is None:
-            return None, None
-        if "_nov_box_actor" not in _refs:
-            src = vtkCubeSource()
-            mapper = vtkPolyDataMapper()
-            mapper.SetInputConnection(src.GetOutputPort())
-            actor = vtkActor()
-            actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(0.4, 1.0, 0.45)
-            actor.GetProperty().SetOpacity(0.1)
-            actor.GetProperty().SetAmbient(0.9)
-            actor.GetProperty().SetDiffuse(0.1)
-            actor.GetProperty().SetSpecular(0.1)
-            actor.GetProperty().SetSpecularPower(20.0)
-            actor.GetProperty().BackfaceCullingOff()
-            _refs["_nov_box_source"] = src
-            _refs["_nov_box_actor"] = actor
-        return _refs.get("_nov_box_source"), _refs.get("_nov_box_actor")
-
-    def _ensure_nov_corner_pins():
-        """Create 8 small sphere actors for box corners; return list of actors."""
-        if not _VTK_BOX_AVAILABLE or vtkSphereSource is None:
-            return []
-        if "_nov_pin_actors" not in _refs:
-            pins = []
-            for _ in range(8):
-                sp = vtkSphereSource()
-                sp.SetPhiResolution(12)
-                sp.SetThetaResolution(12)
-                sp.SetRadius(1.0)
-                sp.SetCenter(0, 0, 0)
-                mp = vtkPolyDataMapper()
-                mp.SetInputConnection(sp.GetOutputPort())
-                ac = vtkActor()
-                ac.SetMapper(mp)
-                ac.GetProperty().SetColor(0.2, 0.9, 0.35)
-                ac.GetProperty().SetOpacity(0.95)
-                ac.GetProperty().SetAmbient(0.9)
-                ac.GetProperty().SetSpecular(0.3)
-                pins.append((sp, ac))
-            _refs["_nov_pin_actors"] = pins
-        return _refs["_nov_pin_actors"]
-
-    def _update_nov_box(center, length: float, width: float, depth: float, visible: bool):
+    def _nov_cleanup():
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None):
             return
         ren = streamer.renderer
-        src, actor = _ensure_nov_box_actor()
-        if not src or not actor:
-            return
-        if not visible or not center or len(center) < 3 or length <= 0 or width <= 0 or depth <= 0:
-            actor.SetPickable(1)
-            for vol in getattr(streamer, "volumes", {}).values():
-                vol.SetPickable(1)
-            # Restore original interactor style so right-drag rotates camera again
-            rw = getattr(streamer, "render_window", None)
-            if rw and _refs.get("_nov_original_style") is not None:
-                i = rw.GetInteractor()
-                if i:
-                    i.SetInteractorStyle(_refs["_nov_original_style"])
-            if ren.HasViewProp(actor):
-                ren.RemoveActor(actor)
-            for _, pin_actor in _ensure_nov_corner_pins():
-                if ren.HasViewProp(pin_actor):
-                    ren.RemoveActor(pin_actor)
-            return
-        _, b = _volume_center_bounds(streamer)
-        comp, _ = get_lod(streamer)
-        min_ext = min(b[1] - b[0], b[3] - b[2], b[5] - b[4])
-        min_side = max(min_box_side_for_component(comp), min_ext * 0.02)
-        L = max(float(length), min_side)
-        W = max(float(width), min_side)
-        D = max(float(depth), min_side)
-        src.SetCenter(center[0], center[1], center[2])
-        src.SetXLength(L)
-        src.SetYLength(W)
-        src.SetZLength(D)
-        src.Update()
-        if not ren.HasViewProp(actor):
-            ren.AddActor(actor)
-        actor.SetPickable(1)  # box pickable so right-click inside box can drag to move; pins also pickable for resize
-        # Disable picking on volumes so right-click drag hits corner pins instead of volume
         for vol in getattr(streamer, "volumes", {}).values():
-            vol.SetPickable(0)
-        # Use interactor style that ignores right-button so right-click+drag only resizes box
+            vol.SetPickable(1)
         rw = getattr(streamer, "render_window", None)
-        if rw:
+        if rw and _refs.get("_nov_original_style") is not None:
             i = rw.GetInteractor()
             if i:
-                if _refs.get("_nov_original_style") is None:
-                    _refs["_nov_original_style"] = i.GetInteractorStyle()
-                no_right = _make_nov_no_right_style()
-                if no_right:
-                    i.SetInteractorStyle(no_right)
-        # Update corner pins: position and size (pins stay pickable for right-click resize)
-        pins = _ensure_nov_corner_pins()
-        if pins:
-            pin_radius = max(min(L, W, D) * PIN_RADIUS_FRACTION, 2.0)
-            corners = box_corners([center[0], center[1], center[2]], L, W, D)
-            for i, (sp_src, pin_actor) in enumerate(pins):
-                sp_src.SetRadius(pin_radius)
-                sp_src.Update()
-                pin_actor.SetPosition(corners[i][0], corners[i][1], corners[i][2])
-                pin_actor.SetPickable(1)
-                if not ren.HasViewProp(pin_actor):
-                    ren.AddActor(pin_actor)
+                i.SetInteractorStyle(_refs["_nov_original_style"])
+        for key in ("_nov_lens_actor",):
+            actor = _refs.get(key)
+            if actor and ren.HasViewProp(actor):
+                ren.RemoveActor(actor)
+        for _, pa in (_refs.get("_nov_pin_actors") or []):
+            if ren.HasViewProp(pa):
+                ren.RemoveActor(pa)
+
+    def nov_update_rect(rx: float, ry: float, rw: float, rh: float):
+        """Update 2D lens state, convert to 3D box, set clip, refresh main view and popup if open."""
+        side = max(0.05, min(1.0, min(rw, rh)))
+        cx_2d = rx + rw / 2.0
+        cy_2d = ry + rh / 2.0
+        rx = max(0.0, min(1.0 - side, cx_2d - side / 2.0))
+        ry = max(0.0, min(1.0 - side, cy_2d - side / 2.0))
+        state.nov_rect_x, state.nov_rect_y, state.nov_rect_w, state.nov_rect_h = rx, ry, side, side
+        result = _apply_rect_to_3d()
         if _refs.get("view"):
             _refs["view"].update()
+        if getattr(state, "nov_popup_open", False):
+            streamer = _refs.get("streamer")
+            if streamer and getattr(streamer, "sync_nov_volumes", None):
+                streamer.sync_nov_volumes()
+            _point_nov_camera_at_lens_center()
+            if getattr(streamer, "nov_render_window", None):
+                streamer.nov_render_window.Render()
+            if _refs.get("nov_view") and hasattr(_refs["nov_view"], "update"):
+                _refs["nov_view"].update()
+        return result
 
-    def nov_hide_box():
-        _update_nov_box(None, 0.0, 0.0, 0.0, False)
+    def _point_nov_camera_at_lens_center():
+        """Set NOV popup camera to look at current lens center, keeping view direction and distance."""
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "nov_renderer", None):
+            return
+        center = getattr(state, "nov_lens_center", None)
+        if not center or len(center) < 3:
+            return
+        ren = streamer.nov_renderer
+        cam = ren.GetActiveCamera()
+        fp = list(cam.GetFocalPoint())
+        pos = list(cam.GetPosition())
+        dx = pos[0] - fp[0]
+        dy = pos[1] - fp[1]
+        dz = pos[2] - fp[2]
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist < 1e-12:
+            return
+        cam.SetFocalPoint(center[0], center[1], center[2])
+        cam.SetPosition(
+            center[0] + dx,
+            center[1] + dy,
+            center[2] + dz,
+        )
+        ren.ResetCameraClippingRange()
+
+    def _apply_rect_to_3d():
+        """Convert current 2D rect (state) to 3D lens and set_nov_lens_clip."""
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "renderer", None):
+            return None
+        rx = getattr(state, "nov_rect_x", 0.35)
+        ry = getattr(state, "nov_rect_y", 0.35)
+        rw = getattr(state, "nov_rect_w", 0.3)
+        rh = getattr(state, "nov_rect_h", 0.3)
+        ren = streamer.renderer
+        cam = ren.GetActiveCamera()
+        fp = list(cam.GetFocalPoint())
+        pos = list(cam.GetPosition())
+        vx, vy, vz = fp[0] - pos[0], fp[1] - pos[1], fp[2] - pos[2]
+        n = math.sqrt(vx * vx + vy * vy + vz * vz)
+        if n < 1e-12:
+            return None
+        view_normal = (vx / n, vy / n, vz / n)
+        corners_norm = [(rx, ry), (rx + rw, ry), (rx + rw, ry + rh), (rx, ry + rh)]
+        world_pts = []
+        for nx, ny in corners_norm:
+            pt = ray_plane_intersection(ren, nx, ny, (fp[0], fp[1], fp[2]), view_normal)
+            if pt is None:
+                return None
+            world_pts.append(pt)
+        cx = sum(p[0] for p in world_pts) * 0.25
+        cy = sum(p[1] for p in world_pts) * 0.25
+        cz = sum(p[2] for p in world_pts) * 0.25
+        L = math.sqrt(sum((world_pts[1][i] - world_pts[0][i]) ** 2 for i in range(3)))
+        W = math.sqrt(sum((world_pts[3][i] - world_pts[0][i]) ** 2 for i in range(3)))
+        D = 2.0 * math.sqrt(L * L + W * W)
+        _, b = _volume_center_bounds(streamer)
+        comp, _ = get_lod(streamer)
+        min_side = max(nov_min_lens_side_for_comp(comp), min(b[1] - b[0], b[3] - b[2], b[5] - b[4]) * 0.02) if comp is not None else 1.0
+        side_3d = max(L, W, min_side)
+        L = W = side_3d
+        D = max(D, min_side)
+        center = [cx, cy, cz]
+        state.nov_lens_center = list(center)
+        state.nov_lens_length, state.nov_lens_width, state.nov_lens_depth = L, W, D
+        if getattr(streamer, "set_nov_lens_clip", None):
+            streamer.set_nov_lens_clip((center[0], center[1], center[2]), L, W, D)
+        return (center, L, W, D)
+
+    MIN_LENS_SIZE = 0.05   # minimum lens size (5% of view)
+    MAX_LENS_SIZE = 0.9    # maximum lens size (90% of view)
+
+    def nov_rect_size_step(delta: float):
+        """Increase or decrease rect size by step (delta). Keeps center. Min 5%, max 90% of view."""
+        rx = getattr(state, "nov_rect_x", 0.35)
+        ry = getattr(state, "nov_rect_y", 0.35)
+        rw = getattr(state, "nov_rect_w", 0.3)
+        rh = getattr(state, "nov_rect_h", 0.3)
+        new_w = max(MIN_LENS_SIZE, min(MAX_LENS_SIZE, rw + delta))
+        new_h = max(MIN_LENS_SIZE, min(MAX_LENS_SIZE, rh + delta))
+        cx = rx + rw / 2.0
+        cy = ry + rh / 2.0
+        new_x = cx - new_w / 2.0
+        new_y = cy - new_h / 2.0
+        new_x = max(0.0, min(1.0 - new_w, new_x))
+        new_y = max(0.0, min(1.0 - new_h, new_y))
+        nov_update_rect(new_x, new_y, new_w, new_h)
+
+    def nov_hide_lens():
+        _nov_cleanup()
         streamer = _refs.get("streamer")
         if streamer:
-            streamer.clear_nov_box_clip()
+            streamer.clear_nov_lens_clip()
             if getattr(streamer, "clear_nov_view", None):
                 streamer.clear_nov_view()
         if _refs.get("view"):
             _refs["view"].update()
 
     def apply_cam(cam_dict):
-        """Apply camera to NOV popup view only (never to main scene). Uses POPUP_CAMERA_DISTANCE_DIAMETER_MULT * box diameter; main scene keeps 5x for overview."""
+        """Apply camera to NOV popup view only (never to main scene). Uses POPUP_CAMERA_DISTANCE_DIAMETER_MULT * lens diameter; main scene keeps 5x for overview."""
         streamer = _refs.get("streamer")
         if not streamer:
             return
@@ -524,12 +555,12 @@ def register_nov_callbacks(ctrl, state, _refs):
         if fp and len(fp) >= 3:
             cam.SetFocalPoint(fp[0], fp[1], fp[2])
         if pos and len(pos) >= 3 and fp and len(fp) >= 3:
-            # Same direction as candidate, but distance = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * box diameter
-            L = getattr(state, "nov_box_length", 0.0)
-            W = getattr(state, "nov_box_width", 0.0)
-            D = getattr(state, "nov_box_depth", 0.0)
+            # Same direction as candidate, but distance = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * lens diameter
+            L = getattr(state, "nov_lens_length", 0.0)
+            W = getattr(state, "nov_lens_width", 0.0)
+            D = getattr(state, "nov_lens_depth", 0.0)
             if L > 0 and W > 0 and D > 0:
-                diam = 2.0 * box_circum_radius(L, W, D)
+                diam = 2.0 * nov_lens_circum_radius(L, W, D)
                 popup_dist = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * diam
                 dx = pos[0] - fp[0]
                 dy = pos[1] - fp[1]
@@ -625,27 +656,6 @@ def register_nov_callbacks(ctrl, state, _refs):
             dy = min(max((1.0 - y) * (h - 1) if 0 <= y <= 1 else h - 1 - y, 0), h - 1)
         return dx, dy
 
-    def pick_box_or_pin(renderer, x: float, y: float):
-        """Pick at (x,y); return 'pin', pin_idx or 'box' or None."""
-        if not _VTK_BOX_AVAILABLE or vtkPropPicker is None:
-            return None
-        dx, dy = display_to_display_coords(renderer, x, y)
-        if dx is None:
-            return None
-        picker = vtkPropPicker()
-        picker.Pick(dx, dy, 0.0, renderer)
-        picked = picker.GetActor()
-        if picked is None:
-            return None
-        pins = _refs.get("_nov_pin_actors") or []
-        for i, (_, pin_actor) in enumerate(pins):
-            if picked == pin_actor:
-                return ("pin", i)
-        box_actor = _refs.get("_nov_box_actor")
-        if box_actor and picked == box_actor:
-            return ("box",)
-        return None
-
     def ray_plane_intersection(renderer, x: float, y: float, plane_origin: Tuple[float, float, float], plane_normal: Tuple[float, float, float]):
         """Intersect ray from camera through (x,y) with plane; return world point or None."""
         dx, dy = display_to_display_coords(renderer, x, y)
@@ -684,8 +694,26 @@ def register_nov_callbacks(ctrl, state, _refs):
             comp = choose_component(r, s.cfg.distance_rules, min_component=s.cfg.min_component, max_component=s.cfg.max_component)
         return comp, active
 
-    def run_nov_for_box(center: List[float], length: float, width: float, depth: float, compute_entropy: bool = True):
-        """Show NOV panel + box + clip + active channels. If compute_entropy is False, only show popup (no optimal view calc).
+    def nov_initial_rect_from_radius_and_comp(s):
+        """Initial 2D lens (x, y, w, h) in 0-1. Size from nov_min_lens_side_for_comp(comp); displayed as rectangle."""
+        comp, _ = get_lod(s)
+        b = s._volume_bounds_world(comp)
+        L = b[1] - b[0]
+        W = b[3] - b[2]
+        D = b[5] - b[4]
+        diagonal = 2.0 * nov_lens_circum_radius(L, W, D)
+        if diagonal < 1e-9:
+            return (0.35, 0.35, 0.3, 0.3)
+        min_side = nov_min_lens_side_for_comp(comp) if comp is not None else (MIN_LENS_HALF * 2.0)
+        side = min_side / diagonal
+        side = max(0.15, min(0.5, side))
+        cx, cy = 0.5, 0.5
+        rx = max(0.0, min(1.0 - side, cx - side / 2.0))
+        ry = max(0.0, min(1.0 - side, cy - side / 2.0))
+        return (rx, ry, side, side)
+
+    def run_nov_for_lens(center: List[float], length: float, width: float, depth: float, compute_entropy: bool = True):
+        """Show NOV panel + lens + clip + active channels. If compute_entropy is False, only show popup (no optimal view calc).
         If True, also compute optimal view by entropy (slow). Use Set button to run this after opening."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None):
@@ -696,17 +724,19 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_active_channel_items = [c for c in channels if c.get("id") in active_set]
         vol_bounds = streamer._volume_bounds_world(comp)
         active_list = sorted(active_ch) if active_ch else []
-        circum_r = box_circum_radius(length, width, depth)
+        circum_r = nov_lens_circum_radius(length, width, depth)
         cam_dist = CAMERA_DISTANCE_DIAMETER_MULT * (2.0 * circum_r)
         roi_bounds = bounds_intersect(vol_bounds, aabb_from_center_radius(center, circum_r))
         state.nov_panel_visible = True
-        state.nov_box_center = list(center)
-        state.nov_box_length = length
-        state.nov_box_width = width
-        state.nov_box_depth = depth
-        _update_nov_box(state.nov_box_center, length, width, depth, True)
+        wp, hp = nov_popup_initial_size(length, width, depth, comp)
+        state.nov_popup_width_px = wp
+        state.nov_popup_height_px = hp
+        state.nov_lens_center = list(center)
+        state.nov_lens_length = length
+        state.nov_lens_width = width
+        state.nov_lens_depth = depth
         if streamer:
-            streamer.set_nov_box_clip((center[0], center[1], center[2]), length, width, depth)
+            streamer.set_nov_lens_clip((center[0], center[1], center[2]), length, width, depth)
         if not compute_entropy:
             state.nov_candidates = []
             state.nov_has_results = False
@@ -797,223 +827,33 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_sphere_xy = []
         state.nov_panel_visible = False
         state.nov_popup_open = False
-        state.nov_dragging_box_center = False
+        state.nov_dragging_lens_center = False
 
     def nov_toggle():
-        """1st press: show box, drag to set size, release = best views. 2nd press: turn off NOV, remove box from scene."""
+        """1st press: show lens, drag to set size, release = best views. 2nd press: turn off NOV, remove lens from scene."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "renderer", None):
             state.nov_panel_visible = False
             return
         if getattr(state, "nov_panel_visible", False):
             _clear_nov_panel_state()
-            state.nov_drawing_box = False
-            nov_hide_box()
+            state.nov_drawing_lens = False
+            state.nov_show_rect = False
+            nov_hide_lens()
             return
         _clear_nov_panel_state()
-        _update_nov_box(None, 0.0, 0.0, 0.0, False)
-        cam = streamer.renderer.GetActiveCamera()
-        focal = list(cam.GetFocalPoint())
-        cam_pos = cam.GetPosition()
-        cam_z = cam_pos[2] if len(cam_pos) >= 3 else 0.0
-        disp = getattr(state, "bookmark_display_snapshot", None)
-        if disp and isinstance(disp, dict) and disp.get("views"):
-            idx = max(0, int(getattr(state, "bookmark_current_view_index", 0)))
-            views = disp.get("views") or []
-            if idx < len(views):
-                c = (views[idx] or {}).get("camera") or {}
-                pos = c.get("position")
-                if isinstance(pos, (list, tuple)) and len(pos) >= 3:
-                    try:
-                        cam_z = float(pos[2])
-                    except (TypeError, ValueError):
-                        pass
-        data_center, b = _volume_center_bounds(streamer)
-        comp, _ = get_lod(streamer)
-        min_side = min_box_side_for_component(comp)
-        zmin, zmax = b[4], b[5]
-        data_depth = max(zmax - zmin, min_side)
-        init_r = max(0.05 * abs(cam_z), math.sqrt(3.0) * min_side * 0.5)
-        init_side = max(cube_size_from_circum_radius(init_r), min_side)
-        state.nov_drawing_box = True
-        state.nov_box_center = [focal[0], focal[1], (zmin + zmax) * 0.5]
-        state.nov_box_length = init_side
-        state.nov_box_width = init_side
-        state.nov_box_depth = data_depth
-        _update_nov_box(state.nov_box_center, state.nov_box_length, state.nov_box_width, state.nov_box_depth, True)
-        # Open popup + show box + active channels only. User presses Set to compute optimal view.
-        run_nov_for_box(state.nov_box_center, state.nov_box_length, state.nov_box_width, state.nov_box_depth, compute_entropy=False)
-        if _refs.get("view"):
-            _refs["view"].update()
-
-    def _parse_xy(*args):
-        if len(args) == 1 and isinstance(args[0], (list, tuple)) and len(args[0]) >= 2:
-            return float(args[0][0]), float(args[0][1])
-        if len(args) >= 2:
-            return float(args[0]), float(args[1])
-        return None, None
-
-    def nov_handle_click(*args):
-        x, y = _parse_xy(*args)
-        if x is None:
-            return
-        if not getattr(state, "nov_drawing_box", False):
-            return
-        streamer = _refs.get("streamer")
-        if not streamer or not getattr(streamer, "renderer", None):
-            return
-        center = getattr(state, "nov_box_center", None)
-        if not center or len(center) < 3:
-            return
-        hit = pick_box_or_pin(streamer.renderer, float(x), float(y))
-        if hit is None:
-            return
-        if hit[0] == "pin":
-            pin_idx = hit[1]
-            corners = box_corners(center, getattr(state, "nov_box_length", 0), getattr(state, "nov_box_width", 0), getattr(state, "nov_box_depth", 0))
-            fixed_corner = corners[7 - pin_idx]
-            state.nov_dragging_corner = pin_idx
-            _refs["_nov_fixed_corner"] = fixed_corner
-        else:
-            # hit[0] == "box" -> right-click inside box: drag to move box
-            state.nov_dragging_box_center = True
-        if _refs.get("view"):
-            _refs["view"].update()
-
-    def nov_handle_drag(*args):
-        x, y = _parse_xy(*args)
-        if x is None:
-            return
-        streamer = _refs.get("streamer")
-        if not streamer or not getattr(streamer, "renderer", None):
-            return
-        center = getattr(state, "nov_box_center", None)
-        if not center or len(center) < 3:
-            return
-        L = getattr(state, "nov_box_length", 0)
-        W = getattr(state, "nov_box_width", 0)
-        D = getattr(state, "nov_box_depth", 0)
-
-        if getattr(state, "nov_dragging_box_center", False):
-            # Move entire box: ray-plane intersection with plane through box center
-            cam = streamer.renderer.GetActiveCamera()
-            fp = cam.GetFocalPoint()
-            pos = cam.GetPosition()
-            vx = fp[0] - pos[0]
-            vy = fp[1] - pos[1]
-            vz = fp[2] - pos[2]
-            n = math.sqrt(vx * vx + vy * vy + vz * vz)
-            if n < 1e-12:
-                return
-            view_normal = (vx / n, vy / n, vz / n)
-            pt = ray_plane_intersection(streamer.renderer, float(x), float(y), (center[0], center[1], center[2]), view_normal)
-            if pt is None:
-                return
-            _, b = _volume_center_bounds(streamer)
-            hL, hW, hD = L / 2.0, W / 2.0, D / 2.0
-            new_cx = max(b[0] + hL, min(b[1] - hL, pt[0]))
-            new_cy = max(b[2] + hW, min(b[3] - hW, pt[1]))
-            new_cz = max(b[4] + hD, min(b[5] - hD, pt[2]))
-            state.nov_box_center = [new_cx, new_cy, new_cz]
-            _update_nov_box(state.nov_box_center, L, W, D, True)
+        _nov_cleanup()
+        state.nov_show_rect = True
+        state.nov_drawing_lens = True
+        rx, ry, rw, rh = nov_initial_rect_from_radius_and_comp(streamer)
+        result = nov_update_rect(rx, ry, rw, rh)
+        if not result:
+            state.nov_show_rect = False
             if _refs.get("view"):
                 _refs["view"].update()
             return
-
-        corner_idx = getattr(state, "nov_dragging_corner", None)
-        if corner_idx is None:
-            return
-        fixed = _refs.get("_nov_fixed_corner")
-        if not fixed or len(fixed) < 3:
-            return
-        cam = streamer.renderer.GetActiveCamera()
-        fp = cam.GetFocalPoint()
-        pos = cam.GetPosition()
-        vx = fp[0] - pos[0]
-        vy = fp[1] - pos[1]
-        vz = fp[2] - pos[2]
-        n = math.sqrt(vx * vx + vy * vy + vz * vz)
-        if n < 1e-12:
-            return
-        view_normal = (vx / n, vy / n, vz / n)
-        corners = box_corners(center, L, W, D)
-        moving_corner = corners[corner_idx]
-        pt = ray_plane_intersection(streamer.renderer, float(x), float(y), moving_corner, view_normal)
-        if pt is None:
-            return
-        # New box = AABB of fixed corner and new point
-        min_x = min(fixed[0], pt[0])
-        max_x = max(fixed[0], pt[0])
-        min_y = min(fixed[1], pt[1])
-        max_y = max(fixed[1], pt[1])
-        min_z = min(fixed[2], pt[2])
-        max_z = max(fixed[2], pt[2])
-        _, b = _volume_center_bounds(streamer)
-        comp, _ = get_lod(streamer)
-        min_side = max(min_box_side_for_component(comp), min(b[1] - b[0], b[3] - b[2], b[5] - b[4]) * 0.02)
-        new_L = max(max_x - min_x, min_side)
-        new_W = max(max_y - min_y, min_side)
-        new_D = max(max_z - min_z, min_side)
-        new_cx = (min_x + max_x) / 2.0
-        new_cy = (min_y + max_y) / 2.0
-        new_cz = (min_z + max_z) / 2.0
-        state.nov_box_center = [new_cx, new_cy, new_cz]
-        state.nov_box_length = new_L
-        state.nov_box_width = new_W
-        state.nov_box_depth = new_D
-        _update_nov_box(state.nov_box_center, new_L, new_W, new_D, True)
-        if _refs.get("view"):
-            _refs["view"].update()
-
-    def nov_handle_wheel(*args):
-        """Move box center along Z with mouse wheel (delta > 0 forward, < 0 backward)."""
-        delta = 1.0
-        if args and isinstance(args[0], (int, float)):
-            delta = float(args[0])
-        if not getattr(state, "nov_drawing_box", False):
-            return
-        center = getattr(state, "nov_box_center", None)
-        if not center or len(center) < 3:
-            return
-        streamer = _refs.get("streamer")
-        if not streamer:
-            return
-        _, b = _volume_center_bounds(streamer)
-        zmin, zmax = b[4], b[5]
-        step = (zmax - zmin) * 0.05
-        new_z = center[2] + delta * step
-        state.nov_box_center = [center[0], center[1], max(zmin, min(zmax, new_z))]
-        comp, _ = get_lod(streamer)
-        min_side = min_box_side_for_component(comp)
-        L = getattr(state, "nov_box_length", min_side)
-        W = getattr(state, "nov_box_width", min_side)
-        D = getattr(state, "nov_box_depth", min_side)
-        _update_nov_box(state.nov_box_center, L, W, D, True)
-        if _refs.get("view"):
-            _refs["view"].update()
-
-    def nov_handle_release(*args):
-        state.nov_dragging_box_center = False
-        corner_idx = getattr(state, "nov_dragging_corner", None)
-        if corner_idx is None:
-            if _refs.get("view"):
-                _refs["view"].update()
-            return
-        state.nov_dragging_corner = None
-        _refs["_nov_fixed_corner"] = None
-        streamer = _refs.get("streamer")
-        if not streamer or not getattr(streamer, "renderer", None):
-            if _refs.get("view"):
-                _refs["view"].update()
-            return
-        center = getattr(state, "nov_box_center", None)
-        comp, _ = get_lod(streamer)
-        min_side = min_box_side_for_component(comp)
-        L = max(getattr(state, "nov_box_length", 0.0), min_side)
-        W = max(getattr(state, "nov_box_width", 0.0), min_side)
-        D = max(getattr(state, "nov_box_depth", 0.0), min_side)
-        if center and len(center) >= 3:
-            run_nov_for_box(center, L, W, D)
+        center, L, W, D = result
+        run_nov_for_lens(center, L, W, D, compute_entropy=False)
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -1032,14 +872,14 @@ def register_nov_callbacks(ctrl, state, _refs):
             selected = active_list
         if not selected:
             return
-        min_side = min_box_side_for_component(comp)
-        center = getattr(state, "nov_box_center", None)
+        min_side = nov_min_lens_side_for_comp(comp)
+        center = getattr(state, "nov_lens_center", None)
         if not center or len(center) < 3:
             center = cands[0]["camera"]["focalPoint"]
-        L = max(getattr(state, "nov_box_length", 0.0), min_side)
-        W = max(getattr(state, "nov_box_width", 0.0), min_side)
-        D = max(getattr(state, "nov_box_depth", 0.0), min_side)
-        circum_r = box_circum_radius(L, W, D)
+        L = max(getattr(state, "nov_lens_length", 0.0), min_side)
+        W = max(getattr(state, "nov_lens_width", 0.0), min_side)
+        D = max(getattr(state, "nov_lens_depth", 0.0), min_side)
+        circum_r = nov_lens_circum_radius(L, W, D)
         vol_bounds = streamer._volume_bounds_world(comp)
         cam_dist = CAMERA_DISTANCE_DIAMETER_MULT * (2.0 * circum_r)
         roi_bounds = bounds_intersect(vol_bounds, aabb_from_center_radius(center, circum_r))
@@ -1096,13 +936,26 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def nov_set():
-        """Compute best view by entropy for selected channels, apply it, sync NOV popup and open it."""
+        """Use current rectangle position (2D) → sync to 3D box → read data inside → find best camera views → open popup.
+        Flow: 1) User sets rectangle (drag). 2) On Set: apply 2D rect to 3D, read data in that box, compute best views."""
         streamer = _refs.get("streamer")
-        center = getattr(state, "nov_box_center", None)
-        L = getattr(state, "nov_box_length", 0.0)
-        W = getattr(state, "nov_box_width", 0.0)
-        D = getattr(state, "nov_box_depth", 0.0)
-        if not streamer or not center or len(center) < 3 or L <= 0 or W <= 0 or D <= 0:
+        if not streamer or not getattr(streamer, "renderer", None):
+            state.nov_popup_open = True
+            if _refs.get("view"):
+                _refs["view"].update()
+            return
+        # Ensure 3D lens is from current 2D rectangle position (user may have moved/sized it before pressing Set)
+        result = _apply_rect_to_3d()
+        if not result:
+            state.nov_popup_open = True
+            if _refs.get("view"):
+                _refs["view"].update()
+            return
+        center = list(state.nov_lens_center) if getattr(state, "nov_lens_center", None) else None
+        L = getattr(state, "nov_lens_length", 0.0)
+        W = getattr(state, "nov_lens_width", 0.0)
+        D = getattr(state, "nov_lens_depth", 0.0)
+        if not center or len(center) < 3 or L <= 0 or W <= 0 or D <= 0:
             state.nov_popup_open = True
             if _refs.get("view"):
                 _refs["view"].update()
@@ -1117,14 +970,14 @@ def register_nov_callbacks(ctrl, state, _refs):
             selected = active_list[:1]
         if not selected:
             state.nov_popup_open = True
-            if getattr(streamer, "set_nov_box_clip", None):
-                streamer.set_nov_box_clip((center[0], center[1], center[2]), L, W, D)
+            if getattr(streamer, "set_nov_lens_clip", None):
+                streamer.set_nov_lens_clip((center[0], center[1], center[2]), L, W, D)
             if getattr(streamer, "sync_nov_volumes", None):
                 streamer.sync_nov_volumes()
             if _refs.get("view"):
                 _refs["view"].update()
             return
-        circum_r = box_circum_radius(L, W, D)
+        circum_r = nov_lens_circum_radius(L, W, D)
         vol_bounds = streamer._volume_bounds_world(comp)
         cam_dist = CAMERA_DISTANCE_DIAMETER_MULT * (2.0 * circum_r)
         roi_bounds = bounds_intersect(vol_bounds, aabb_from_center_radius(center, circum_r))
@@ -1164,8 +1017,8 @@ def register_nov_callbacks(ctrl, state, _refs):
             state.nov_score_display = candidates[0]["score_normalized"]
             state.nov_view_index_display = f"1/{len(candidates)}"
             apply_cam(candidates[0])
-        if getattr(streamer, "set_nov_box_clip", None):
-            streamer.set_nov_box_clip((center[0], center[1], center[2]), L, W, D)
+        if getattr(streamer, "set_nov_lens_clip", None):
+            streamer.set_nov_lens_clip((center[0], center[1], center[2]), L, W, D)
         if getattr(streamer, "sync_nov_volumes", None):
             streamer.sync_nov_volumes()
         state.nov_popup_open = True
@@ -1182,23 +1035,28 @@ def register_nov_callbacks(ctrl, state, _refs):
         threading.Timer(0.35, _delayed_nov_resize).start()
 
     def nov_reset():
-        """Close popup and remove box from scene (Reset button)."""
-        _clear_nov_panel_state()
-        state.nov_drawing_box = False
-        nov_hide_box()
+        """Reset inside popup only: clear best-view results so user can move lens and press Set again. Keep popup and lens open."""
+        state.nov_candidates = []
+        state.nov_has_results = False
+        state.nov_current_index = 0
+        state.nov_view_index_display = "—"
+        state.nov_score_display = 0.0
+        state.nov_sphere_svg = ""
+        state.nov_sphere_xy = []
+        # Point NOV popup camera at lens center so view is reset; lens content stays
+        _point_nov_camera_at_lens_center()
+        streamer = _refs.get("streamer")
+        if streamer and getattr(streamer, "sync_nov_volumes", None):
+            streamer.sync_nov_volumes()
+        if _refs.get("nov_view"):
+            _refs["nov_view"].update()
         if _refs.get("view"):
             _refs["view"].update()
 
-    def nov_refresh_box_display():
-        """Refresh the NOV box overlay on the main scene (e.g. after restoring an NOV bookmark)."""
-        center = getattr(state, "nov_box_center", None)
-        L = getattr(state, "nov_box_length", 0.0)
-        W = getattr(state, "nov_box_width", 0.0)
-        D = getattr(state, "nov_box_depth", 0.0)
-        if center and len(center) >= 3 and L > 0 and W > 0 and D > 0:
-            _update_nov_box(center, L, W, D, True)
-        else:
-            _update_nov_box(None, 0.0, 0.0, 0.0, False)
+    def nov_refresh_lens_display():
+        """Refresh NOV 2D rect overlay (e.g. after restoring bookmark)."""
+        if _refs.get("view"):
+            _refs["view"].update()
 
     def nov_toggle_channel(channel_id=None):
         """Toggle channel_id in nov_selected_channels (for checkbox list). If channel_id is None, use state.nov_clicked_channel_id."""
@@ -1228,14 +1086,13 @@ def register_nov_callbacks(ctrl, state, _refs):
     ctrl.nov_toggle_channel = nov_toggle_channel
     ctrl.nov_set = nov_set
     ctrl.nov_reset = nov_reset
-    ctrl.nov_refresh_box_display = nov_refresh_box_display
-    ctrl.nov_handle_click = nov_handle_click
-    ctrl.nov_handle_drag = nov_handle_drag
-    ctrl.nov_handle_release = nov_handle_release
-    ctrl.nov_handle_wheel = nov_handle_wheel
-    ctrl.nov_wheel_forward = lambda: nov_handle_wheel(1.0)
-    ctrl.nov_wheel_backward = lambda: nov_handle_wheel(-1.0)
-    ctrl.nov_hide_box = nov_hide_box
+    ctrl.nov_refresh_lens_display = nov_refresh_lens_display
+    ctrl.nov_update_rect = nov_update_rect
+    ctrl.nov_rect_size_step = nov_rect_size_step
+    ctrl.nov_rect_size_plus = lambda: nov_rect_size_step(0.03)
+    ctrl.nov_rect_size_minus = lambda: nov_rect_size_step(-0.03)
+
+    ctrl.nov_hide_lens = nov_hide_lens
     ctrl.nov_prev = lambda: switch(-1)
     ctrl.nov_next = lambda: switch(1)
     ctrl.nov_recompute_scores_if_visible = lambda: recompute() if getattr(state, "nov_panel_visible", False) else None

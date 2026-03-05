@@ -93,7 +93,7 @@ class VolumeStreamer:
         self._channel_data_range: Dict[int, Tuple[float, float]] = {}
 
         # NOV box clip: when set, only voxels inside the box are shown in the NOV popup view (main view stays full)
-        self._nov_box_clip: Optional[Tuple[Tuple[float, float, float], float, float, float]] = None
+        self._nov_lens_clip: Optional[Tuple[Tuple[float, float, float], float, float, float]] = None
         # NOV scoring: cached 3D arrays for entropy+occlusion scoring (prepare_nov_scoring / sample_nov_ray_channels)
         self._nov_scoring_cache: Optional[dict] = None
         self.nov_renderer = None
@@ -432,16 +432,16 @@ class VolumeStreamer:
         self.nov_renderer = renderer
         self.nov_render_window = render_window
 
-    def set_nov_box_clip(self, center: Tuple[float, float, float], length: float, width: float, depth: float) -> None:
-        """Clip NOV popup view to inside box. Main view stays full. Call sync_nov_volumes() after to update popup."""
-        self._nov_box_clip = (
+    def set_nov_lens_clip(self, center: Tuple[float, float, float], length: float, width: float, depth: float) -> None:
+        """Clip NOV popup view to inside lens. Main view stays full. Call sync_nov_volumes() after to update popup."""
+        self._nov_lens_clip = (
             (float(center[0]), float(center[1]), float(center[2])),
             float(length), float(width), float(depth),
         )
 
-    def clear_nov_box_clip(self) -> None:
-        """Remove NOV box clip. Call clear_nov_view() to remove popup volumes."""
-        self._nov_box_clip = None
+    def clear_nov_lens_clip(self) -> None:
+        """Remove NOV lens clip. Call clear_nov_view() to remove popup volumes."""
+        self._nov_lens_clip = None
 
     def clear_nov_view(self) -> None:
         """Remove all volumes from NOV popup renderer and clear NOV volume caches."""
@@ -463,9 +463,9 @@ class VolumeStreamer:
         if self.render_callback is not None:
             self.render_callback()
 
-    def _nov_box_roi_at_component(self, component: int) -> Optional[ROI]:
-        """Voxel ROI (x0, x1, y0, y1) that contains the NOV box in world space at the given component. Adds 2-voxel margin."""
-        clip = self._nov_box_clip
+    def _nov_lens_roi_at_component(self, component: int) -> Optional[ROI]:
+        """Voxel ROI (x0, x1, y0, y1) that contains the NOV lens in world space at the given component. Adds 2-voxel margin."""
+        clip = self._nov_lens_clip
         if not clip:
             return None
         (cx, cy, cz), length, width, depth = clip
@@ -488,11 +488,11 @@ class VolumeStreamer:
 
     def sync_nov_volumes_at_component(self, component: int) -> None:
         """Update NOV popup volumes with clipped data at exactly the given component (for one resolution level)."""
-        if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
+        if not self.nov_renderer or not self._nov_lens_clip or not self._active_channels:
             return
         try:
             for ch in list(self._active_channels):
-                roi_nov = self._nov_box_roi_at_component(component)
+                roi_nov = self._nov_lens_roi_at_component(component)
                 if roi_nov is None:
                     continue
                 try:
@@ -586,7 +586,7 @@ class VolumeStreamer:
 
     def sync_nov_volumes(self) -> None:
         """Update NOV popup: show first frame at coarsest level for speed, then progressively load comp-1 down to min_component."""
-        if not self.nov_renderer or not self._nov_box_clip or not self._active_channels:
+        if not self.nov_renderer or not self._nov_lens_clip or not self._active_channels:
             return
         try:
             start_comp = self.cfg.max_component
@@ -599,11 +599,11 @@ class VolumeStreamer:
 
     def _run_nov_progressive_load(self) -> None:
         """Background thread: load NOV box at each component from coarse to fine and put in queue for main thread."""
-        if not self._nov_box_clip or not self._active_channels:
+        if not self._nov_lens_clip or not self._active_channels:
             return
         try:
             for comp in range(self.cfg.max_component, self.cfg.min_component - 1, -1):
-                roi_nov = self._nov_box_roi_at_component(comp)
+                roi_nov = self._nov_lens_roi_at_component(comp)
                 if roi_nov is None:
                     continue
                 channel_arrays: Dict[int, Tuple[np.ndarray, ROI]] = {}
@@ -627,7 +627,7 @@ class VolumeStreamer:
             item = self._nov_progressive_queue.get_nowait()
         except queue.Empty:
             return False
-        if not self.nov_renderer or not self._nov_box_clip:
+        if not self.nov_renderer or not self._nov_lens_clip:
             return False
         try:
             comp, channel_arrays = item
@@ -1047,8 +1047,8 @@ class VolumeStreamer:
             )
             print(f"[stream] Downsampled volume to ({z},{y},{x}) for OpenGL 2048 limit")
 
-        # Apply NOV box clip only for NOV popup view (main view always shows full volume)
-        clip = getattr(self, "_nov_box_clip", None)
+        # Apply NOV lens clip only for NOV popup view (main view always shows full volume)
+        clip = getattr(self, "_nov_lens_clip", None)
         if for_nov_view and clip is not None:
             (cx, cy, cz), length, width, depth = clip
             hL, hW, hD = length / 2.0, width / 2.0, depth / 2.0

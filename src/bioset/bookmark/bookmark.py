@@ -136,19 +136,22 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def _apply_nov_view(streamer, nov_data):
-        """Apply NOV view: set box, sync volumes, apply camera to nov_renderer, open popup."""
+        """Apply NOV view: set lens, sync volumes, apply camera to nov_renderer, open popup."""
         if not streamer or not getattr(streamer, "nov_renderer", None) or not nov_data:
             return
-        box = nov_data.get("box_center"), nov_data.get("box_length", 0), nov_data.get("box_width", 0), nov_data.get("box_depth", 0)
-        if not box[0] or len(box[0]) < 3 or box[1] <= 0 or box[2] <= 0 or box[3] <= 0:
+        lens_center = nov_data.get("lens_center") or nov_data.get("box_center")
+        lens_length = nov_data.get("lens_length", nov_data.get("box_length", 0))
+        lens_width = nov_data.get("lens_width", nov_data.get("box_width", 0))
+        lens_depth = nov_data.get("lens_depth", nov_data.get("box_depth", 0))
+        if not lens_center or len(lens_center) < 3 or lens_length <= 0 or lens_width <= 0 or lens_depth <= 0:
             return
-        state.nov_box_center = list(box[0])
-        state.nov_box_length = float(box[1])
-        state.nov_box_width = float(box[2])
-        state.nov_box_depth = float(box[3])
+        state.nov_lens_center = list(lens_center)
+        state.nov_lens_length = float(lens_length)
+        state.nov_lens_width = float(lens_width)
+        state.nov_lens_depth = float(lens_depth)
         state.nov_panel_visible = True
         state.nov_popup_open = True
-        streamer.set_nov_box_clip(box[0], box[1], box[2], box[3])
+        streamer.set_nov_lens_clip(lens_center, lens_length, lens_width, lens_depth)
         if getattr(streamer, "sync_nov_volumes", None):
             streamer.sync_nov_volumes()
         c = nov_data.get("camera") or {}
@@ -167,8 +170,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             _refs["view"].update()
         if _refs.get("nov_view"):
             _refs["nov_view"].update()
-        if hasattr(ctrl, "nov_refresh_box_display"):
-            ctrl.nov_refresh_box_display()
+        if hasattr(ctrl, "nov_refresh_lens_display"):
+            ctrl.nov_refresh_lens_display()
 
     def _apply_channel_tfs_to_streamer(streamer):
         """Update streamer TFs from state.channels for active_channels."""
@@ -432,13 +435,13 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                 viewport = {"width": w, "height": h}
         bg = getattr(state, "bg_color", "#000000") or "#000000"
         out = {"camera": camera, "optional_lod": optional_lod, "channels": channels_data, "active_channels": active, "viewport": viewport, "background": bg}
-        if use_nov and getattr(state, "nov_box_center", None) and len(state.nov_box_center) >= 3:
+        if use_nov and getattr(state, "nov_lens_center", None) and len(state.nov_lens_center) >= 3:
             out["nov_view"] = {
                 "camera": dict(camera),
-                "box_center": list(state.nov_box_center),
-                "box_length": float(getattr(state, "nov_box_length", 0)),
-                "box_width": float(getattr(state, "nov_box_width", 0)),
-                "box_depth": float(getattr(state, "nov_box_depth", 0)),
+                "lens_center": list(state.nov_lens_center),
+                "lens_length": float(getattr(state, "nov_lens_length", 0)),
+                "lens_width": float(getattr(state, "nov_lens_width", 0)),
+                "lens_depth": float(getattr(state, "nov_lens_depth", 0)),
             }
         return out
 

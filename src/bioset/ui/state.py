@@ -141,15 +141,22 @@ def init_state(state):
     state.setdefault("bar_filter_dialog", False)
     state.setdefault("bar_expanded", False)
     
-    # NOV (Next Best View) — box ROI; resize via right-click and drag on corner pins
+    # NOV (Next Best View) — 2D rectangle overlay (resize/pan); depth = 2× diagonal of rect in world
+    state.setdefault("nov_show_rect", False)  # show 2D rectangle overlay on main view
+    state.setdefault("nov_rect_x", 0.35)  # 0-1 left
+    state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
+    state.setdefault("nov_rect_w", 0.3)
+    state.setdefault("nov_rect_h", 0.3)
+    state.setdefault("nov_rect_str", "")  # "x,y,w,h" set by client to trigger server update
+    state.setdefault("nov_drag_coords", "")  # "rx,ry,w,h" from client drag (Trame trigger)
     state.setdefault("nov_open", False)
     state.setdefault("nov_drawing_box", False)
-    state.setdefault("nov_box_center", None)
-    state.setdefault("nov_box_length", 0.0)
-    state.setdefault("nov_box_width", 0.0)
-    state.setdefault("nov_box_depth", 0.0)
+    state.setdefault("nov_lens_center", None)
+    state.setdefault("nov_lens_length", 0.0)
+    state.setdefault("nov_lens_width", 0.0)
+    state.setdefault("nov_lens_depth", 0.0)
     state.setdefault("nov_dragging_corner", None)  # 0..7 when dragging a corner pin
-    state.setdefault("nov_dragging_box_center", False)  # True when right-drag inside box to move it
+    state.setdefault("nov_dragging_lens_center", False)  # True when right-drag inside lens to move it
     state.setdefault("nov_panel_visible", False)
     state.setdefault("nov_candidates", [])
     state.setdefault("nov_current_index", 0)
@@ -158,13 +165,16 @@ def init_state(state):
     state.setdefault("nov_sphere_xy", [])  # for SVG mini-map
     state.setdefault("nov_sphere_svg", "")
     state.setdefault("nov_popup_minimized", False)  # minimize NOV popup (header only)
-    state.setdefault("nov_popup_open", False)  # True after "Set" → popup visible; "Reset" closes it
+    state.setdefault("nov_popup_open", False)  # True after "Set"; "Reset" only clears results inside, does not close
     state.setdefault("nov_selected_channels", [])  # Channel ids selected in NOV popup for top-10 entropy views
     state.setdefault("nov_has_results", False)  # True after Set computed candidates; drives single Set vs Reset button
     state.setdefault("nov_active_channel_items", [])  # [{id, name, color}] for active channels only (same as main scene)
     state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
     state.setdefault("nov_scale_bar_label", "")  # e.g. "10 µm" for scale bar in NOV popup
     state.setdefault("nov_scale_bar_width_px", 0)  # pixel width of scale bar (updates with zoom)
+    state.setdefault("nov_popup_width_px", 400)  # resizable NOV popup width (initial from box)
+    state.setdefault("nov_popup_height_px", 300)  # resizable NOV popup height (initial from box)
+    state.setdefault("nov_popup_size_str", "")  # "w,h" from client resize to update server
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
@@ -217,6 +227,47 @@ def register_state_change_handlers(state, ctrl):
         """When user checks/unchecks channels in NOV popup, show only selected channels in the NOV window."""
         if hasattr(ctrl, 'nov_update_visibility'):
             ctrl.nov_update_visibility()
+
+    def _apply_nov_rect_str(value: str):
+        if not value or not hasattr(ctrl, "nov_update_rect"):
+            return
+        try:
+            parts = value.strip().split(",")
+            if len(parts) >= 4:
+                x, y, w, h = float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+                ctrl.nov_update_rect(x, y, w, h)
+        except (ValueError, IndexError):
+            pass
+
+    @state.change("nov_rect_str")
+    def on_nov_rect_str_change(nov_rect_str, **kwargs):
+        """When client sets nov_rect_str to 'x,y,w,h' (input or drag), update lens."""
+        if nov_rect_str:
+            _apply_nov_rect_str(nov_rect_str)
+        state.nov_rect_str = ""
+
+    @state.change("nov_drag_coords")
+    def on_nov_drag_coords_change(nov_drag_coords, **kwargs):
+        """When client sends nov_drag_coords during drag (Trame trigger), update lens."""
+        if nov_drag_coords:
+            _apply_nov_rect_str(nov_drag_coords)
+        state.nov_drag_coords = ""
+
+    @state.change("nov_popup_size_str")
+    def on_nov_popup_size_str_change(nov_popup_size_str, **kwargs):
+        """When client sets nov_popup_size_str to 'w,h' after resizing the NOV popup, update state."""
+        if not nov_popup_size_str:
+            return
+        try:
+            parts = nov_popup_size_str.strip().split(",")
+            if len(parts) >= 2:
+                w = max(280, min(720, int(float(parts[0]))))
+                h = max(200, min(420, int(float(parts[1]))))
+                state.nov_popup_width_px = w
+                state.nov_popup_height_px = h
+            state.nov_popup_size_str = ""
+        except (ValueError, IndexError):
+            pass
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):
