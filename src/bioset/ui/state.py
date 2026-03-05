@@ -147,8 +147,6 @@ def init_state(state):
     state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
     state.setdefault("nov_rect_w", 0.3)
     state.setdefault("nov_rect_h", 0.3)
-    state.setdefault("nov_rect_str", "")  # "x,y,w,h" set by client to trigger server update
-    state.setdefault("nov_drag_coords", "")  # "rx,ry,w,h" from client drag (Trame trigger)
     state.setdefault("nov_open", False)
     state.setdefault("nov_drawing_box", False)
     state.setdefault("nov_lens_center", None)
@@ -227,31 +225,6 @@ def register_state_change_handlers(state, ctrl):
         """When user checks/unchecks channels in NOV popup, show only selected channels in the NOV window."""
         if hasattr(ctrl, 'nov_update_visibility'):
             ctrl.nov_update_visibility()
-
-    def _apply_nov_rect_str(value: str):
-        if not value or not hasattr(ctrl, "nov_update_rect"):
-            return
-        try:
-            parts = value.strip().split(",")
-            if len(parts) >= 4:
-                x, y, w, h = float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
-                ctrl.nov_update_rect(x, y, w, h)
-        except (ValueError, IndexError):
-            pass
-
-    @state.change("nov_rect_str")
-    def on_nov_rect_str_change(nov_rect_str, **kwargs):
-        """When client sets nov_rect_str to 'x,y,w,h' (input or drag), update lens."""
-        if nov_rect_str:
-            _apply_nov_rect_str(nov_rect_str)
-        state.nov_rect_str = ""
-
-    @state.change("nov_drag_coords")
-    def on_nov_drag_coords_change(nov_drag_coords, **kwargs):
-        """When client sends nov_drag_coords during drag (Trame trigger), update lens."""
-        if nov_drag_coords:
-            _apply_nov_rect_str(nov_drag_coords)
-        state.nov_drag_coords = ""
 
     @state.change("nov_popup_size_str")
     def on_nov_popup_size_str_change(nov_popup_size_str, **kwargs):

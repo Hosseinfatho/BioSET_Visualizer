@@ -1,5 +1,5 @@
 # viewer.py
-"""VTK viewer component. Includes 2D NOV rectangle: drag to move, +/- for size."""
+"""VTK viewer component. Includes 2D NOV rectangle (position/size from state); +/- for size only."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def viewer(ctrl, render_window):
                 interactive_ratio=1.0,
             )
             ctrl.view_update = view.update
-            # 2D NOV lens: drag to move (JS); +/- for size.
+            # 2D NOV lens: position/size from state; +/- for size only (no drag, no JS).
             with html.Div(
                 v_show=("nov_show_rect", False),
                 class_="nov-rect-overlay",
@@ -29,16 +29,11 @@ def viewer(ctrl, render_window):
                 with html.Div(
                     class_="nov-rect-lens",
                     style=(
-                        "'left: ' + (nov_rect_x * 100) + '%; bottom: ' + (nov_rect_y * 100) + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1 / 1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); box-sizing: border-box; border-radius: 4px; pointer-events: auto;'",
-                        "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); border-radius: 4px; pointer-events: auto;",
+                        "'left: ' + (nov_rect_x * 100) + '%; bottom: ' + (nov_rect_y * 100) + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1 / 1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); box-sizing: border-box; border-radius: 4px; pointer-events: none;'",
+                        "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); border-radius: 4px; pointer-events: none;",
                     ),
                 ):
-                    # Drag handle: full lens area (behind controls), cursor move — Trame sync via inline script → nov_rect_str
-                    html.Div(
-                        class_="nov-rect-drag-handle",
-                        style="position: absolute; inset: 0; border-radius: 4px; cursor: move; z-index: 0;",
-                    )
-                    # Controls: - + for size only (drag to move)
+                    # Controls: - + for size only
                     _btn = "cursor: pointer; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.95);"
                     _pm = "width: 24px; height: 24px; font-size: 0.95rem; font-weight: bold; " + _btn
                     with html.Div(
@@ -49,12 +44,6 @@ def viewer(ctrl, render_window):
                             html.Span("−")
                         with html.Div(style=_pm, click=ctrl.nov_rect_size_plus):
                             html.Span("+")
-                html.Input(
-                    type="text",
-                    v_model=("nov_rect_str", ""),
-                    attrs={"id": "nov-rect-input", "aria-hidden": "true", "tabindex": "-1"},
-                    style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
-                )
         
         with vuetify.VBtn(
             v_if="analysis_loaded && !right_drawer_open",
