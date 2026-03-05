@@ -53,7 +53,7 @@ Vue.component('bar-plot', {
             const renderData = sourceData.slice(start, end);
 
             if (renderData.length === 0) {
-                container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel data available</div>';
+                container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel is selected</div>';
                 return;
             }
 
@@ -74,7 +74,7 @@ Vue.component('bar-plot', {
                 .padding(0.1);
 
             const y = d3.scaleLinear()
-                .domain([0, 100])
+                .domain([0, maxCount])
                 .range([height - marginBottom, marginTop]);
 
             const svg = d3.select(container)

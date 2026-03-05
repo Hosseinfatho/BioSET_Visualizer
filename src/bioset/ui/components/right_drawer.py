@@ -48,8 +48,9 @@ def right_drawer(state, ctrl):
                         dense=True,
                         dark=True,
                         hide_details=False,
-                        class_="mx-2",
-                        #style="max-width: 200px; flex-shrink: 0;",
+                        classes="mx-2",
+                        small=True,
+                        style="font-size: 0.75rem;",
                         tick_labels=("analysis_dilation_amounts.map(v => v + ' \u03BCm')",),
                     )
                     
@@ -62,10 +63,80 @@ def right_drawer(state, ctrl):
             
             vuetify.VDivider()
             
-            # Hierarchy level control
+            # Heatmap section
             with html.Div(classes="mb-4 mt-3"):
-                html.Div("Detail Level", classes="text-overline mb-3 text-center", style="color: white;")
+                with html.Div(classes="d-flex align-center justify-center mb-3"):
+                    html.Span("Heatmap", classes="text-overline", style="color: white;")
+                    with vuetify.VBtn(
+                        icon=True,
+                        x_small=True,
+                        classes="ml-1",
+                        click="heatmap_visible = !heatmap_visible",
+                    ):
+                        vuetify.VIcon(
+                            v_text="heatmap_visible ? 'mdi-eye' : 'mdi-eye-off'",
+                            x_small=True,
+                            style=("heatmap_visible ? 'color:white' : 'color:#555'",),
+                        )
                 
+                # Combination dropdown
+                with html.Div(classes="d-flex justify-center mb-3"):
+                    with vuetify.VMenu(
+                        offset_y=True,
+                        v_if="heatmap_available_combinations",
+                    ):
+                        with vuetify.Template(v_slot_activator="{ on, attrs }"):
+                            with vuetify.VBtn(
+                                v_bind="attrs",
+                                v_on="on",
+                                small=True,
+                                dark=True,
+                                classes="text-none",
+                            ):
+                                # Show selected combo as chips inside the button
+                                vuetify.Template(
+                                    """
+                                    <span v-if="!heatmap_combination || heatmap_combination.length === 0" style="color: #888;">
+                                        No selection
+                                    </span>
+                                    <span v-else class="d-flex flex-wrap align-center" style="gap: 3px;">
+                                        <v-chip
+                                            v-for="(ch, ci) in heatmap_combination"
+                                            :key="ci"
+                                            x-small
+                                            :style="(function(){var c=channels.find(function(x){return x.name===ch});var clr=c?c.color:'#888';return 'background:'+clr+';border:1px solid '+clr+';color:#000'})()"
+                                        >{{ ch }}</v-chip>
+                                    </span>
+                                    <v-icon small class="ml-1">mdi-chevron-down</v-icon>
+                                    """
+                                )
+                        
+                        with vuetify.VList(dense=True, dark=True, classes="grey darken-4"):
+                            with vuetify.VListItem(
+                                v_for="(combo, idx) in heatmap_available_combinations",
+                                key=("idx",),
+                                dense=True,
+                                click="heatmap_combination = combo.channels",
+                                style="min-height: 32px;",
+                            ):
+                                with vuetify.VListItemContent():
+                                    vuetify.Template(
+                                        """
+                                        <div class="d-flex flex-wrap align-center" style="gap: 3px;">
+                                            <v-chip
+                                                v-for="(ch, ci) in combo.channels"
+                                                :key="ci"
+                                                x-small
+                                                :style="(function(){var c=channels.find(function(x){return x.name===ch});var clr=c?c.color:'#888';var sel=JSON.stringify(heatmap_combination)===JSON.stringify(combo.channels);return 'background:'+(sel?clr:'transparent')+';border:1px solid '+clr+';color:'+(sel?'#000':clr)})()"
+                                            >{{ ch }}</v-chip>
+                                            <span v-if="combo.iou !== null" style="color: #aaa; font-size: 10px; margin-left: 4px;">
+                                                IoU: {{ combo.iou.toFixed(4) }}
+                                            </span>
+                                        </div>
+                                        """
+                                    )
+                
+                # Granularity toggle
                 with html.Div(classes="d-flex justify-center"):
                     with vuetify.VBtnToggle(
                         v_model=("current_hierarchy_level",),
@@ -77,51 +148,9 @@ def right_drawer(state, ctrl):
                             key="level",
                             value=("level",),
                             small=True,
-                            v_text="level === 0 ? 'Fine' : (level === 1 ? 'Medium' : 'Coarse')",
+                            v_text="level === 0 ? 'Fine' : (level === 1 ? 'Medium' : (level === 2 ? 'Coarse' : 'Overview'))",
                         )
             
-            # vuetify.VDivider(class_="my-3")
-            
-            # Heatmap info
-            # with html.Div(classes="mb-4"):
-            #     html.Div("Heatmap", classes="text-overline mb-2", style="color: white;")
-                
-            #     with html.Div(classes="d-flex align-center justify-space-between"):
-            #         html.Span("Tiles shown:", classes="text-caption")
-            #         html.Span("{{ heatmap_tile_count }}", classes="text-caption font-weight-bold")
-                
-            #     # Heatmap visibility toggle
-            #     vuetify.VSwitch(
-            #         v_model=("heatmap_visible",),
-            #         label="Show heatmap",
-            #         dense=True,
-            #         hide_details=True,
-            #         class_="mt-2",
-            #     )
-            
-            # vuetify.VDivider(class_="my-3")
-            
-            # Analysis metadata info
-            # with html.Div():
-            #     html.Div("Analysis Info", classes="text-overline mb-2", style="color: white;")
-                
-            #     with html.Div(classes="text-caption"):
-            #         with html.Div(classes="d-flex justify-space-between"):
-            #             html.Span("File:")
-            #             html.Span("{{ analysis_file_name }}", classes="text-truncate", style="max-width: 150px;")
-                    
-            #         with html.Div(classes="d-flex justify-space-between"):
-            #             html.Span("Channels:")
-            #             html.Span("{{ analysis_channels.length }}")
-                    
-            #         with html.Div(classes="d-flex justify-space-between"):
-            #             html.Span("Dilations:")
-            #             html.Span("{{ analysis_dilation_amounts.join(', ') }}")
-                    
-            #         with html.Div(classes="d-flex justify-space-between"):
-            #             html.Span("Levels:")
-            #             html.Span("{{ analysis_hierarchy_levels.length }}")
-        
         vuetify.VDivider()
         
         # UpSet plot container
@@ -239,7 +268,7 @@ def right_drawer(state, ctrl):
                                 :limit="upset_expanded_limit"
                                 :width="1200"
                                 :height="800"
-                                @click="trigger('upset_click', $event)"
+                                @click="upset_click = $event"
                             />
                             """
                         )
@@ -300,7 +329,7 @@ def right_drawer(state, ctrl):
                     :view-mode="upset_view_mode"
                     :offset="upset_offset"
                     :limit="upset_limit"
-                    @click="trigger('upset_click', $event)"
+                    @click="upset_click = $event"
                 />
                 """
             )
@@ -309,7 +338,7 @@ def right_drawer(state, ctrl):
         
         # Bar chart container
         with html.Div(classes="px-4 py-3"):
-            html.Div("Channel Frequencies", classes="text-overline mb-2 text-center", style="color: white;")
+            html.Div("Marker Coverage", classes="text-overline mb-2 text-center", style="color: white;")
   
             with html.Div(classes="d-flex justify-center mb-2 align-center"):
                 with vuetify.VBtnToggle(

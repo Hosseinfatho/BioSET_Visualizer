@@ -120,12 +120,15 @@ def init_state(state):
 
     # Current analysis settings
     state.setdefault("current_dilation", 0)  # Selected dilation amount
-    state.setdefault("current_hierarchy_level", 2)  # Selected hierarchy (default coarse)
+    state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default coarse)
 
     # Heatmap state
     state.setdefault("heatmap_visible", True)
     state.setdefault("heatmap_color", "#FFFFFF")  # White
     state.setdefault("heatmap_tile_count", 0)
+    state.setdefault("heatmap_combination", [])  # Currently selected combination (list of channel names)
+    state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
+    state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
 
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
@@ -204,7 +207,24 @@ def register_state_change_handlers(state, ctrl):
     def on_upset_click(upset_click, **kwargs):
         if upset_click:
             print(f"[state] UpSet clicked: {upset_click}")
-            # TODO: Handle selection - highlight in VTK view
+            set_names = upset_click.get("sets", [])
+
+            name_to_id = {ch["name"]: ch["id"] for ch in state.channels}
+            new_active = [name_to_id[name] for name in set_names if name in name_to_id]
+
+            if not new_active:
+                return
+
+            state.active_channels = new_active
+
+            visible = list(state.visible_channel_ids)
+            changed = False
+            for ch_id in new_active:
+                if ch_id not in visible:
+                    visible.append(ch_id)
+                    changed = True
+            if changed:
+                state.visible_channel_ids = visible
     
     @state.change("bg_color")
     def on_bg_color_change(bg_color, **kwargs):
@@ -217,8 +237,8 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Active channels changed: {active_channels}")
         if hasattr(ctrl, 'update_active_channels'):
             ctrl.update_active_channels(active_channels)
-        if hasattr(ctrl, 'update_heatmap'):
-            ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_heatmap_combinations'):
+            ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data_local'):
             ctrl.update_upset_data_local()
         if hasattr(ctrl, 'update_bar_data_local'):
@@ -290,11 +310,23 @@ def register_state_change_handlers(state, ctrl):
         except (ValueError, IndexError):
             pass
 
+    @state.change("heatmap_visible")
+    def on_heatmap_visible_change(heatmap_visible, **kwargs):
+        print(f"[state] Heatmap visible changed: {heatmap_visible}")
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
+    @state.change("heatmap_combination")
+    def on_heatmap_combination_change(heatmap_combination, **kwargs):
+        print(f"[state] Heatmap combination changed: {heatmap_combination}")
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):
         print(f"[state] Dilation changed: {current_dilation}")
-        if hasattr(ctrl, 'update_heatmap'):
-            ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_heatmap_combinations'):
+            ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
@@ -303,8 +335,8 @@ def register_state_change_handlers(state, ctrl):
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
-        if hasattr(ctrl, 'update_heatmap'):
-            ctrl.update_heatmap()
+        if hasattr(ctrl, 'update_heatmap_combinations'):
+            ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data() 
         if hasattr(ctrl, 'update_bar_data'):

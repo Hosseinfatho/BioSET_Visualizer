@@ -274,7 +274,7 @@ class AnalysisLoader:
         exact_match: bool = False,
     ) -> list[CombinationData]:
         """
-        Get combinations containing specified channels, aggregated by IoU.
+        Get combinations containing ANY of the specified channels, aggregated by IoU.
         """
         if not self.is_loaded or not channel_filter:
             return []
@@ -307,9 +307,15 @@ class AnalysisLoader:
             '''
             params = [dilation, hierarchy_level]
             
+            # OR logic: combination must contain ANY of the filter channels
+            channel_clauses = []
             for ch in channel_filter:
-                query += " AND (channels = ? OR channels LIKE ? OR channels LIKE ? OR channels LIKE ?)"
+                channel_clauses.append(
+                    "(channels = ? OR channels LIKE ? OR channels LIKE ? OR channels LIKE ?)"
+                )
                 params.extend([ch, f"{ch}|%", f"%|{ch}", f"%|{ch}|%"])
+            
+            query += " AND (" + " OR ".join(channel_clauses) + ")"
             
             query += " GROUP BY channels HAVING sum_union > 0"
             query += " ORDER BY CAST(SUM(total_count) AS REAL) / SUM(total_union) DESC LIMIT ?"
@@ -351,53 +357,53 @@ class AnalysisLoader:
         hierarchy_level: int,
     ) -> list[tuple[str, float]]:
         """
-        Get coverage percentage for each channel.
+        Voxel density = SUM(voxel_count) / total_volume × 100
         
-        Coverage = (# tiles where channel has voxel_count > 0) / (total # tiles) * 100
-        
-        Uses the `channel_stats` table. Falls back to dilation=0.0 if
-        no data exists at the requested dilation.
-        
-        Returns:
-            List of (channel_name, coverage_pct) sorted descending by coverage.
+        This is consistent across hierarchy levels.
         """
         if not self.is_loaded:
             return []
         
-        total_tiles = self._get_total_tiles(hierarchy_level, dilation)
-        if total_tiles == 0:
+        # Get total volume (same regardless of hierarchy level)
+        bounds = self.metadata.volume_bounds
+        total_volume = (
+            (bounds["x"][1] - bounds["x"][0]) *
+            (bounds["y"][1] - bounds["y"][0]) *
+            (bounds["z"][1] - bounds["z"][0])
+        )
+        
+        if total_volume == 0:
             return []
         
-        # Try the requested dilation first
         cursor = self._conn.execute('''
             SELECT 
                 channel,
-                COUNT(*) as tiles_with_signal
+                SUM(voxel_count) as total_voxels
             FROM channel_stats
-            WHERE dilation = ? AND hierarchy_level = ? AND voxel_count > 0
+            WHERE dilation = ? AND hierarchy_level = ?
             GROUP BY channel
-            ORDER BY tiles_with_signal DESC
+            ORDER BY total_voxels DESC
         ''', (dilation, hierarchy_level))
         
         rows = cursor.fetchall()
         
-        # Fallback to dilation=0.0 if no results
+        # Fallback to dilation=0.0
         if not rows and dilation != 0.0:
             cursor = self._conn.execute('''
                 SELECT 
                     channel,
-                    COUNT(*) as tiles_with_signal
+                    SUM(voxel_count) as total_voxels
                 FROM channel_stats
-                WHERE dilation = 0.0 AND hierarchy_level = ? AND voxel_count > 0
+                WHERE dilation = 0.0 AND hierarchy_level = ?
                 GROUP BY channel
-                ORDER BY tiles_with_signal DESC
+                ORDER BY total_voxels DESC
             ''', (hierarchy_level,))
             rows = cursor.fetchall()
         
         results = []
         for row in rows:
-            coverage_pct = (row["tiles_with_signal"] / total_tiles) * 100.0
-            results.append((row["channel"], coverage_pct))
+            density_pct = (row["total_voxels"] / total_volume) * 100.0
+            results.append((row["channel"], density_pct))
         
         return results
     
