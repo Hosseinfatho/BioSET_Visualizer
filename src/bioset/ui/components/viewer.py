@@ -1,5 +1,5 @@
 # viewer.py
-"""VTK viewer component. Includes 2D NOV rectangle; drag to move (script + hidden input) and +/- for size."""
+"""VTK viewer component. Includes 2D NOV lens: circle (inscribed in rect, same center, radius = half rect side); drag and +/- for size."""
 
 from __future__ import annotations
 
@@ -60,8 +60,8 @@ def viewer(ctrl, render_window):
                 _lens_left = "(nov_dragging ? (nov_drag_start_rect_x + nov_drag_delta_x) : nov_rect_x) * 100"
                 _lens_bottom = "(nov_dragging ? (nov_drag_start_rect_y + nov_drag_delta_y) : nov_rect_y) * 100"
                 _lens_style = (
-                    "'left: ' + " + _lens_left + " + '%; bottom: ' + " + _lens_bottom + " + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); box-sizing: border-box; border-radius: 4px; pointer-events: auto;'",
-                    "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); border-radius: 4px; pointer-events: auto;",
+                    "'left: ' + " + _lens_left + " + '%; bottom: ' + " + _lens_bottom + " + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); box-sizing: border-box; border-radius: 50%; pointer-events: auto;'",
+                    "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 2px solid rgba(0,255,100,0.95); background: rgba(0,255,100,0.12); border-radius: 50%; pointer-events: auto;",
                 )
                 _start_drag = "if(window.novStartDrag){ $event.preventDefault(); $event.stopPropagation(); window.novStartDrag($event); }"
                 with html.Div(
@@ -71,7 +71,7 @@ def viewer(ctrl, render_window):
                 ):
                     html.Div(
                         class_="nov-rect-drag-handle",
-                        style="position: absolute; inset: 0; border-radius: 4px; cursor: move; z-index: 0;",
+                        style="position: absolute; inset: 0; border-radius: 50%; cursor: move; z-index: 0;",
                     )
                     _btn = "cursor: pointer; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.95);"
                     _pm = "width: 24px; height: 24px; font-size: 0.95rem; font-weight: bold; " + _btn
