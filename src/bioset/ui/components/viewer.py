@@ -95,19 +95,6 @@ def viewer(ctrl, render_window):
                     attrs={"id": "nov-rect-drag-end", "aria-hidden": "true", "tabindex": "-1"},
                     style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
                 )
-                # Debug report: last server-side drag messages (to find why drag does not work)
-                with html.Div(
-                    style="position: absolute; left: 4px; bottom: 4px; right: 4px; max-height: 80px; overflow: auto; font: 11px monospace; color: lime; background: rgba(0,0,0,0.75); padding: 4px; border-radius: 4px; white-space: pre-wrap;",
-                    v_show=("nov_show_rect", False),
-                ):
-                    html.Span("NOV drag report (server): {{ nov_drag_report || '(none yet)' }}")
-                    with html.Div(style="margin-top: 4px; pointer-events: auto;"):
-                        with vuetify.VBtn(
-                            small=True, dense=True,
-                            click=ctrl.nov_drag_report_test,
-                            style="font-size: 10px; min-width: auto; padding: 0 6px;",
-                        ):
-                            html.Span("Report test")
         
         with vuetify.VBtn(
             v_if="analysis_loaded && !right_drawer_open",

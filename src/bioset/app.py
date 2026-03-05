@@ -92,9 +92,20 @@ def main():
                 except Exception as e:
                     print(f"[error] check_loaded_data: {e}")
 
+        async def _nov_animation_loop():
+            """Drive NOV camera transition: one frame every 40ms so client sees smooth rotation between views."""
+            while True:
+                await asyncio.sleep(0.04)
+                try:
+                    if hasattr(ctrl, "nov_animation_tick"):
+                        ctrl.nov_animation_tick()
+                except Exception:
+                    pass
+
         @ctrl.add("on_server_ready")
         def _start_check_loop(**_):
             asyncio.create_task(_check_loaded_data_loop())
+            asyncio.create_task(_nov_animation_loop())
 
     if scene.streamer is not None:
         scene.streamer.set_render_callback(view.update)

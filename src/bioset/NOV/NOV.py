@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from typing import Callable, List, Optional, Tuple
 
 from bioset.streaming.lod import camera_distance_to_focal, choose_component
@@ -584,15 +585,207 @@ def register_nov_callbacks(ctrl, state, _refs):
         ren.ResetCameraClippingRange()
         if getattr(streamer, "nov_render_window", None):
             streamer.nov_render_window.Render()
-        if _refs.get("view"):
-            _refs["view"].update()
         if _refs.get("nov_view"):
             _refs["nov_view"].update()
+        if _refs.get("view"):
+            _refs["view"].update()
         if getattr(streamer, "nov_render_callback", None):
             try:
                 streamer.nov_render_callback()
             except Exception:
                 pass
+
+    def _target_camera_from_candidate(cam_dict):
+        """Return (position, focal_point, view_up) for the NOV popup camera as apply_cam would set (with popup distance)."""
+        c = cam_dict.get("camera") or cam_dict
+        fp = c.get("focalPoint")
+        pos = c.get("position")
+        view_up = list(c.get("viewUp", [0, 1, 0])[:3]) if c.get("viewUp") else [0.0, 1.0, 0.0]
+        if not fp or len(fp) < 3:
+            return (None, None, view_up)
+        fp = list(fp[:3])
+        if not pos or len(pos) < 3:
+            return (None, fp, view_up)
+        pos = list(pos[:3])
+        L = getattr(state, "nov_lens_length", 0.0)
+        W = getattr(state, "nov_lens_width", 0.0)
+        D = getattr(state, "nov_lens_depth", 0.0)
+        if L > 0 and W > 0 and D > 0:
+            diam = 2.0 * nov_lens_circum_radius(L, W, D)
+            popup_dist = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * diam
+            dx = pos[0] - fp[0]
+            dy = pos[1] - fp[1]
+            dz = pos[2] - fp[2]
+            n = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if n >= 1e-12:
+                scale = popup_dist / n
+                pos = [
+                    fp[0] + dx * scale,
+                    fp[1] + dy * scale,
+                    fp[2] + dz * scale,
+                ]
+        return (pos, fp, view_up)
+
+    def _get_current_nov_camera():
+        """Return (position, focal_point, view_up) from current NOV renderer camera."""
+        streamer = _refs.get("streamer")
+        if not streamer:
+            return (None, None, None)
+        ren = getattr(streamer, "nov_renderer", None)
+        if not ren:
+            return (None, None, None)
+        cam = ren.GetActiveCamera()
+        pos = list(cam.GetPosition())
+        fp = list(cam.GetFocalPoint())
+        vup = list(cam.GetViewUp())
+        return (pos, fp, vup)
+
+    def _apply_camera_state(pos, fp, view_up):
+        """Set NOV camera to given position, focal point, view up; render and update view."""
+        streamer = _refs.get("streamer")
+        if not streamer:
+            return
+        ren = getattr(streamer, "nov_renderer", None)
+        if not ren or pos is None or fp is None:
+            return
+        cam = ren.GetActiveCamera()
+        cam.SetFocalPoint(fp[0], fp[1], fp[2])
+        cam.SetPosition(pos[0], pos[1], pos[2])
+        if view_up and len(view_up) >= 3:
+            cam.SetViewUp(view_up[0], view_up[1], view_up[2])
+        ren.ResetCameraClippingRange()
+        if getattr(streamer, "nov_render_window", None):
+            streamer.nov_render_window.Render()
+        if _refs.get("nov_view"):
+            try:
+                _refs["nov_view"].update()
+            except Exception:
+                pass
+        if getattr(streamer, "nov_render_callback", None):
+            try:
+                streamer.nov_render_callback()
+            except Exception:
+                pass
+
+    def _lerp(a, b, t):
+        return a + (b - a) * t
+
+    def _norm(v):
+        n = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+        if n < 1e-12:
+            return (0.0, 0.0, 0.0), 0.0
+        return (v[0] / n, v[1] / n, v[2] / n), n
+
+    def _slerp(v0, v1, t):
+        """Spherical linear interpolation between unit vectors v0 and v1. Returns unit vector."""
+        dot = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2]
+        if dot > 0.9999:
+            return [_lerp(v0[j], v1[j], t) for j in range(3)]
+        if dot < -0.9999:
+            return [_lerp(v0[j], (-v1[0], -v1[1], -v1[2])[j], t) for j in range(3)]
+        if dot < -1.0:
+            dot = -1.0
+        elif dot > 1.0:
+            dot = 1.0
+        omega = math.acos(dot)
+        sin_omega = math.sin(omega)
+        if sin_omega < 1e-12:
+            return [_lerp(v0[j], v1[j], t) for j in range(3)]
+        a = math.sin((1.0 - t) * omega) / sin_omega
+        b = math.sin(t * omega) / sin_omega
+        return [a * v0[j] + b * v1[j] for j in range(3)]
+
+    def _compute_slerp_frame(anim, t):
+        """Compute (pos, fp, vup) for parameter t in [0,1] from precomputed anim dict (slerp rotation)."""
+        start_fp = anim["start_fp"]
+        end_fp = anim["end_fp"]
+        d0, r0 = anim["d0"], anim["r0"]
+        d1, r1 = anim["d1"], anim["r1"]
+        direction = _slerp(d0, d1, t)
+        dist = _lerp(r0, r1, t)
+        fp = [_lerp(start_fp[j], end_fp[j], t) for j in range(3)]
+        pos = [fp[j] + dist * direction[j] for j in range(3)]
+        vup = _slerp(anim["vup0"], anim["vup1"], t)
+        n = math.sqrt(vup[0] ** 2 + vup[1] ** 2 + vup[2] ** 2)
+        if n >= 1e-12:
+            vup = [vup[0] / n, vup[1] / n, vup[2] / n]
+        return pos, fp, vup
+
+    def _nov_animation_tick():
+        """Called from app async loop every ~40ms. Advances one step of NOV camera transition and pushes frame to client."""
+        anim = _refs.get("_nov_anim")
+        if not anim:
+            return
+        step = anim["step"]
+        total = anim["total"]
+        if step >= total:
+            target_cand = anim["target_cand"]
+            try:
+                _refs.pop("_nov_anim", None)
+            except Exception:
+                pass
+            apply_cam(target_cand)
+            if _refs.get("view"):
+                _refs["view"].update()
+            return
+        t = (step + 1) / total
+        pos, fp, vup = _compute_slerp_frame(anim, t)
+        _apply_camera_state(pos, fp, vup)
+        anim["step"] = step + 1
+
+    def switch_smooth(step):
+        """Start smooth camera rotation to next/previous candidate. Frames are driven by async loop (nov_animation_tick) so client sees each step."""
+        cands = getattr(state, "nov_candidates", []) or []
+        if not cands:
+            return
+        current_idx = getattr(state, "nov_current_index", 0)
+        target_idx = (current_idx + step) % len(cands)
+        if target_idx == current_idx:
+            return
+        target_cand = cands[target_idx]
+        start_pos, start_fp, start_vup = _get_current_nov_camera()
+        end_pos, end_fp, end_vup = _target_camera_from_candidate(target_cand)
+        if end_pos is None or end_fp is None:
+            switch(step)
+            return
+        if start_pos is None or start_fp is None:
+            apply_cam(target_cand)
+            state.nov_current_index = target_idx
+            state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), target_idx)
+            state.nov_score_display = target_cand["score_normalized"]
+            state.nov_view_index_display = f"{target_idx + 1}/{len(cands)}"
+            if _refs.get("view"):
+                _refs["view"].update()
+            return
+        if _refs.get("_nov_anim"):
+            return
+        state.nov_current_index = target_idx
+        state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), target_idx)
+        state.nov_score_display = target_cand["score_normalized"]
+        state.nov_view_index_display = f"{target_idx + 1}/{len(cands)}"
+        end_vup = end_vup or [0.0, 1.0, 0.0]
+        start_vup = start_vup or [0.0, 1.0, 0.0]
+        d0, r0 = _norm([start_pos[j] - start_fp[j] for j in range(3)])
+        d1, r1 = _norm([end_pos[j] - end_fp[j] for j in range(3)])
+        if r0 < 1e-12:
+            r0 = r1 if r1 >= 1e-12 else 1.0
+        if r1 < 1e-12:
+            r1 = r0
+        vup0, _ = _norm(start_vup)
+        vup1, _ = _norm(end_vup)
+        _refs["_nov_anim"] = {
+            "step": 0,
+            "total": 120,
+            "start_fp": start_fp,
+            "end_fp": end_fp,
+            "d0": d0,
+            "r0": r0,
+            "d1": d1,
+            "r1": r1,
+            "vup0": vup0,
+            "vup1": vup1,
+            "target_cand": target_cand,
+        }
 
     def update_nov_scale_bar():
         """Compute scale bar (µm per pixel) from NOV camera and set state for UI. Uses voxel spacing (0.14, 0.14, 0.28) µm."""
@@ -1093,16 +1286,8 @@ def register_nov_callbacks(ctrl, state, _refs):
     ctrl.nov_rect_size_minus = lambda: nov_rect_size_step(-0.03)
 
     ctrl.nov_hide_lens = nov_hide_lens
-    ctrl.nov_prev = lambda: switch(-1)
-    ctrl.nov_next = lambda: switch(1)
+    ctrl.nov_prev = lambda: switch_smooth(-1)
+    ctrl.nov_next = lambda: switch_smooth(1)
+    ctrl.nov_animation_tick = _nov_animation_tick
     ctrl.nov_recompute_scores_if_visible = lambda: recompute() if getattr(state, "nov_panel_visible", False) else None
     ctrl.nov_update_visibility = nov_update_visibility
-
-    def _nov_drag_report_test():
-        """Append a test line to nov_drag_report so we can confirm the report area updates (debug)."""
-        import time
-        r = getattr(state, "nov_drag_report", "") or ""
-        lines = (r + "\nTest server " + str(round(time.time(), 1))).strip().split("\n")
-        state.nov_drag_report = "\n".join(lines[-5:])
-
-    ctrl.nov_drag_report_test = _nov_drag_report_test
