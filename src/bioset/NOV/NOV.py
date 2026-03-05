@@ -36,8 +36,8 @@ def _make_nov_no_right_style():
 # --- Constants ---
 # Step for sampling directions on the sphere (internal; 30° spacing). Score all, sort, take top 10.
 _SPHERE_STEP = 30.0
-# Smaller mesh = faster ranking; 64–128 is enough for 10 views.
-NOV_MESH_SIZE = 128
+# Smaller mesh = faster ranking; 32 for much faster, 48–64 for balance, 128 for higher quality.
+NOV_MESH_SIZE = 32
 VISIBILITY_WEIGHT = 0.8
 OCCLUSION_WEIGHT = 0.2
 MIN_LENS_HALF = 25.0  # fallback when component unknown
@@ -287,7 +287,7 @@ def compute_top10_views_by_entropy(
     camera_distance: Optional[float] = None,
     sample_visibility_fn: Optional[SampleVisibilityFn] = None,
     presence_thresh: float = 0.05,
-    mesh_size: int = 64,
+    mesh_size: int = NOV_MESH_SIZE,
     top_k: int = 10,
     entropy_weight: float = 1.0,
     min_intensity_weight: float = 0.3,
@@ -978,7 +978,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             camera_distance=cam_dist,
             sample_visibility_fn=sample_vis,
             presence_thresh=presence_thresh,
-            mesh_size=64,
+            mesh_size=NOV_MESH_SIZE,
             top_k=10,
         )
         if not candidates:
@@ -1098,7 +1098,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             camera_distance=cam_dist,
             sample_visibility_fn=sample_vis,
             presence_thresh=presence_thresh,
-            mesh_size=64,
+            mesh_size=NOV_MESH_SIZE,
             top_k=10,
         )
         if not candidates:
@@ -1196,7 +1196,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             camera_distance=cam_dist,
             sample_visibility_fn=sample_vis,
             presence_thresh=presence_thresh,
-            mesh_size=64,
+            mesh_size=NOV_MESH_SIZE,
             top_k=10,
         )
         if candidates:
