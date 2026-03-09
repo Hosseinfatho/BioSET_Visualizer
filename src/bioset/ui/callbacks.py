@@ -18,9 +18,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
     _refs = {
         "streamer": None,
         "view": view,
-        "analysis_loader": None,  
+        "analysis_loader": None,
         "heatmap": None,
         "mesh_manager": None,
+        "heatmap_lod": None,
     }
 
     def set_streamer(streamer):
@@ -38,6 +39,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         _refs["mesh_manager"] = mesh_manager
         print(f"[callbacks] Mesh manager set: {mesh_manager}"
               f" (available={mesh_manager.is_available if mesh_manager else False})")
+
+    def set_heatmap_lod(heatmap_lod):
+        """Set the HeatmapLOD reference."""
+        _refs["heatmap_lod"] = heatmap_lod
+        print(f"[callbacks] HeatmapLOD set: {heatmap_lod}")
     
     def load_data():
         """Load data from zarr_url and metadata_url."""
@@ -137,6 +143,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["analysis_loader"]:
             _refs["analysis_loader"].close()
             _refs["analysis_loader"] = None
+
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            heatmap_lod.clear_analysis()
         
         state.channels = []
         state.active_channels = []
@@ -215,7 +225,20 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             loader = _refs["analysis_loader"]
             metadata = loader.load_from_bytes(file_bytes)
-            
+
+            # Notify HeatmapLOD of new analysis context
+            heatmap_lod = _refs.get("heatmap_lod")
+            if heatmap_lod and loader.db_path:
+                z_depth = 1
+                bounds = metadata.volume_bounds
+                if bounds and "z" in bounds:
+                    z_depth = max(1, bounds["z"][1] - bounds["z"][0])
+                heatmap_lod.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
             state.analysis_file_name = file_name
             state.analysis_channels = metadata.channels
             state.analysis_dilation_amounts = metadata.dilation_amounts
@@ -268,7 +291,18 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def update_active_channels(active_channels):
         """Sync streamer state with UI state when active_channels changes."""
         print(f"[callbacks] Syncing active channels: {active_channels}")
-        
+
+        # Keep HeatmapLOD in sync with active channel names
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            channel_names = []
+            for ch_id in active_channels:
+                for ch in state.channels:
+                    if ch["id"] == ch_id:
+                        channel_names.append(ch["name"])
+                        break
+            heatmap_lod.update_channels(channel_names)
+
         streamer = _refs.get("streamer")
         mesh_mgr = _refs.get("mesh_manager")
         
@@ -314,10 +348,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def update_heatmap():
         """Update heatmap visualization based on current state.
-        
+
         Tiles use active_fraction (fraction of tile volume occupied by the
         channel/combination) to set the color-mapped opacity.
         """
+        # Keep HeatmapLOD dilation in sync
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            heatmap_lod.update_dilation(state.current_dilation)
+
         loader = _refs.get("analysis_loader")
         heatmap = _refs.get("heatmap")
         streamer = _refs.get("streamer")
@@ -1052,5 +1091,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_clear = chatbot_clear
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
+    ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.trigger("on_hover")(on_hover)
 

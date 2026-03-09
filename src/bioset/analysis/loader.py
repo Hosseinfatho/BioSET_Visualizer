@@ -76,6 +76,11 @@ class AnalysisLoader:
     @property
     def is_loaded(self) -> bool:
         return self._loaded and self._conn is not None
+
+    @property
+    def db_path(self) -> Optional[Path]:
+        """Path to the decompressed SQLite file on disk."""
+        return self._db_path
     
     def _open_and_load_metadata(self):
         """Open the decompressed DB and load metadata."""

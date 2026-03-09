@@ -21,6 +21,18 @@ def camera_distance_to_focal(camera) -> float:
     return math.sqrt(dx*dx + dy*dy + dz*dz)
 
 
+def choose_heatmap_level(desired_component: int) -> int:
+    """Map volume component (0-6) to heatmap hierarchy level (0-3)."""
+    if desired_component <= 1:
+        return 0
+    elif desired_component <= 3:
+        return 1
+    elif desired_component <= 5:
+        return 2
+    else:
+        return 3
+
+
 def choose_component(distance: float, rules, *, min_component: int, max_component: int) -> int:
     chosen = max_component
     for thresh, comp in rules:

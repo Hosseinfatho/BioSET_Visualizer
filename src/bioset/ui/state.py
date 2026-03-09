@@ -106,6 +106,10 @@ def init_state(state):
     state.setdefault("heatmap_visible", True)
     state.setdefault("heatmap_color", "#FFFFFF")  # White
     state.setdefault("heatmap_tile_count", 0)
+    state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
+
+    # Selected tile from right-click drill-down
+    state.setdefault("selected_tile", None)
 
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
@@ -172,10 +176,14 @@ def register_state_change_handlers(state, ctrl):
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
+        # In auto mode, HeatmapLOD drives the update; skip the sync re-query
+        # to avoid double-loading after check_and_apply sets the level.
+        if state.heatmap_auto_level:
+            return
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
         if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data() 
+            ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
 

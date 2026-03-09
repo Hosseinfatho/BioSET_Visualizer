@@ -65,12 +65,31 @@ def right_drawer(state, ctrl):
             # Hierarchy level control
             with html.Div(classes="mb-4 mt-3"):
                 html.Div("Heatmap", classes="text-overline mb-3 text-center", style="color: white;")
-                
+
+                # Auto/Manual resolution toggle
+                with html.Div(classes="d-flex align-center justify-center mb-2"):
+                    html.Span(
+                        "Manual",
+                        style="color: grey; font-size: 11px; margin-right: 4px;",
+                    )
+                    vuetify.VSwitch(
+                        v_model=("heatmap_auto_level",),
+                        dense=True,
+                        hide_details=True,
+                        color="primary",
+                        style="display: inline-flex;",
+                    )
+                    html.Span(
+                        "Auto",
+                        style="color: grey; font-size: 11px; margin-left: 4px;",
+                    )
+
                 with html.Div(classes="d-flex justify-center"):
                     with vuetify.VBtnToggle(
                         v_model=("current_hierarchy_level",),
                         mandatory=True,
                         dense=True,
+                        disabled=("heatmap_auto_level",),
                     ):
                         vuetify.VBtn(
                             v_for="level in analysis_hierarchy_levels",
