@@ -80,6 +80,8 @@ def _make_volume_from_vtk_image(
     vol = vtkVolume()
     vol.SetMapper(mapper)
     vol.SetProperty(prop)
+    vol.SetPickable(False)
+    
     return vol
 
 
@@ -121,6 +123,8 @@ def _make_volume_from_vtk_image(
     vol = vtkVolume()
     vol.SetMapper(mapper)
     vol.SetProperty(prop)
+    vol.SetPickable(False)
+    
     return vol
 
 
