@@ -44,6 +44,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the HeatmapLOD reference."""
         _refs["heatmap_lod"] = heatmap_lod
         print(f"[callbacks] HeatmapLOD set: {heatmap_lod}")
+
+    def set_heatmap_lod_auto_mode(enabled: bool):
+        """Sync the auto-mode flag on HeatmapLOD when the UI toggle changes."""
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            heatmap_lod.set_auto_mode(enabled)
     
     def load_data():
         """Load data from zarr_url and metadata_url."""
@@ -1181,5 +1187,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
+    ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
     ctrl.trigger("on_hover")(on_hover)
 
