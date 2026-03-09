@@ -1185,6 +1185,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
         png_bytes = capture_screenshot_png_bytes(_refs.get("streamer"))
         return base64.b64encode(png_bytes).decode("utf-8") if png_bytes else None
 
+    def _print_tile_channel_stats(tile, level, dilation):
+        """Print per-channel stats for the selected tile from channel_stats."""
+        loader = _refs.get("analysis_loader")
+        if not loader or not loader.is_loaded:
+            return
+        stats = loader.get_tile_channel_stats(tile.x0, tile.y0, level, dilation)
+        print(f"[picker] Channel stats — tile ({tile.x0},{tile.y0}) "
+              f"level={level} dilation={dilation}:")
+        if stats:
+            print(f"  {'Channel':<20} {'Voxels':>10} {'MeanInt':>10} {'SumInt':>14}")
+            print(f"  {'-'*20} {'-'*10} {'-'*10} {'-'*14}")
+            for row in stats:
+                print(f"  {row['channel']:<20} {row['voxel_count']:>10} "
+                      f"{row['mean_intensity']:>10.3f} {row['sum_intensity']:>14.1f}")
+        else:
+            print("  (no data for this tile / dilation)")
+
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
         from vtkmodules.vtkRenderingCore import vtkPropPicker
@@ -1195,7 +1212,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         setattr(interactor, "_bioset_right_click_picker_registered", True)
 
         picker = vtkPropPicker()
-        
+
         def _on_right_button_press(obj, event):
             click_pos = obj.GetEventPosition()
             heatmap = _refs.get("heatmap")
@@ -1226,6 +1243,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
                 f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
+            _print_tile_channel_stats(tile, state.current_hierarchy_level, state.current_dilation)
 
             sx = getattr(state, 'physical_size_x', 0.14)
             sy = getattr(state, 'physical_size_y', 0.14)
@@ -1421,9 +1439,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
         from vtkmodules.vtkRenderingCore import vtkPropPicker
-        
+
         picker = vtkPropPicker()
-        
+
         def _on_right_button_press(obj, event):
             click_pos = obj.GetEventPosition()
             heatmap = _refs.get("heatmap")
@@ -1454,6 +1472,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
                 f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
+            _print_tile_channel_stats(tile, state.current_hierarchy_level, state.current_dilation)
 
             sx = getattr(state, 'physical_size_x', 0.14)
             sy = getattr(state, 'physical_size_y', 0.14)
