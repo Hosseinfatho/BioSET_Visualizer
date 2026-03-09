@@ -109,6 +109,7 @@ def init_state(state):
     state.setdefault("heatmap_combination", [])  # Currently selected combination (list of channel names)
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
+    state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
 
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
