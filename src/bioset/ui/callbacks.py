@@ -368,8 +368,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     color_rgb=color_rgb,
                     tile_x=tile_x,
                     tile_y=tile_y,
-                    tile_x=tile_x,
-                    tile_y=tile_y,
                     opacity=1.0,
                 )
                 print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")

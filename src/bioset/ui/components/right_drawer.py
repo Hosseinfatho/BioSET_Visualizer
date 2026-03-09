@@ -161,7 +161,6 @@ def right_drawer(state, ctrl):
                         mandatory=True,
                         dense=True,
                         disabled=("heatmap_auto_level",),
-                        disabled=("heatmap_auto_level",),
                     ):
                         vuetify.VBtn(
                             v_for="level in analysis_hierarchy_levels",
