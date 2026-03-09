@@ -14,6 +14,7 @@ import vtkmodules.vtkRenderingVolumeOpenGL2  # noqa: F401
 from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
 from ..streaming import VolumeStreamer
+from ..streaming.heatmap_lod import HeatmapLOD
 from .heatmap import HeatmapRenderer
 from .meshes import MeshManager
 
@@ -23,8 +24,9 @@ class VtkScene:
     render_window: vtkRenderWindow
     interactor: vtkRenderWindowInteractor
     streamer: Optional[VolumeStreamer] = None
-    heatmap: Optional[HeatmapRenderer] = None  
+    heatmap: Optional[HeatmapRenderer] = None
     mesh_manager: Optional[MeshManager] = None
+    heatmap_lod: Optional[HeatmapLOD] = None
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -46,6 +48,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.SetBackground(colors.GetColor3d(cfg.background))
 
     streamer: Optional[VolumeStreamer] = None
+    heatmap_lod: Optional[HeatmapLOD] = None
 
     heatmap = HeatmapRenderer(renderer)
 
@@ -62,8 +65,12 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         streamer = VolumeStreamer(
             cfg=cfg, renderer=renderer, render_window=render_window)
 
+        heatmap_lod = HeatmapLOD()
+
         def _on_end_interaction(obj, evt):
-            streamer.on_interaction_end()
+            desired_comp = streamer.on_interaction_end()
+            if desired_comp is not None:
+                heatmap_lod.on_camera_moved(desired_comp)
 
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
 
@@ -106,4 +113,5 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         streamer=streamer,
         heatmap=heatmap,
         mesh_manager=mesh_manager,
+        heatmap_lod=heatmap_lod,
     )

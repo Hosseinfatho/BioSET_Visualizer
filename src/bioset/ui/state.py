@@ -204,10 +204,12 @@ def register_state_change_handlers(state, ctrl):
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
+        if state.heatmap_auto_level:
+            return
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data() 
+            ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
 
