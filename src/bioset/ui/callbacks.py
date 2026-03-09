@@ -298,17 +298,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Sync streamer state with UI state when active_channels changes."""
         print(f"[callbacks] Syncing active channels: {active_channels}")
 
-        # Keep HeatmapLOD in sync with active channel names
-        heatmap_lod = _refs.get("heatmap_lod")
-        if heatmap_lod:
-            channel_names = []
-            for ch_id in active_channels:
-                for ch in state.channels:
-                    if ch["id"] == ch_id:
-                        channel_names.append(ch["name"])
-                        break
-            heatmap_lod.update_channels(channel_names)
-
         streamer = _refs.get("streamer")
         mesh_mgr = _refs.get("mesh_manager")
         
@@ -443,10 +432,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         Tiles use active_fraction (fraction of tile volume occupied by the
         channel/combination) to set the color-mapped opacity.
         """
-        # Keep HeatmapLOD dilation in sync
+        # Keep HeatmapLOD in sync with the current combination and dilation
         heatmap_lod = _refs.get("heatmap_lod")
         if heatmap_lod:
             heatmap_lod.update_dilation(state.current_dilation)
+            heatmap_lod.update_channels(state.heatmap_combination or [])
 
         loader = _refs.get("analysis_loader")
         heatmap = _refs.get("heatmap")
