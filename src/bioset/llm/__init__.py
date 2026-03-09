@@ -1,3 +1,3 @@
-from .biomni import BiomniClient
+from .biomni import BiomniLocalClient
 
-__all__ = ["BiomniClient"]
+__all__ = ["BiomniLocalClient"]
