@@ -32,7 +32,7 @@ def chatbot_section(state, ctrl):
             with vuetify.VExpansionPanelContent(classes="px-0 py-0"):
                 with html.Div(classes="px-4 py-3"):
                     
-                    # Authentication status
+                    # Initialisation status
                     with html.Div(v_if="!chatbot_authenticated", classes="mb-3"):
                         with vuetify.VAlert(
                             dense=True,
@@ -40,10 +40,10 @@ def chatbot_section(state, ctrl):
                         ):
                             with html.Div(classes="d-flex align-center"):
                                 vuetify.VIcon("mdi-exclamation", small=True, classes="mr-1")
-                                html.Span("Please authenticate to use the AI assistant", classes="text-caption")
-                        
+                                html.Span("Start the Biomni server, then initialise", classes="text-caption")
+
                         vuetify.VBtn(
-                            "Login",
+                            "Initialize",
                             click=ctrl.chatbot_login,
                             block=True,
                             small=True,
@@ -64,7 +64,7 @@ def chatbot_section(state, ctrl):
                             ):
                                 vuetify.VIcon("mdi-message-outline", size=48, color="grey")
                                 html.Div(
-                                    "Ask me anything about this dataset",
+                                    "Label active channels with Biomni",
                                     classes="text-caption grey--text mt-2",
                                 )
                             
@@ -145,7 +145,7 @@ def chatbot_section(state, ctrl):
                         with html.Div(classes="d-flex align-center"):
                             vuetify.VTextField(
                                 v_model=("chatbot_input",),
-                                placeholder="Ask a question...",
+                                placeholder="Ask a question about active markers...",
                                 dense=True,
                                 outlined=True,
                                 hide_details=True,
@@ -154,23 +154,32 @@ def chatbot_section(state, ctrl):
                                 __events=["keyup.enter"],
                                 keyup__enter=ctrl.chatbot_send_message,
                             )
-                            
+
                             with vuetify.VBtn(
                                 icon=True,
                                 small=True,
                                 click=ctrl.chatbot_send_message,
                                 disabled=("chatbot_loading || !chatbot_input || chatbot_input.trim() === ''",),
-                                classes="ml-2",
+                                classes="ml-1",
                             ):
                                 vuetify.VIcon("mdi-send", small=True)
-                        
-                        # Clear chat button
-                        with html.Div(classes="mt-2"):
+
+                        # Label button + Clear chat
+                        with html.Div(classes="d-flex mt-2"):
                             vuetify.VBtn(
-                                "Clear Chat",
+                                "Label",
+                                click=ctrl.chatbot_label,
+                                x_small=True,
+                                outlined=True,
+                                color="primary",
+                                disabled=("chatbot_loading",),
+                                classes="flex-grow-1 mr-1",
+                            )
+                            vuetify.VBtn(
+                                "Clear",
                                 click=ctrl.chatbot_clear,
                                 x_small=True,
                                 text=True,
-                                block=True,
                                 color="grey",
+                                classes="flex-grow-1",
                             )

@@ -1,283 +1,116 @@
 """
-Biomni LLM API client using Gradio Client.
+Biomni local-server client.
+
+Talks to the Flask server started via:
+    conda activate biomni_e1
+    python Biomni/run_server.py --port 5000
 """
 
 from __future__ import annotations
+
 import os
 from typing import Optional
-from gradio_client import Client
+
+import requests
 
 
-class BiomniClient:
-    """Client for interacting with Biomni LLM via Gradio API."""
-    
-    def __init__(self):
-        self.client: Optional[Client] = None
-        self.authenticated = False
-        self.biomni_url = "https://app.biomni.stanford.edu/app/"
-        
-    def login(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        """
-        Authenticate with Biomni using Gradio client.
-        
-        Args:
-            username: Biomni username (falls back to env var BIOMNI_USERNAME)
-            password: Biomni password (falls back to env var BIOMNI_PASSWORD)
-            
-        Returns:
-            True if authentication successful
-            
-        Raises:
-            ValueError: If credentials not provided
-            Exception: If authentication fails
-        """
-        # Get credentials from args or environment
-        username = username or os.getenv("BIOMNI_USERNAME")
-        password = password or os.getenv("BIOMNI_PASSWORD")
-        
-        if not username or not password:
-            raise ValueError(
-                "Biomni credentials not provided. Set BIOMNI_USERNAME and "
-                "BIOMNI_PASSWORD environment variables or pass them to login()."
-            )
-        
+_DEFAULT_BASE_URL = "http://localhost:5000"
+_DEFAULT_LLM = "claude-sonnet-4-6"
+_DEFAULT_MODE = "full"
+
+
+def _check_response(resp: "requests.Response") -> dict:
+    """Raise a descriptive RuntimeError on non-2xx, otherwise return JSON."""
+    if not resp.ok:
         try:
-            print(f"[biomni] Connecting to {self.biomni_url}")
-            self.client = Client(self.biomni_url)
-            
-            print(f"[biomni] Logging in as {username}")
-            result = self.client.predict(
-                username=username,
-                password=password,
-                api_name="/handle_login"
-            )
-            
-            # handle_login returns tuple of 7 elements
-            # We just need to check if login succeeded (client will handle session)
-            self.authenticated = True
-            print("[biomni] Login successful")
-            return True
-                
-        except Exception as e:
-            print(f"[biomni] Login failed: {e}")
-            self.authenticated = False
-            self.client = None
-            raise
-    
-    def generate_response(
-        self, 
-        prompt: str, 
-        model: str = "Claude-4-Sonnet",
-        add_context: bool = True,
-        state_info: dict = None,
-        screenshot: str = None
-    ) -> str:
-        """
-        Generate a response from Biomni LLM.
-        
-        Args:
-            prompt: User's question/prompt
-            model: Model to use (default: Claude-4-Sonnet)
-            add_context: Whether to add challenge context to prompt
-            state_info: Current visualization state (channels, colors, settings, etc.)
-            screenshot: Base64-encoded screenshot of current view
-            
-        Returns:
-            LLM response text
-            
-        Raises:
-            RuntimeError: If not authenticated
-            Exception: If API request fails
-        """
-        if not self.authenticated or self.client is None:
-            raise RuntimeError("Not authenticated. Call login() first.")
-        
-        # Add context about the challenge and current visualization state to the prompt
-        if add_context:
-            prompt = self._add_challenge_context(prompt)
-            if state_info:
-                prompt += self._format_visualization_state(state_info)
-                
-            # Add note about image if screenshot is provided
-            if screenshot:
-                prompt += "\n\nI'm also sharing a screenshot of the current 3D visualization for your reference."
-        
-        try:
-            print(f"[biomni] Sending prompt to {model} (state: {bool(state_info)}, image: {bool(screenshot)})")
-            
-            # Prepare input value
-            input_value = {"text": prompt}
-            
-            # Add screenshot if provided
-            if screenshot:
-                # Biomni expects images in a specific format
-                # Convert base64 to file-like object or handle_file format
-                from gradio_client import handle_file
-                import tempfile
-                import base64
-                
-                try:
-                    # Decode base64 to bytes
-                    image_bytes = base64.b64decode(screenshot)
-                    
-                    # Write to temporary file (Gradio client needs file path)
-                    with tempfile.NamedTemporaryFile(mode='wb', suffix='.png', delete=False) as tmp_file:
-                        tmp_file.write(image_bytes)
-                        tmp_path = tmp_file.name
-                    
-                    # Add file to input
-                    input_value["files"] = [handle_file(tmp_path)]
-                    print(f"[biomni] Screenshot added to request ({len(image_bytes)} bytes)")
-                    
-                except Exception as img_error:
-                    print(f"[biomni] Failed to process screenshot: {img_error}")
-                    # Continue without image if it fails
-            
-            # Call /process_input API with proper parameters
-            result = self.client.predict(
-                input_value=input_value,
-                inner_history=[],
-                main_history=[],
-                model=model,
-                direct_mode=True,
-                api_name="/process_input"
-            )
-            
-            # Clean up temporary file if created
-            if screenshot and 'tmp_path' in locals():
-                try:
-                    import os
-                    os.unlink(tmp_path)
-                except:
-                    pass
-            
-            # result is tuple of 5 elements:
-            # [0] inner_history (executor chatbot)
-            # [1] main_history (co-pilot chatbot) 
-            # [2] status markdown
-            # [3] input value
-            # [4] response markdown
-            
-            print(f"[biomni] Result type: {type(result)}, length: {len(result) if isinstance(result, (list, tuple)) else 'N/A'}")
-            
-            # Extract chat history to get assistant response
-            main_history = result[1] if len(result) > 1 else []
-            
-            assistant_reply = ""
-            if main_history and isinstance(main_history, list):
-                # Find the last assistant message
-                for msg in reversed(main_history):
-                    if isinstance(msg, dict) and msg.get("role") == "assistant":
-                        content = msg.get("content", "")
-                        if isinstance(content, str):
-                            assistant_reply = content
-                            break
-            
-            # Fallback: try other result indices
-            if not assistant_reply and len(result) > 4:
-                assistant_reply = str(result[4]) if result[4] else ""
-            
-            if not assistant_reply:
-                # Last resort: check all result elements for string content
-                for item in result:
-                    if isinstance(item, str) and len(item) > 0 and item not in ["", " "]:
-                        assistant_reply = item
-                        break
-            
-            if not assistant_reply:
-                assistant_reply = "No response received from Biomni"
-            
-            print(f"[biomni] Response received ({len(assistant_reply)} chars)")
-            return assistant_reply
-            
-        except Exception as e:
-            import traceback
-            print(f"[biomni] Generate response failed: {e}")
-            traceback.print_exc()
-            raise
-    
-    def _add_challenge_context(self, prompt: str) -> str:
-        """Add BioMedVis challenge context to the prompt with system instructions."""
-        context = (
-            "You are an AI assistant specialized in biomedical imaging analysis, "
-            "particularly for multiplexed tissue imaging data. "
-            "You are helping researchers analyze a 3D microscopy imaging dataset as part of the "
-            "Bio+MedVis Challenge at IEEE VIS 2025.\n\n"
-            
-            "CHALLENGE CONTEXT:\n"
-            "Title: '3D Microscopy Imaging Challenge: From a RAW imaging volume to biological findings'\n\n"
-            
-            "Description: Highly multiplexed tissue imaging methods, such as Cyclic Immunofluorescence (CycIF), "
-            "allow for the analysis of over 30 biomarkers on a single tissue section. These are essential tools "
-            "for investigating the subcellular complexities of cancer. CyCIF has been instrumental in revealing "
-            "immune-tumor interactions and the progression of melanoma at single-cell precision. "
-            "Researchers have extended these techniques to image volumes, allowing for comprehensive analysis "
-            "of diverse cell types and states within the tumor microenvironment and their spatial interactions.\n\n"
-            
-            "DATASET:\n"
-            "The data volume represents a 194x5508x10908 volume of cancerous tissue from a patient with "
-            "metastatic melanoma. Scientists have identified 'immune niches' in this tissue, which contain "
-            "specific interactions between immune cells of different types and states.\n\n"
-            
-            "YOUR ROLE:\n"
-            "- Help users understand what they're seeing in the visualization\n"
-            "- Explain biological significance of marker combinations\n"
-            "- Suggest interesting spatial interactions to explore\n"
-            "- Provide context on what specific biomarkers indicate\n"
-            "- Guide users through the visual analytics workflow\n\n"
-            
-            "INSTRUCTIONS:\n"
-            "- Be concise and specific in your responses\n"
-            "- Reference the current visualization state when relevant\n"
-            "- DO NOT repeat this entire context in your answers\n"
-            "- Focus on answering the user's specific question\n"
-            "- Use domain expertise to provide biological insights\n\n"
-            
-            "USER'S QUESTION:\n"
-        )
-        return context + prompt
+            body = resp.json()
+            msg = body.get("error") or body.get("message") or str(body)
+        except Exception:
+            msg = resp.text[:300] or f"HTTP {resp.status_code}"
+        raise RuntimeError(f"[{resp.status_code}] {msg}")
+    return resp.json()
 
-    def _format_visualization_state(self, state_info: dict) -> str:
-        """Format current visualization state as context for the LLM."""
-        if not state_info:
-            return ""
-        
-        context_parts = ["\n\nCURRENT VISUALIZATION STATE:"]
-        
-        # Available channels in dataset
-        if "available_channels" in state_info and state_info["available_channels"]:
-            context_parts.append(f"Available biomarker channels in this dataset: {', '.join(state_info['available_channels'])}")
-    
-        # Active channels
-        if "active_channels" in state_info and state_info["active_channels"]:
-            context_parts.append(f"Active channels being displayed: {', '.join(state_info['active_channels'])}")
-        
-        # Channel colors
-        if "channel_colors" in state_info and state_info["channel_colors"]:
-            color_info = [f"{name} ({color})" for name, color in state_info["channel_colors"].items()]
-            context_parts.append(f"Channel colors: {', '.join(color_info)}")
-        
-        # Analysis settings
-        if "dilation" in state_info:
-            context_parts.append(f"Current dilation: {state_info['dilation']} μm")
-        
-        if "hierarchy_level" in state_info:
-            level_name = {0: "Fine", 1: "Medium", 2: "Coarse"}.get(state_info["hierarchy_level"], str(state_info["hierarchy_level"]))
-            context_parts.append(f"Detail level: {level_name}")
-        
-        # Heatmap info
-        if "heatmap_tile_count" in state_info and state_info["heatmap_tile_count"] > 0:
-            context_parts.append(f"Heatmap showing {state_info['heatmap_tile_count']} tiles with marker co-localization")
-        
-        # Data loaded info
-        if "data_loaded" in state_info and state_info["data_loaded"]:
-            if "total_channels" in state_info:
-                context_parts.append(f"Dataset loaded with {state_info['total_channels']} total available channels")
-        
-        return "\n".join(context_parts) if len(context_parts) > 1 else ""
-    
-    def logout(self):
-        """Clear authentication state."""
-        self.authenticated = False
-        self.client = None
-        print("[biomni] Logged out")
+
+class BiomniLocalClient:
+    """HTTP client for the local Biomni Flask server."""
+
+    def __init__(self, base_url: str = _DEFAULT_BASE_URL):
+        self.base_url = base_url.rstrip("/")
+        self.initialized = False
+
+
+    def init(
+        self,
+        llm: str = _DEFAULT_LLM,
+        mode: str = _DEFAULT_MODE,
+        api_key: Optional[str] = None,
+    ) -> bool:
+        """Call POST /init to start the A1 agent on the server."""
+        api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        payload: dict = {"llm": llm, "mode": mode}
+        if api_key:
+            payload["api_key"] = api_key
+
+        print(f"[biomni] Initialising server at {self.base_url} (llm={llm}, mode={mode})")
+        resp = requests.post(f"{self.base_url}/init", json=payload, timeout=60)
+        data = _check_response(resp)
+        if data.get("status") != "ok":
+            raise RuntimeError(f"Server init failed: {data.get('message', data)}")
+
+        self.initialized = True
+        print("[biomni] Server initialised successfully")
+        return True
+
+    def label(
+        self,
+        markers: list[str],
+        mode: str = _DEFAULT_MODE,
+        image: Optional[str] = None,
+    ) -> dict:
+        """Call POST /label.
+
+        Args:
+            markers: e.g. ["CD3:#00FF00", "FOXP3:#FF00FF"]
+            mode:    "minimal" | "db" | "full"
+            image:   Optional base64-encoded PNG screenshot
+
+        Returns dict with keys "labels" and "overall".
+        """
+        if not self.initialized:
+            raise RuntimeError("Client not initialised. Call init() first.")
+
+        payload: dict = {"markers": markers, "mode": mode}
+        if image:
+            payload["image"] = image
+
+        print(f"[biomni] POST /label  markers={len(markers)}  image={bool(image)}")
+        resp = requests.post(f"{self.base_url}/label", json=payload, timeout=300)
+        return _check_response(resp)
+
+    def query(
+        self,
+        markers: list[str],
+        question: str,
+        mode: str = _DEFAULT_MODE,
+        image: Optional[str] = None,
+    ) -> dict:
+        """Call POST /query.
+
+        Args:
+            markers:  e.g. ["CD3:#00FF00", "FOXP3:#FF00FF"]
+            question: Free-form question about the markers / image
+            mode:     "minimal" | "db" | "full"
+            image:    Optional base64-encoded PNG screenshot
+
+        Returns dict with key "answer".
+        """
+        if not self.initialized:
+            raise RuntimeError("Client not initialised. Call init() first.")
+
+        payload: dict = {"markers": markers, "query": question, "mode": mode}
+        if image:
+            payload["image"] = image
+
+        print(f"[biomni] POST /query  markers={len(markers)}  image={bool(image)}")
+        resp = requests.post(f"{self.base_url}/query", json=payload, timeout=300)
+        return _check_response(resp)

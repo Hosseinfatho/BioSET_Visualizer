@@ -1,0 +1,3 @@
+[submodule "Biomni"]
+	path = Biomni
+	url = https://github.com/nyu-vis-krueger-group/Biomni.git
