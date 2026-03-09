@@ -70,6 +70,7 @@ def main():
                 await asyncio.sleep(0.1)
                 try:
                     updated = False
+                    updated = False
                     if scene.streamer.check_and_apply_loaded_data():
                         updated = True
                     if scene.heatmap_lod is not None:
@@ -90,6 +91,11 @@ def main():
         scene.streamer.set_render_callback(view.update)
     if scene.heatmap is not None:
         ctrl.set_heatmap(scene.heatmap)
+    if scene.mesh_manager is not None:
+        ctrl.set_mesh_manager(scene.mesh_manager)
+        ctrl.setup_right_click_picker(scene.interactor)
+    if scene.heatmap_lod is not None:
+        ctrl.set_heatmap_lod(scene.heatmap_lod)
     if scene.mesh_manager is not None:
         ctrl.set_mesh_manager(scene.mesh_manager)
         ctrl.setup_right_click_picker(scene.interactor)

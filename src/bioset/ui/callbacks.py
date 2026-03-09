@@ -19,8 +19,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "streamer": None,
         "view": view,
         "analysis_loader": None,
+        "analysis_loader": None,
         "heatmap": None,
         "mesh_manager": None,
+        "heatmap_lod": None,
         "heatmap_lod": None,
     }
 
@@ -39,6 +41,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
         _refs["mesh_manager"] = mesh_manager
         print(f"[callbacks] Mesh manager set: {mesh_manager}"
               f" (available={mesh_manager.is_available if mesh_manager else False})")
+
+    def set_heatmap_lod(heatmap_lod):
+        """Set the HeatmapLOD reference."""
+        _refs["heatmap_lod"] = heatmap_lod
+        print(f"[callbacks] HeatmapLOD set: {heatmap_lod}")
+
+    def set_heatmap_lod_auto_mode(enabled: bool):
+        """Sync the auto-mode flag on HeatmapLOD when the UI toggle changes."""
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            heatmap_lod.set_auto_mode(enabled)
 
     def set_heatmap_lod(heatmap_lod):
         """Set the HeatmapLOD reference."""
@@ -153,6 +166,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         heatmap_lod = _refs.get("heatmap_lod")
         if heatmap_lod:
             heatmap_lod.clear_analysis()
+
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            heatmap_lod.clear_analysis()
         
         state.channels = []
         state.active_channels = []
@@ -245,6 +262,20 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     z_depth=z_depth,
                 )
 
+
+            # Notify HeatmapLOD of new analysis context
+            heatmap_lod = _refs.get("heatmap_lod")
+            if heatmap_lod and loader.db_path:
+                z_depth = 1
+                bounds = metadata.volume_bounds
+                if bounds and "z" in bounds:
+                    z_depth = max(1, bounds["z"][1] - bounds["z"][0])
+                heatmap_lod.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
             state.analysis_file_name = file_name
             state.analysis_channels = metadata.channels
             state.analysis_dilation_amounts = metadata.dilation_amounts
@@ -255,6 +286,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 state.current_dilation = metadata.dilation_amounts[0]
             
             if metadata.hierarchy_levels:
+                state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
                 state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
             
             # Initialize plot channel selections with all channels
@@ -327,14 +359,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
                 tile_x = state.selected_tile["tile_x"]
                 tile_y = state.selected_tile["tile_y"]
+            if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
+                tile_x = state.selected_tile["tile_x"]
+                tile_y = state.selected_tile["tile_y"]
                 color_rgb = _hex_to_rgb_tuple(color_hex)
                 mesh_mgr.activate_channel_mesh(
                     channel_idx=channel_id,
                     color_rgb=color_rgb,
                     tile_x=tile_x,
                     tile_y=tile_y,
+                    tile_x=tile_x,
+                    tile_y=tile_y,
                     opacity=1.0,
                 )
+                print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
+                
                 print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
                 
         
@@ -428,6 +467,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
     def update_heatmap():
         """Update heatmap visualization based on current state.
+
 
         Tiles use active_fraction (fraction of tile volume occupied by the
         channel/combination) to set the color-mapped opacity.
@@ -736,6 +776,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         color_hex = color_hex.upper()
         
         print(f"[callbacks] Channel {channel_id} color changed to: {color_hex}")
+
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr and channel_id in state.active_channels:
+            mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
 
         mesh_mgr = _refs.get("mesh_manager")
         if mesh_mgr and channel_id in state.active_channels:
@@ -1150,6 +1194,163 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    def setup_right_click_picker(interactor):
+        """Register a VTK prop picker on right-click to select heatmap tiles."""
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+        
+        picker = vtkPropPicker()
+        
+        def _on_right_button_press(obj, event):
+            click_pos = obj.GetEventPosition()
+            heatmap = _refs.get("heatmap")
+            mesh_mgr = _refs.get("mesh_manager")
+            streamer = _refs.get("streamer")
+            
+            if not heatmap or not streamer:
+                return
+            
+            renderer = streamer.renderer
+            
+            volumes = renderer.GetVolumes()
+            volumes.InitTraversal()
+            hidden_volumes = []
+            vol = volumes.GetNextVolume()
+            while vol:
+                hidden_volumes.append((vol, vol.GetVisibility()))
+                vol.SetVisibility(False)
+                vol = volumes.GetNextVolume()
+            
+            try:
+                picker.Pick(click_pos[0], click_pos[1], 0, renderer)
+                picked_actor = picker.GetActor()
+            finally:
+                for vol, was_visible in hidden_volumes:
+                    vol.SetVisibility(was_visible)
+            
+            if picked_actor is None:
+                print(f"[picker] No actor at ({click_pos[0]}, {click_pos[1]})")
+                return
+            
+            tile = heatmap.get_tile_for_actor(picked_actor)
+            if tile is None:
+                print(f"[picker] Picked actor is not a heatmap tile")
+                return
+            
+            print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
+                f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
+            
+            sx = getattr(state, 'physical_size_x', 0.14)
+            sy = getattr(state, 'physical_size_y', 0.14)
+            sz = getattr(state, 'physical_size_z', 0.28)
+        
+            #   world_x = tile_coord * spacing * 128
+            tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
+            tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
+            tile_center_z = 0.0
+            
+            tile_width_world = (tile.x1 - tile.x0) * sx * 128
+            tile_height_world = (tile.y1 - tile.y0) * sy * 128
+            tile_extent = max(tile_width_world, tile_height_world)
+            
+            cam = renderer.GetActiveCamera()
+            cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
+            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+            cam.SetViewUp(0, 1, 0)
+            renderer.ResetCameraClippingRange()
+            
+            print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
+                f"extent={tile_extent:.1f}")
+            
+            active_channels = list(state.active_channels)
+            if mesh_mgr and mesh_mgr.is_available and active_channels:
+                vox_x = (tile.x0 + tile.x1) / 2.0 * 128
+                vox_y = (tile.y0 + tile.y1) / 2.0 * 128
+                
+                first_ch = active_channels[0]
+                mesh_tile = mesh_mgr.find_tile_at_voxel(first_ch, vox_x, vox_y)
+                
+                if mesh_tile:
+                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
+                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                    
+                    for ch_id in active_channels:
+                        color_hex = "#FFFFFF"
+                        for ch in state.channels:
+                            if ch["id"] == ch_id:
+                                color_hex = ch["color"]
+                                break
+                        color_rgb = _hex_to_rgb_tuple(color_hex)
+                        mesh_mgr.activate_channel_mesh(
+                            channel_idx=ch_id,
+                            color_rgb=color_rgb,
+                            tile_x=mesh_tile.tile_x,
+                            tile_y=mesh_tile.tile_y,
+                            opacity=1.0,
+                        )
+                else:
+                    print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
+            
+            if _refs["view"]:
+                _refs["view"].update()
+        
+
+        interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
+        print("[callbacks] Right-click picker registered on interactor")
+
+    _hover_last_actor = [None]
+    def on_hover(px, py):
+        """Handle throttled mousemove from client JS"""
+        heatmap = _refs.get("heatmap")
+        streamer = _refs.get("streamer")
+        if not heatmap or not streamer:
+            return
+
+        renderer = streamer.renderer
+        render_window = renderer.GetRenderWindow()
+        win_size = render_window.GetSize()
+
+        vtk_y = win_size[1] - int(py)
+        vtk_x = int(px)
+
+        # Hide volumes so picker can reach the cube actors
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+        hover_picker = vtkPropPicker()
+
+        volumes = renderer.GetVolumes()
+        volumes.InitTraversal()
+        hidden = []
+        vol = volumes.GetNextVolume()
+        while vol:
+            hidden.append((vol, vol.GetVisibility()))
+            vol.SetVisibility(False)
+            vol = volumes.GetNextVolume()
+
+        try:
+            hover_picker.Pick(vtk_x, vtk_y, 0, renderer)
+            picked_actor = hover_picker.GetActor()
+        finally:
+            for vol, was_visible in hidden:
+                vol.SetVisibility(was_visible)
+
+        prev = _hover_last_actor[0]
+
+        if picked_actor is prev:
+            return
+
+        if prev is not None:
+            prev.GetProperty().EdgeVisibilityOff()
+
+        if picked_actor is not None and heatmap.get_tile_for_actor(picked_actor) is not None:
+            picked_actor.GetProperty().EdgeVisibilityOn()
+            picked_actor.GetProperty().SetEdgeColor(0.0, 0.0, 0.0)
+            picked_actor.GetProperty().SetLineWidth(5.0)
+            _hover_last_actor[0] = picked_actor
+        else:
+            _hover_last_actor[0] = None
+
+        if _refs["view"]:
+            _refs["view"].update()
+
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
@@ -1175,6 +1376,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_clear = chatbot_clear
     ctrl.set_mesh_manager = set_mesh_manager
+    ctrl.setup_right_click_picker = setup_right_click_picker
+    ctrl.set_heatmap_lod = set_heatmap_lod
+    ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
+    ctrl.trigger("on_hover")(on_hover)
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
