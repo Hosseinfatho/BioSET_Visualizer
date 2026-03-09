@@ -77,6 +77,7 @@ def main():
                         if scene.heatmap_lod.check_and_apply(scene.heatmap, server_state):
                             updated = True
                     if updated:
+                        server.state.flush()  # push state changes (e.g. hierarchy level) before render
                         view.update()
                 except Exception as e:
                     print(f"[error] check_loaded_data: {e}")
