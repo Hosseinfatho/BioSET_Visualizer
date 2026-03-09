@@ -173,6 +173,14 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
 
+    @state.change("heatmap_auto_level")
+    def on_heatmap_auto_level_change(heatmap_auto_level, **kwargs):
+        if hasattr(ctrl, 'set_heatmap_lod_auto_mode'):
+            ctrl.set_heatmap_lod_auto_mode(heatmap_auto_level)
+        # Switching to manual: immediately re-query at the current level
+        if not heatmap_auto_level and hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")

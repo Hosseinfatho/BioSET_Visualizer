@@ -50,6 +50,15 @@ class VolumeConfig:
         (-100.0,  0),
     )
 
+    # Heatmap LOD thresholds: (camera_distance, hierarchy_level)
+    # Level 3=Overview (coarse), 0=Fine. Same distance axis as distance_rules.
+    heatmap_distance_rules: Sequence[Tuple[float, int]] = (
+        (1000.0, 3),  # far out  → Overview  (1024-voxel tiles)
+        (300.0,  2),  # medium   → Coarse    (512-voxel tiles)
+        (100.0,  1),  # close    → Medium    (256-voxel tiles)
+        (-100.0, 0),  # very close → Fine    (128-voxel tiles)
+    )
+
     # ROI padding (voxels at the chosen component)
     roi_margin_vox: int = 16
 

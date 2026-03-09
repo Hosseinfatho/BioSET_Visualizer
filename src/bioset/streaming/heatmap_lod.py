@@ -113,7 +113,7 @@ class HeatmapLOD:
 
     DEBOUNCE_DELAY = 0.15
 
-    def __init__(self):
+    def __init__(self, distance_rules=None):
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="heatmap_lod")
         self._queue: queue.Queue[HeatmapResult] = queue.Queue()
         self._debounce_lock = threading.Lock()
@@ -123,8 +123,17 @@ class HeatmapLOD:
         self._db_path: Optional[Path] = None
         self._channel_order: List[str] = []
         self._z_depth: int = 1
-        self._channels: List[str] = []   
+        self._channels: List[str] = []
         self._dilation: float = 0.0
+
+        # Distance rules from config: [(distance_threshold, level), ...]
+        self._distance_rules = distance_rules or (
+            (1000.0, 3),
+            (300.0,  2),
+            (100.0,  1),
+            (-100.0, 0),
+        )
+        self._auto_mode: bool = True  # controlled by UI toggle
 
     def set_analysis(self, db_path: Path, channel_order: List[str], z_depth: int):
         """Called after analysis file is loaded."""
@@ -149,17 +158,25 @@ class HeatmapLOD:
         """Update current dilation so next load uses correct value."""
         self._dilation = dilation
 
+    def set_auto_mode(self, enabled: bool):
+        """Enable or disable automatic level selection. Called when UI toggle changes."""
+        self._auto_mode = enabled
+        print(f"[heatmap_lod] Auto mode: {enabled}")
+
     # Camera movement
 
-    def on_camera_moved(self, desired_component: int):
+    def on_camera_moved(self, distance: float):
         """
         Called from the EndInteractionEvent handler (main thread).
         Schedules a background heatmap re-query if the level should change.
+        Only runs when auto mode is enabled.
         """
+        if not self._auto_mode:
+            return
         if self._db_path is None or not self._channels:
             return
 
-        desired_level = choose_heatmap_level(desired_component)
+        desired_level = choose_heatmap_level(distance, self._distance_rules)
         if desired_level == self._current_level:
             return
 

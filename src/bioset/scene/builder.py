@@ -15,6 +15,7 @@ from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
 from ..streaming import VolumeStreamer
 from ..streaming.heatmap_lod import HeatmapLOD
+from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
 from .meshes import MeshManager
 
@@ -65,12 +66,12 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         streamer = VolumeStreamer(
             cfg=cfg, renderer=renderer, render_window=render_window)
 
-        heatmap_lod = HeatmapLOD()
+        heatmap_lod = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules)
 
         def _on_end_interaction(obj, evt):
             desired_comp = streamer.on_interaction_end()
-            if desired_comp is not None:
-                heatmap_lod.on_camera_moved(desired_comp)
+            dist = camera_distance_to_focal(renderer.GetActiveCamera())
+            heatmap_lod.on_camera_moved(dist)
 
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
 
