@@ -980,6 +980,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             nov_view.update()
 
     _refs["biomni_client"] = None
+    _refs["last_tile_channel_stats"] = None  # populated on right-click tile selection
 
     def _get_biomni_client():
         """Get or create the local Biomni client."""
@@ -1073,13 +1074,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
         return markers
 
+    def _require_tile_stats() -> dict | None:
+        """Return cached tile channel_stats, or add an error message and return None."""
+        cs = _refs.get("last_tile_channel_stats")
+        if not cs:
+            state.chatbot_messages = state.chatbot_messages + [{
+                "role": "error",
+                "content": "No tile selected. Right-click a heatmap tile first.",
+            }]
+        return cs
+
     def chatbot_send_message():
-        """Send a free-form /query using the active markers + screenshot."""
+        """Send a free-form /query using the active markers + tile stats + screenshot."""
         if not state.chatbot_input or not state.chatbot_input.strip():
             return
 
         if not state.chatbot_authenticated:
             print("[callbacks] Cannot send message - Biomni not initialised")
+            return
+
+        channel_stats = _require_tile_stats()
+        if channel_stats is None:
             return
 
         user_text = state.chatbot_input.strip()
@@ -1096,7 +1111,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             markers = _build_markers()
             screenshot_base64 = capture_screenshot()
 
-            result = client.query(markers, user_text, image=screenshot_base64)
+            result = client.query(markers, user_text, channel_stats, image=screenshot_base64)
             response_text = result.get("answer", str(result))
 
             state.chatbot_messages = state.chatbot_messages + [
@@ -1114,9 +1129,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_loading = False
 
     def chatbot_label():
-        """Run a /label call using active markers + screenshot."""
+        """Run a /label call using active markers + tile stats + screenshot."""
         if not state.chatbot_authenticated:
             print("[callbacks] Cannot label - Biomni not initialised")
+            return
+
+        channel_stats = _require_tile_stats()
+        if channel_stats is None:
             return
 
         markers = _build_markers()
@@ -1137,7 +1156,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             client = _get_biomni_client()
             screenshot_base64 = capture_screenshot()
 
-            result = client.label(markers, image=screenshot_base64)
+            result = client.label(markers, channel_stats, image=screenshot_base64)
 
             lines = []
             raw_labels = result.get("labels", {})
@@ -1172,7 +1191,57 @@ def register_callbacks(ctrl, state, view, streamer=None):
             ]
         finally:
             state.chatbot_loading = False
-    
+
+    def chatbot_suggest():
+        """Run a /suggest call using active markers + tile stats + screenshot."""
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot suggest - Biomni not initialised")
+            return
+
+        channel_stats = _require_tile_stats()
+        if channel_stats is None:
+            return
+
+        markers = _build_markers()
+        marker_display = ", ".join(m.split(":")[0] for m in markers) if markers else "(none)"
+        print(f"[callbacks] Biomni suggest for: {marker_display}")
+        state.chatbot_messages = state.chatbot_messages + [
+            {"role": "user", "content": f"Suggest channels to add alongside: {marker_display}"}
+        ]
+        state.chatbot_loading = True
+
+        try:
+            client = _get_biomni_client()
+            screenshot_base64 = capture_screenshot()
+
+            result = client.suggest(markers, channel_stats, image=screenshot_base64)
+
+            suggestions = result.get("suggestions", [])
+            if suggestions:
+                lines = ["Suggested channels:"]
+                for s in suggestions:
+                    priority = s.get("priority", "")
+                    channel = s.get("channel", "")
+                    reason = s.get("reason", "")
+                    lines.append(f"  [{priority}] {channel}: {reason}")
+                response_text = "\n".join(lines)
+            else:
+                response_text = str(result)
+
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "assistant", "content": response_text}
+            ]
+            print("[callbacks] Biomni suggest response received")
+
+        except Exception as e:
+            error_msg = f"Error: {e}"
+            print(f"[callbacks] Biomni suggest error: {error_msg}")
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+
     def chatbot_clear():
         """Clear the chatbot conversation history."""
         print("[callbacks] Clearing chatbot messages")
@@ -1186,7 +1255,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         return base64.b64encode(png_bytes).decode("utf-8") if png_bytes else None
 
     def _print_tile_channel_stats(tile, level, dilation):
-        """Print per-channel stats for the selected tile from channel_stats."""
+        """Print per-channel stats and build the channel_stats dict stored in _refs."""
         loader = _refs.get("analysis_loader")
         if not loader or not loader.is_loaded:
             return
@@ -1201,6 +1270,30 @@ def register_callbacks(ctrl, state, view, streamer=None):
                       f"{row['mean_intensity']:>10.3f} {row['sum_intensity']:>14.1f}")
         else:
             print("  (no data for this tile / dilation)")
+
+        # total voxels in this tile region (width × height in base voxels × z depth)
+        base_tile_px = 128
+        width_vox = (tile.x1 - tile.x0) * base_tile_px
+        height_vox = (tile.y1 - tile.y0) * base_tile_px
+        bounds = loader.metadata.volume_bounds if loader.metadata else {}
+        z_depth = max(1, bounds["z"][1] - bounds["z"][0]) if bounds and "z" in bounds else 1
+        total_voxels = width_vox * height_vox * z_depth
+
+        dtype_max = loader.metadata.dtype_max if loader.metadata else 65535
+
+        _refs["last_tile_channel_stats"] = {
+            "dtype_max": dtype_max,
+            "total_voxels": total_voxels,
+            "channels": {
+                row["channel"]: {
+                    "mean_intensity": row["mean_intensity"],
+                    "segmented_voxels": row["voxel_count"],
+                }
+                for row in stats
+            },
+        }
+        print(f"[picker] channel_stats cached: {len(stats)} channels, "
+              f"total_voxels={total_voxels}, dtype_max={dtype_max}")
 
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
@@ -1649,6 +1742,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.biomni_upload_file = biomni_upload_file
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
+    ctrl.chatbot_suggest = chatbot_suggest
     ctrl.chatbot_clear = chatbot_clear
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker

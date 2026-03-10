@@ -109,22 +109,24 @@ class BiomniLocalClient:
     def label(
         self,
         markers: list[str],
+        channel_stats: dict,
         mode: str = _DEFAULT_MODE,
         image: Optional[str] = None,
     ) -> dict:
         """Call POST /label.
 
         Args:
-            markers: e.g. ["CD3:#00FF00", "FOXP3:#FF00FF"]
-            mode:    "minimal" | "db" | "full"
-            image:   Optional base64-encoded PNG screenshot
+            markers:       e.g. ["CD3:#00FF00", "FOXP3:#FF00FF"]
+            channel_stats: full stats dict for the selected tile (all channels)
+            mode:          "minimal" | "db" | "full"
+            image:         Optional base64-encoded JPEG screenshot
 
         Returns dict with keys "labels" and "overall".
         """
         if not self.initialized:
             raise RuntimeError("Client not initialised. Call init() first.")
 
-        payload: dict = {"markers": markers, "mode": mode}
+        payload: dict = {"markers": markers, "channel_stats": channel_stats, "mode": mode}
         if image:
             payload["image"] = image
 
@@ -132,30 +134,73 @@ class BiomniLocalClient:
         resp = requests.post(f"{self.base_url}/label", json=payload, timeout=300)
         return _check_response(resp)
 
+    # ------------------------------------------------------------------
+    # /query
+    # ------------------------------------------------------------------
+
     def query(
         self,
         markers: list[str],
         question: str,
+        channel_stats: dict,
         mode: str = _DEFAULT_MODE,
         image: Optional[str] = None,
     ) -> dict:
         """Call POST /query.
 
         Args:
-            markers:  e.g. ["CD3:#00FF00", "FOXP3:#FF00FF"]
-            question: Free-form question about the markers / image
-            mode:     "minimal" | "db" | "full"
-            image:    Optional base64-encoded PNG screenshot
+            markers:       e.g. ["CD3:#00FF00", "FOXP3:#FF00FF"]
+            question:      Free-form question about the markers / image
+            channel_stats: full stats dict for the selected tile (all channels)
+            mode:          "minimal" | "db" | "full"
+            image:         Optional base64-encoded JPEG screenshot
 
         Returns dict with key "answer".
         """
         if not self.initialized:
             raise RuntimeError("Client not initialised. Call init() first.")
 
-        payload: dict = {"markers": markers, "query": question, "mode": mode}
+        payload: dict = {
+            "markers": markers,
+            "query": question,
+            "channel_stats": channel_stats,
+            "mode": mode,
+        }
         if image:
             payload["image"] = image
 
         print(f"[biomni] POST /query  markers={len(markers)}  image={bool(image)}")
         resp = requests.post(f"{self.base_url}/query", json=payload, timeout=300)
+        return _check_response(resp)
+
+    # ------------------------------------------------------------------
+    # /suggest
+    # ------------------------------------------------------------------
+
+    def suggest(
+        self,
+        markers: list[str],
+        channel_stats: dict,
+        mode: str = _DEFAULT_MODE,
+        image: Optional[str] = None,
+    ) -> dict:
+        """Call POST /suggest.
+
+        Args:
+            markers:       currently selected markers e.g. ["CD3:#00FF00"]
+            channel_stats: full stats dict for the selected tile (all channels)
+            mode:          "minimal" | "db" | "full"
+            image:         Optional base64-encoded JPEG screenshot
+
+        Returns dict with key "suggestions" (list of {channel, reason, priority}).
+        """
+        if not self.initialized:
+            raise RuntimeError("Client not initialised. Call init() first.")
+
+        payload: dict = {"markers": markers, "channel_stats": channel_stats, "mode": mode}
+        if image:
+            payload["image"] = image
+
+        print(f"[biomni] POST /suggest  markers={len(markers)}  image={bool(image)}")
+        resp = requests.post(f"{self.base_url}/suggest", json=payload, timeout=300)
         return _check_response(resp)

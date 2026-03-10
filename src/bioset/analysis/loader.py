@@ -15,6 +15,7 @@ class AnalysisMetadata:
     hierarchy_levels: list[dict]
     dilation_amounts: list[float]
     volume_bounds: dict
+    dtype_max: int = 65535  # max intensity value for dataset dtype (default: uint16)
 
 
 @dataclass
@@ -95,6 +96,7 @@ class AnalysisLoader:
             hierarchy_levels=meta_dict.get("hierarchy_levels", []),
             dilation_amounts=meta_dict.get("dilation_amounts", []),
             volume_bounds=meta_dict.get("volume_bounds", {}),
+            dtype_max=int(meta_dict.get("dtype_max", 65535)),
         )
         
         self._loaded = True

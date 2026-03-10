@@ -146,7 +146,7 @@ def chatbot_section(state, ctrl):
                             ):
                                 vuetify.VIcon("mdi-send", small=True)
 
-                        # Label button + Clear chat
+                        # Label / Suggest / Clear buttons
                         with html.Div(classes="d-flex mt-2"):
                             vuetify.VBtn(
                                 "Label",
@@ -154,6 +154,15 @@ def chatbot_section(state, ctrl):
                                 x_small=True,
                                 outlined=True,
                                 color="white",
+                                disabled=("chatbot_loading",),
+                                classes="flex-grow-1 mr-1",
+                            )
+                            vuetify.VBtn(
+                                "Suggest",
+                                click=ctrl.chatbot_suggest,
+                                x_small=True,
+                                outlined=True,
+                                color="teal",
                                 disabled=("chatbot_loading",),
                                 classes="flex-grow-1 mr-1",
                             )
