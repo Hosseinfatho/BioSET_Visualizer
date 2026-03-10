@@ -29,7 +29,10 @@ import vtkmodules.vtkRenderingVolumeOpenGL2  # noqa: F401
 from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
 from ..streaming import VolumeStreamer
+from ..streaming.heatmap_lod import HeatmapLOD
+from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
+from .meshes import MeshManager
 
 
 # Axis length (smaller = smaller arrows) and camera distance (larger = more margin, no clipping when rotating).
@@ -243,6 +246,14 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
 
     renderer.ResetCameraClippingRange()
     renderer.ResetCamera()
+
+    mesh_manager: Optional[MeshManager] = None
+    if cfg.mesh_dir:
+        mesh_manager = MeshManager(
+            mesh_dir=cfg.mesh_dir,
+            renderer=renderer,
+            base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
+        )
 
     return VtkScene(
         renderer=renderer,

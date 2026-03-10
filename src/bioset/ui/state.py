@@ -120,7 +120,8 @@ def init_state(state):
 
     # Current analysis settings
     state.setdefault("current_dilation", 0)  # Selected dilation amount
-    state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default coarse)
+    state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
+    state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
 
     # Heatmap state
     state.setdefault("heatmap_visible", True)
@@ -129,7 +130,8 @@ def init_state(state):
     state.setdefault("heatmap_combination", [])  # Currently selected combination (list of channel names)
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
-
+    state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
+    state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
     state.setdefault("upset_search", "")
@@ -332,13 +334,32 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
 
+    @state.change("heatmap_auto_level")
+    def on_heatmap_auto_level_change(heatmap_auto_level, **kwargs):
+        if hasattr(ctrl, 'set_heatmap_lod_auto_mode'):
+            ctrl.set_heatmap_lod_auto_mode(heatmap_auto_level)
+        # Switching to manual: immediately re-query at the current level
+        if not heatmap_auto_level and hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
+    @state.change("heatmap_auto_level")
+    def on_heatmap_auto_level_change(heatmap_auto_level, **kwargs):
+        if hasattr(ctrl, 'set_heatmap_lod_auto_mode'):
+            ctrl.set_heatmap_lod_auto_mode(heatmap_auto_level)
+        # Switching to manual: immediately re-query at the current level
+        if not heatmap_auto_level and hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
+        if state.heatmap_auto_level:
+            return
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data() 
+            ctrl.update_upset_data()
+            ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
 

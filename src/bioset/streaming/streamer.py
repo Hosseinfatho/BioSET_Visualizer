@@ -1283,16 +1283,12 @@ class VolumeStreamer:
                 break
         return applied_any
 
-    def on_interaction_end(self):
+    def on_interaction_end(self) -> int:
         """
         Called on EndInteractionEvent - debounced and async.
         This runs on main thread.
+        Returns the desired component (for heatmap LOD to consume).
         """
-        if not self._active_channels:  
-            return
-
-        self.check_and_apply_loaded_data()
-
         cam = self.renderer.GetActiveCamera()
         dist = camera_distance_to_focal(cam)
 
@@ -1302,6 +1298,11 @@ class VolumeStreamer:
             min_component=self.cfg.min_component,
             max_component=self.cfg.max_component,
         )
+
+        if not self._active_channels:
+            return desired_comp
+
+        self.check_and_apply_loaded_data()
 
         spacing = self._spacing_for_component(desired_comp)
         zdim, ydim, xdim = self._dims_for_component(desired_comp)
@@ -1330,7 +1331,7 @@ class VolumeStreamer:
 
         if not needs_update:
             print(f"[interaction] no update needed")
-            return
+            return desired_comp
 
         request = LoadRequest(
             component=desired_comp,
@@ -1346,3 +1347,5 @@ class VolumeStreamer:
             args=(request,),
             daemon=True,
         ).start()
+
+        return desired_comp

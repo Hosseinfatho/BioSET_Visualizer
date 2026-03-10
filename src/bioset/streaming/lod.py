@@ -21,6 +21,25 @@ def camera_distance_to_focal(camera) -> float:
     return math.sqrt(dx*dx + dy*dy + dz*dz)
 
 
+def choose_heatmap_level(
+    distance: float,
+    rules,
+    *,
+    min_level: int = 0,
+    max_level: int = 3,
+) -> int:
+    """
+    Map camera distance to heatmap hierarchy level using config rules.
+    Rules are (distance_threshold, level) pairs, sorted descending by threshold.
+    """
+    chosen = max_level
+    for thresh, level in rules:
+        if distance >= float(thresh):
+            chosen = int(level)
+            break
+    return max(min_level, min(max_level, chosen))
+
+
 def choose_component(distance: float, rules, *, min_component: int, max_component: int) -> int:
     chosen = max_component
     for thresh, comp in rules:
