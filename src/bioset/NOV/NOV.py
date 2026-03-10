@@ -905,6 +905,25 @@ def register_nov_callbacks(ctrl, state, _refs):
         ry = max(0.0, min(1.0 - side, cy - side / 2.0))
         return (rx, ry, side, side)
 
+    def _update_nov_channel_list_from_active():
+        """Read current activated channels from state and update NOV popup list and selection (after Reset, before Set)."""
+        from bioset.ui.state import get_channel_color
+        active_ids = list(getattr(state, "active_channels", []) or [])
+        channels = list(getattr(state, "channels", []) or [])
+        active_set = set(active_ids)
+        items = []
+        for idx, c in enumerate(channels):
+            if c.get("id") in active_set:
+                item = dict(c)
+                if not item.get("color"):
+                    item["color"] = get_channel_color(idx)
+                items.append(item)
+        state.nov_active_channel_items = items
+        state.nov_selected_channels = list(active_ids)
+        streamer = _refs.get("streamer")
+        if streamer and getattr(streamer, "set_nov_channel_visibility", None):
+            streamer.set_nov_channel_visibility(state.nov_selected_channels)
+
     def run_nov_for_lens(center: List[float], length: float, width: float, depth: float, compute_entropy: bool = True):
         """Show NOV panel + lens + clip + active channels. If compute_entropy is False, only show popup (no optimal view calc).
         If True, also compute optimal view by entropy (slow). Use Set button to run this after opening."""
@@ -1137,6 +1156,8 @@ def register_nov_callbacks(ctrl, state, _refs):
             if _refs.get("view"):
                 _refs["view"].update()
             return
+        # Refresh popup channel list from current activated channels before running Set
+        _update_nov_channel_list_from_active()
         # Ensure 3D lens is from current 2D rectangle position (user may have moved/sized it before pressing Set)
         result = _apply_rect_to_3d()
         if not result:
@@ -1238,6 +1259,8 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_sphere_xy = []
         # Point NOV popup camera at lens center so view is reset; lens content stays
         _point_nov_camera_at_lens_center()
+        # Refresh popup channel list from current activated channels so list and visibility stay in sync
+        _update_nov_channel_list_from_active()
         streamer = _refs.get("streamer")
         if streamer and getattr(streamer, "sync_nov_volumes", None):
             streamer.sync_nov_volumes()
