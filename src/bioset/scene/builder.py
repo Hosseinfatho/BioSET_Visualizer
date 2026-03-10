@@ -85,7 +85,7 @@ def _make_axis_label(text, pos_x, pos_y, pos_z, r, g, b):
 def _create_nov_axis_renderer(nov_renderer, nov_render_window, streamer):
     """Top-right viewport: XYZ as arrows with X,Y,Z labels; transparent so NOV view shows through; synced to main NOV camera."""
     axis_renderer = vtkRenderer()
-    axis_renderer.SetViewport(0.60, 0.60, 0.96, 0.96)
+    axis_renderer.SetViewport(0.72, 0.66, 0.99, 0.99)
     axis_renderer.SetBackground(0.0, 0.0, 0.0)
     axis_renderer.SetBackgroundAlpha(0.0)
     axis_renderer.SetLayer(1)  # draw on top of main NOV view with transparent background
