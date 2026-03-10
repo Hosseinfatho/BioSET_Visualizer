@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
-from bioset.llm import BiomniClient
+from bioset.llm import BiomniLocalClient
 from .state import get_channel_color
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.NOV import register_nov_callbacks
@@ -55,6 +55,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
         _refs["mesh_manager"] = mesh_manager
         print(f"[callbacks] Mesh manager set: {mesh_manager}"
               f" (available={mesh_manager.is_available if mesh_manager else False})")
+
+    def set_heatmap_lod(heatmap_lod):
+        """Set the heatmap LOD renderer reference."""
+        _refs["heatmap_lod"] = heatmap_lod
+        print(f"[callbacks] Heatmap LOD set: {heatmap_lod}")
+
+    def set_heatmap_lod_auto_mode(enabled: bool):
+        """Set heatmap LOD auto mode (controlled by UI toggle)."""
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod and hasattr(heatmap_lod, "set_auto_mode"):
+            heatmap_lod.set_auto_mode(enabled)
 
     register_bookmark_callbacks(ctrl, state, _refs)
     register_nov_callbacks(ctrl, state, _refs)

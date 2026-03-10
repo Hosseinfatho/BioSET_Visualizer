@@ -138,8 +138,10 @@ class VtkScene:
     interactor: vtkRenderWindowInteractor
     streamer: Optional[VolumeStreamer] = None
     heatmap: Optional[HeatmapRenderer] = None
+    heatmap_lod: Optional[HeatmapLOD] = None
     nov_renderer: Optional[vtkRenderer] = None
-    nov_render_window: Optional[vtkRenderWindow] = None  
+    nov_render_window: Optional[vtkRenderWindow] = None
+    mesh_manager: Optional[MeshManager] = None  
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -255,12 +257,16 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
         )
 
+    heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD() if streamer is not None else None
+
     return VtkScene(
         renderer=renderer,
         render_window=render_window,
         interactor=interactor,
         streamer=streamer,
         heatmap=heatmap,
+        heatmap_lod=heatmap_lod,
         nov_renderer=nov_renderer,
         nov_render_window=nov_render_window,
+        mesh_manager=mesh_manager,
     )
