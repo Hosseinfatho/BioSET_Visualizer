@@ -374,7 +374,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 
                 print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
                 
-        
+        if streamer._channel_histograms:
+            state.channel_histograms = {
+                str(ch_id): streamer._channel_histograms[ch_id] for ch_id in new_active if ch_id in streamer._channel_histograms
+            }
+
         if _refs["view"]:
             _refs["view"].update()
 

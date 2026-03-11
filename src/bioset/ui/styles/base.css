@@ -26,13 +26,17 @@
 }
 
 .ch-icons {
-  display: flex;
-  align-items: center;      
-  justify-content: center;                
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .eye-icon {
-  opacity: 0.85;
+    opacity: 0.85;
+}
+
+.v-list--nav .ch-item.v-list-item--dense:not(:last-child):not(:only-child) {
+    margin-bottom: 0 !important;
 }
 
 .ch-slider {
@@ -50,12 +54,12 @@
 }
 
 .v-navigation-drawer__content {
-    scrollbar-width: none;  
-    -ms-overflow-style: none;  
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
 
 .v-navigation-drawer__content::-webkit-scrollbar {
-    display: none;  
+    display: none;
 }
 
 .helper-link {

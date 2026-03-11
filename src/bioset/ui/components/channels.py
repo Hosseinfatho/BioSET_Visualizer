@@ -33,89 +33,103 @@ def channels_section(state, ctrl):
         with vuetify.VExpandTransition():
             with html.Div(v_show=("channels_open", False), class_="px-2 pb-2"):
                 with vuetify.VList(dense=True):
-                    with vuetify.VListItemGroup(
-                        multiple=True,
-                        v_model=("active_channels", []),
-                    ):
+                      with html.Template(
+                          v_for="(channel, chIdx) in channels.filter(ch => visible_channel_ids.includes(ch.id))",
+                      ):
+                        vuetify.VDivider(v_if="chIdx > 0")
                         with vuetify.VListItem(
-                            v_for="channel in channels.filter(ch => visible_channel_ids.includes(ch.id))",
                             key="channel.id",
-                            value=("channel.id",),  
-                            link=True,
                             dense=True,
                             class_="ch-item",
+                            style="margin-bottom: 0 !important;"
                         ):
-                            with vuetify.VListItemIcon():
+                            with vuetify.VListItemIcon(v_if="drawer_mini"):
                                 with vuetify.VTooltip(right=True, disabled=("!drawer_mini",)):
                                     with html.Template(v_slot_activator="{ on, attrs }"):
-                                        with html.Div(
-                                            class_="ch-icons",
+                                        vuetify.VIcon(
+                                            "mdi-circle",
+                                            style=("`color: ${channel.color || '#fff'};`",),
                                             v_bind="attrs",
                                             v_on="on",
-                                        ):
-                                            with vuetify.VMenu(
-                                                offset_y=True,
-                                                close_on_content_click=False,
-                                            ):
-                                                with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
-                                                    vuetify.VIcon(
-                                                        v_text="active_channels.includes(channel.id) ? 'mdi-square-rounded' : 'mdi-square-rounded-outline'",
-                                                        style=("`color: ${channel.color || '#fff'}; cursor: pointer;`",),
-                                                        v_bind="menuAttrs",
-                                                        v_on="menuOn",
-                                                        _class="mr-3",
-                                                        click_stop=True,
-                                                    )
-                                                    
-                                                with vuetify.VCard(class_="pa-2", dark=True):
-                                                    vuetify.VColorPicker(
-                                                        value=("channel.color",),
-                                                        mode="rgba",
-                                                        hide_canvas=True,
-                                                        hide_inputs=False,
-                                                        hide_mode_switch=False,
-                                                        show_swatches=False, 
-                                                        flat=True,
-                                                        width="280",
-                                                        dark=True,
-                                                        __events=["input", "update:color"],
-                                                        input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
-                                                        update_color=(ctrl.on_channel_color_change, "[channel.id, $event]"),
-                                                    )
-                                                    
-                                                    vuetify.VDivider(classes="my-2")
-                                                    
-                                                    with html.Div(
-                                                        v_for="(row, rowIndex) in color_swatches",
-                                                        key="'row-' + rowIndex",
-                                                        classes="d-flex justify-center mb-1",
-                                                        style="gap: 5px;",
-                                                    ):
-                                                        vuetify.VBtn(
-                                                            v_for="(swatch_color, colIndex) in row",
-                                                            key="'swatch-' + rowIndex + '-' + colIndex",
-                                                            style=("`background-color: ${swatch_color} !important; border: 2px solid ${channel.color === swatch_color ? '#FFFFFF' : (swatch_color === '#000000' ? '#555' : '#333')}; min-width: 72px; width: 72px; height: 32px; border-radius: 4px;`",),
-                                                            click=(ctrl.on_channel_color_change, "[channel.id, swatch_color]"),
-                                                        )
- 
-
-                                            with html.Span(
-                                                    v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
-                                                ):
-                                                    vuetify.VIcon(
-                                                        "mdi-close-circle",
-                                                        class_="eye-icon mr-3",
-                                                        click=(ctrl.remove_channel_from_visible, "[channel.id]"),
-                                                    )
-                                            
-
+                                        )
                                     html.Span("{{ channel.name }}")
 
-                            with vuetify.VListItemContent(v_if="!drawer_mini"):
-                                vuetify.VListItemTitle("{{ channel.name }}")
-                                with html.Span(
+                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; flex-direction: column;"):
+                                with html.Div(classes="d-flex align-center", style="width: 100%;"):
+                                    vuetify.VSimpleCheckbox(
+                                        value=("active_channels.includes(channel.id)",),
+                                        ripple=False,
+                                        dense=True,
+                                        style="margin: 0; padding: 0; flex-shrink: 0;",
+                                        click=(
+                                            "active_channels.includes(channel.id) "
+                                            "? active_channels = active_channels.filter(id => id !== channel.id) "
+                                            ": active_channels = [...active_channels, channel.id]"
+                                        ),
+                                    )
+                                    vuetify.VListItemTitle(
+                                        "{{ channel.name }}",
+                                        style="flex: 1;",
+                                    )
+
+                                    with html.Div(
+                                        classes="d-flex align-center ml-auto",
+                                        style="flex-shrink: 0;",
                                         v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
                                     ):
+                                        with vuetify.VMenu(
+                                            offset_y=True,
+                                            close_on_content_click=False,
+                                        ):
+                                            with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
+                                                vuetify.VIcon(
+                                                    "mdi-circle",
+                                                    style=("`color: ${channel.color || '#fff'}; cursor: pointer; font-size: 24px;`",),
+                                                    v_bind="menuAttrs",
+                                                    v_on="menuOn",
+                                                    click_stop=True,
+                                                )
+                                                
+                                            with vuetify.VCard(class_="pa-2", dark=True):
+                                                vuetify.VColorPicker(
+                                                    value=("channel.color",),
+                                                    mode="rgba",
+                                                    hide_canvas=True,
+                                                    hide_inputs=False,
+                                                    hide_mode_switch=False,
+                                                    show_swatches=False, 
+                                                    flat=True,
+                                                    width="280",
+                                                    dark=True,
+                                                    __events=["input", "update:color"],
+                                                    input=(ctrl.on_channel_color_change, "[channel.id, $event]"),
+                                                    update_color=(ctrl.on_channel_color_change, "[channel.id, $event]"),
+                                                )
+                                                
+                                                vuetify.VDivider(classes="my-2")
+                                                
+                                                with html.Div(
+                                                    v_for="(row, rowIndex) in color_swatches",
+                                                    key="'row-' + rowIndex",
+                                                    classes="d-flex justify-center mb-1",
+                                                    style="gap: 5px;",
+                                                ):
+                                                    vuetify.VBtn(
+                                                        v_for="(swatch_color, colIndex) in row",
+                                                        key="'swatch-' + rowIndex + '-' + colIndex",
+                                                        style=("`background-color: ${swatch_color} !important; border: 2px solid ${channel.color === swatch_color ? '#FFFFFF' : (swatch_color === '#000000' ? '#555' : '#333')}; min-width: 72px; width: 72px; height: 32px; border-radius: 4px;`",),
+                                                        click=(ctrl.on_channel_color_change, "[channel.id, swatch_color]"),
+                                                    )
+                                        vuetify.VIcon(
+                                            "mdi-close-circle",
+                                            class_="eye-icon mr-3",
+                                            style="margin-left: 5px;",
+                                            click=(ctrl.remove_channel_from_visible, "[channel.id]"),
+                                        )
+                                with html.Div(
+                                    v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
+                                    style="width: 100%;",
+                                ):
                                     vuetify.VRangeSlider(
                                         class_="ch-slider",
                                         dense=True,
@@ -125,10 +139,19 @@ def channels_section(state, ctrl):
                                         value=("channel.range", [0, 100]),
                                         click_stop=True,
                                         mousedown_stop=True,
-                                        style="max-width: 150px;",
                                         __events=["end"],  
                                         end=(ctrl.on_channel_range_change, "[channel.id, $event]"),
                                     )
+                                vuetify.Template(
+                                    """
+                                    <channel-histogram
+                                        v-if="channel_histograms[channel.id]"
+                                        :bins="channel_histograms[channel.id]"
+                                        :color="channel.color"
+                                        :height="30"
+                                    />
+                                    """
+                                )
 
                 with vuetify.VListItem(
                     v_if="channels.length > visible_channel_ids.length && drawer_mini",
