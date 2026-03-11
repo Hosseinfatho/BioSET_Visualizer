@@ -89,8 +89,8 @@ def right_drawer(state, ctrl):
                         v_model=("heatmap_auto_level",),
                         dense=True,
                         hide_details=True,
-                        color="primary",
-                        style="display: inline-flex;",
+                        color="white",
+                        style="display: inline-flex; margin-top: 0;",
                     )
                     html.Span(
                         "Auto",
