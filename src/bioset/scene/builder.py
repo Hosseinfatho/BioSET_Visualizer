@@ -14,7 +14,10 @@ import vtkmodules.vtkRenderingVolumeOpenGL2  # noqa: F401
 from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
 from ..streaming import VolumeStreamer
+from ..streaming.heatmap_lod import HeatmapLOD
+from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
+from .meshes import MeshManager
 
 @dataclass
 class VtkScene:
@@ -22,7 +25,9 @@ class VtkScene:
     render_window: vtkRenderWindow
     interactor: vtkRenderWindowInteractor
     streamer: Optional[VolumeStreamer] = None
-    heatmap: Optional[HeatmapRenderer] = None  
+    heatmap: Optional[HeatmapRenderer] = None
+    mesh_manager: Optional[MeshManager] = None
+    heatmap_lod: Optional[HeatmapLOD] = None
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -44,6 +49,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.SetBackground(colors.GetColor3d(cfg.background))
 
     streamer: Optional[VolumeStreamer] = None
+    heatmap_lod: Optional[HeatmapLOD] = None
 
     heatmap = HeatmapRenderer(renderer)
 
@@ -60,8 +66,12 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         streamer = VolumeStreamer(
             cfg=cfg, renderer=renderer, render_window=render_window)
 
+        heatmap_lod = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules)
+
         def _on_end_interaction(obj, evt):
-            streamer.on_interaction_end()
+            desired_comp = streamer.on_interaction_end()
+            dist = camera_distance_to_focal(renderer.GetActiveCamera())
+            heatmap_lod.on_camera_moved(dist)
 
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
 
@@ -89,10 +99,20 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.ResetCameraClippingRange()
     renderer.ResetCamera()
 
+    mesh_manager: Optional[MeshManager] = None
+    if cfg.mesh_dir:
+        mesh_manager = MeshManager(
+            mesh_dir=cfg.mesh_dir,
+            renderer=renderer,
+            base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
+        )
+
     return VtkScene(
         renderer=renderer,
         render_window=render_window,
         interactor=interactor,
         streamer=streamer,
-        heatmap=heatmap
+        heatmap=heatmap,
+        mesh_manager=mesh_manager,
+        heatmap_lod=heatmap_lod,
     )
