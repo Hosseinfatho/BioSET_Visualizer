@@ -78,6 +78,24 @@ def right_drawer(state, ctrl):
                             x_small=True,
                             style=("heatmap_visible ? 'color:white' : 'color:#555'",),
                         )
+                        
+                # Auto/Manual resolution toggle
+                with html.Div(classes="d-flex align-center justify-center mb-2"):
+                    html.Span(
+                        "Manual",
+                        style="color: grey; font-size: 11px; margin-right: 4px;",
+                    )
+                    vuetify.VSwitch(
+                        v_model=("heatmap_auto_level",),
+                        dense=True,
+                        hide_details=True,
+                        color="primary",
+                        style="display: inline-flex;",
+                    )
+                    html.Span(
+                        "Auto",
+                        style="color: grey; font-size: 11px; margin-left: 4px;",
+                    )
                 
                 # Combination dropdown
                 with html.Div(classes="d-flex justify-center mb-3"):
@@ -142,6 +160,7 @@ def right_drawer(state, ctrl):
                         v_model=("current_hierarchy_level",),
                         mandatory=True,
                         dense=True,
+                        disabled=("heatmap_auto_level",),
                     ):
                         vuetify.VBtn(
                             v_for="level in analysis_hierarchy_levels",

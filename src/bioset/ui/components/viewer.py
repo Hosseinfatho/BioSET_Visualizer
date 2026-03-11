@@ -16,6 +16,9 @@ def viewer(ctrl, render_window):
     ):
         view = vtk.VtkRemoteView(render_window, interactive_ratio=1.0)
         ctrl.view_update = view.update
+        vuetify.Template("""
+            <hover-tracker @hover="trigger('on_hover', $event)" />
+        """)
         
         with vuetify.VBtn(
             v_if="analysis_loaded && !right_drawer_open",

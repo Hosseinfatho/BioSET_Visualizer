@@ -50,6 +50,15 @@ class VolumeConfig:
         (-100.0,  0),
     )
 
+    # Heatmap LOD thresholds: (camera_distance, hierarchy_level)
+    # Level 3=Overview (coarse), 0=Fine. Same distance axis as distance_rules.
+    heatmap_distance_rules: Sequence[Tuple[float, int]] = (
+        (1000.0, 3),  # far out  → Overview  (1024-voxel tiles)
+        (300.0,  2),  # medium   → Coarse    (512-voxel tiles)
+        (100.0,  1),  # close    → Medium    (256-voxel tiles)
+        (-100.0, 0),  # very close → Fine    (128-voxel tiles)
+    )
+
     # ROI padding (voxels at the chosen component)
     roi_margin_vox: int = 16
 
@@ -57,6 +66,9 @@ class VolumeConfig:
     cache_enabled: bool = True
     cache_dir: Path = Path.home() / ".cache" / "bioset_zarr_cache"
     cache_size_gb: float = 8.0
+
+    # surfaces directory
+    mesh_dir: Optional[Path] = None
 
     # Rendering Defaults
     background: str = "Black"
@@ -87,4 +99,5 @@ def default_config() -> VolumeConfig:
         base_sx=0.14,
         base_sy=0.14,
         base_sz=0.28,
+        mesh_dir=data_dir / "output_meshes",
     )
