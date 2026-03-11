@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from bioset.llm import BiomniLocalClient
 from .state import get_channel_color
+from bioset.scene.volumes import build_tf_with_range, build_tf_with_range
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
-    
+
     def _hex_to_rgb_tuple(color_hex: str):
         """Convert '#RRGGBB' to (r, g, b) floats in [0,1]."""
         color_hex = color_hex.lstrip("#")
@@ -14,7 +15,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         g = int(color_hex[2:4], 16) / 255.0
         b = int(color_hex[4:6], 16) / 255.0
         return (r, g, b)
-    
+
     _refs = {
         "streamer": None,
         "view": view,
@@ -35,7 +36,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the heatmap renderer reference."""
         _refs["heatmap"] = heatmap
         print(f"[callbacks] Heatmap renderer set: {heatmap}")
-        
+
     def set_mesh_manager(mesh_manager):
         """Set the mesh manager reference."""
         _refs["mesh_manager"] = mesh_manager
@@ -90,7 +91,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     metadata.physical_size_y,
                     metadata.physical_size_z
                 )
-                
+
             mesh_mgr = _refs.get("mesh_manager")
             if mesh_mgr:
                 mesh_mgr.update_spacing(
@@ -98,7 +99,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     metadata.physical_size_y,
                     metadata.physical_size_z
                 )
-            
+
             channels = [
                 {
                     "id": ch.id,
@@ -153,12 +154,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.renderer.ResetCameraClippingRange() 
             
         if heatmap:
-            heatmap.clear() 
+            heatmap.clear()
             
         mesh_mgr = _refs.get("mesh_manager")
         if mesh_mgr:
-            mesh_mgr.clear()  
-            
+            mesh_mgr.clear()
+
         if _refs["analysis_loader"]:
             _refs["analysis_loader"].close()
             _refs["analysis_loader"] = None
@@ -332,7 +333,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         streamer = _refs.get("streamer")
         mesh_mgr = _refs.get("mesh_manager")
-        
+
         if streamer is None:
             print(f"[callbacks] No streamer available yet")
             return
@@ -346,7 +347,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.deactivate_channel(channel_id)
             if mesh_mgr:
                 mesh_mgr.deactivate_channel_mesh(channel_id)
-        
+
         to_activate = new_active - currently_active
         for channel_id in to_activate:
             color_hex = "#FFFFFF"
@@ -386,35 +387,35 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Update available heatmap combinations based on active channels.
         """
         loader = _refs.get("analysis_loader")
-        
+
         if not loader or not loader.is_loaded:
             state.heatmap_available_combinations = []
             state.heatmap_combination = []
             return
-        
+
         active_channel_names = []
         for ch_id in (state.active_channels or []):
             for ch in (state.channels or []):
                 if ch["id"] == ch_id:
                     active_channel_names.append(ch["name"])
                     break
-        
+
         if not active_channel_names:
             state.heatmap_available_combinations = []
             state.heatmap_combination = []
             return
-        
+
         print(f"[callbacks] Updating heatmap combinations for active channels: {active_channel_names}")
-        
+
         available = []
-        
+
         for name in active_channel_names:
             available.append({
                 "channels": [name],
                 "label": name,
-                "iou": None,  
+                "iou": None,
             })
-        
+
         if len(active_channel_names) >= 2:
             try:
                 combinations = loader.get_filtered_combinations(
@@ -424,7 +425,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     limit=50,
                     exact_match=False,
                 )
-                
+
                 active_set = set(active_channel_names)
                 for combo in combinations:
                     if len(combo.channels) >= 2 and set(combo.channels).issubset(active_set):
@@ -435,11 +436,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
                         })
             except Exception as e:
                 print(f"[callbacks] Error querying heatmap combinations: {e}")
-        
+
         state.heatmap_available_combinations = available
-        
+
         print(f"[callbacks] Found {len(available)} heatmap combinations")
-        
+
         # prefer selection of all active channels if available
         current = state.heatmap_combination or []
         current_set = set(current)
@@ -450,23 +451,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.heatmap_combination = full_match[0]["channels"]
             update_heatmap()
             return
-        
+
         if current and any(set(c["channels"]) == current_set for c in available):
             update_heatmap()
             return
-        
+
         multi = [c for c in available if len(c["channels"]) >= 2]
         if multi:
             state.heatmap_combination = multi[0]["channels"]
             update_heatmap()
             return
-        
+
         if available:
             state.heatmap_combination = available[0]["channels"]
         else:
             state.heatmap_combination = []
         update_heatmap()
-            
+
     def update_heatmap():
         """Update heatmap visualization based on current state.
 
@@ -495,7 +496,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if _refs["view"]:
                 _refs["view"].update()
             return
-        
+
         selected_channel_names = state.heatmap_combination or []
         
         if not selected_channel_names:
@@ -554,7 +555,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def update_upset_data():
         """Update UpSet plot data based on current analysis settings.
-        
+
         Uses aggregated IoU across tiles, sorted descending.
         """
         loader = _refs.get("analysis_loader")
@@ -564,13 +565,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return
 
         print(f"[callbacks] Updating UpSet data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
-        
+
+        min_number_channels = int(getattr(state, "upset_min_channels", 2))
+
         # Get all combinations from analysis (large limit), sorted by agg IoU desc
         combinations = loader.get_top_combinations(
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
             limit=1000,
-            min_channels=2,
+            min_channels=min_number_channels,
         )
         
         # Filter to selected channels
@@ -616,7 +619,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return
 
         print(f"[callbacks] Updating UpSet local data for channels: {active_channel_names}")
-        
+
         try:
             combinations = loader.get_filtered_combinations(
                 channel_filter=active_channel_names,
@@ -645,7 +648,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     
     def update_bar_data():
         """Update bar chart data with coverage percentage per channel.
-        
+
         Coverage % = (tiles with marker present) / (total tiles) * 100
         Sorted descending. Filtered to bar_selected_channels.
         """
@@ -663,13 +666,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
         )
-        
+
         # Filter to selected channels
         filtered = [
             (name, pct) for name, pct in all_coverage
             if name in state.bar_selected_channels
         ]
-        
+
         state.bar_data = filtered
         
         print(f"[callbacks] Bar data updated: {len(filtered)} channels")
@@ -739,7 +742,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         mesh_mgr = _refs.get("mesh_manager")
         if mesh_mgr and channel_id in state.active_channels:
             mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
-            
+
     def on_channel_color_change(channel_id, color_value):
         """Handle color change from the color picker."""
         print(f"[callbacks] Raw color_value: {color_value}, type: {type(color_value)}")
@@ -815,12 +818,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
                             break
 
                     if channel_id in streamer._channel_data_range:
-                        from bioset.scene.volumes import build_tf_with_range
                         data_range = streamer._channel_data_range[channel_id]
-                        color_tf, opacity_tf = build_tf_with_range(data_range, tuple(current_range), tint_rgb)
+                        pct_range = streamer._channel_percentile_bounds.get(channel_id, (data_range[0], data_range[1], data_range[1]))
+                        color_tf, opacity_tf = build_tf_with_range(data_range, pct_range, tuple(current_range), tint_rgb)
                     else:
-                        from bioset.scene.volumes import build_histogram_tf
-                        color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
+                        color_tf, opacity_tf, pct_bounds = build_histogram_tf(img, tint_rgb=tint_rgb)
+                        streamer._channel_percentile_bounds[channel_id] = pct_bounds
                     streamer._channel_tfs[channel_id] = (color_tf, opacity_tf)
                     
                     prop = vol.GetProperty()
@@ -1366,8 +1369,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_heatmap = set_heatmap                
     ctrl.load_data = load_data
     ctrl.clear_data = clear_data
-    ctrl.load_analysis_file = load_analysis_file  
-    ctrl.update_heatmap = update_heatmap   
+    ctrl.load_analysis_file = load_analysis_file
+    ctrl.update_heatmap = update_heatmap
     ctrl.update_heatmap_combinations = update_heatmap_combinations
     ctrl.toggle_channel = toggle_channel
     ctrl.update_active_channels = update_active_channels

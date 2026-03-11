@@ -122,6 +122,7 @@ def init_state(state):
     state.setdefault("upset_filtered_channels", []) # Channels shown in filter list
     state.setdefault("upset_filter_dialog", False)
     state.setdefault("upset_expanded", False)
+    state.setdefault("upset_min_channels", 2)  # default minimum combination limit
 
     # Bar Plot filtering
     state.setdefault("bar_selected_channels", [])  # Channels to include in Bar
@@ -263,6 +264,12 @@ def register_state_change_handlers(state, ctrl):
     @state.change("upset_selected_channels")
     def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
         print(f"[state] UpSet selected channels changed: {len(upset_selected_channels)} channels")
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data()
+
+    @state.change("upset_min_channels")
+    def on_upset_min_channels_change(upset_min_channels, **kwargs):
+        print(f"[state] UpSet min channels changed: {upset_min_channels}")
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
 
