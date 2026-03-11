@@ -187,8 +187,8 @@ def init_state(state):
     state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
     state.setdefault("nov_scale_bar_label", "")  # e.g. "10 µm" for scale bar in NOV popup
     state.setdefault("nov_scale_bar_width_px", 0)  # pixel width of scale bar (updates with zoom)
-    state.setdefault("nov_popup_width_px", 400)  # resizable NOV popup width (initial from box)
-    state.setdefault("nov_popup_height_px", 300)  # resizable NOV popup height (initial from box)
+    state.setdefault("nov_popup_width_px", 600)  # resizable NOV popup width (1.5x: 400→600)
+    state.setdefault("nov_popup_height_px", 450)  # resizable NOV popup height (1.5x: 300→450)
     state.setdefault("nov_popup_size_str", "")  # "w,h" from client resize to update server
 
     # Chatbot state
