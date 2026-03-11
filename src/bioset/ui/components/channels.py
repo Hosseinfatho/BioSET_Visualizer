@@ -138,6 +138,7 @@ def channels_section(state, ctrl):
                         offset_y=True,
                         max_height=300,
                         dark=True,
+                            close_on_content_click=False,
                     ):
                         with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
                             with vuetify.VListItemIcon():
@@ -151,15 +152,35 @@ def channels_section(state, ctrl):
                                             link=True,
                                         )
                                     html.Span("Add Channel")
-                        
-                        with vuetify.VList(dense=True):
-                            with vuetify.VListItem(
-                                v_for="channel in channels.filter(ch => !visible_channel_ids.includes(ch.id))",
-                                key="'add-' + channel.id",
-                                click=(ctrl.add_channel_to_visible, "[channel.id]"),
-                            ):
-                                with vuetify.VListItemContent():
-                                    vuetify.VListItemTitle("{{ channel.name }}")
+
+                        with html.Div():
+                            vuetify.VTextField(
+                                v_model=("add_channel_search", ""),
+                                placeholder="Search channels...",
+                                prepend_inner_icon="mdi-magnify",
+                                dense=True,
+                                hide_details=True,
+                                clearable=True,
+                                solo=True,
+                                flat=True,
+                                class_="mx-2 mt-2 mb-1",
+                            )
+                            with vuetify.VList(dense=True):
+                                with vuetify.VListItem(
+                                        v_for=(
+                                                "channel in channels"
+                                                # filter duplicates
+                                                ".filter((ch, i, arr) => arr.findIndex(c => c.name === ch.name) === i)"
+                                                # filter visible channels
+                                                ".filter(ch => !channels.some(c => visible_channel_ids.includes(c.id) && c.name === ch.name))"
+                                                # filter search
+                                                ".filter(ch => !add_channel_search || ch.name.toLowerCase().includes(add_channel_search.toLowerCase()))"
+                                        ),
+                                        key="'add-' + channel.id",
+                                        click=(ctrl.add_channel_to_visible, "[channel.id]"),
+                                ):
+                                    with vuetify.VListItemContent():
+                                        vuetify.VListItemTitle("{{ channel.name }}")
 
                 with vuetify.VListItem(
                     v_if="channels.length > visible_channel_ids.length && !drawer_mini",
@@ -169,6 +190,7 @@ def channels_section(state, ctrl):
                         offset_y=True,
                         max_height=300,
                         dark=True,
+                            close_on_content_click=False,
                     ):
                         with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
                             with vuetify.VListItemContent(class_="mt-2 pt-0"):
@@ -179,13 +201,32 @@ def channels_section(state, ctrl):
                                     block=True,
                                     small=True,
                                 )
-                        
-                        with vuetify.VList(dense=True):
-                            with vuetify.VListItem(
-                                v_for="channel in channels.filter(ch => !visible_channel_ids.includes(ch.id))",
-                                key="'add-' + channel.id",
-                                click=(ctrl.add_channel_to_visible, "[channel.id]"),
-                            ):
-                                with vuetify.VListItemContent():
-                                    vuetify.VListItemTitle("{{ channel.name }}")       
-                        
+
+                        with html.Div():
+                            vuetify.VTextField(
+                                v_model=("add_channel_search", ""),
+                                placeholder="Search channels...",
+                                prepend_inner_icon="mdi-magnify",
+                                dense=True,
+                                hide_details=True,
+                                clearable=True,
+                                solo=True,
+                                flat=True,
+                                class_="mx-2 mt-2 mb-1",
+                            )
+                            with vuetify.VList(dense=True):
+                                with vuetify.VListItem(
+                                        v_for=(
+                                                "channel in channels"
+                                                # filter duplicates
+                                                ".filter((ch, i, arr) => arr.findIndex(c => c.name === ch.name) === i)"
+                                                # filter visible channels
+                                                ".filter(ch => !channels.some(c => visible_channel_ids.includes(c.id) && c.name === ch.name))"
+                                                # filter search
+                                                ".filter(ch => !add_channel_search || ch.name.toLowerCase().includes(add_channel_search.toLowerCase()))"
+                                        ),
+                                        key="'add-' + channel.id",
+                                        click=(ctrl.add_channel_to_visible, "[channel.id]"),
+                                ):
+                                    with vuetify.VListItemContent():
+                                        vuetify.VListItemTitle("{{ channel.name }}")
