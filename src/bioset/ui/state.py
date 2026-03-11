@@ -175,6 +175,7 @@ def init_state(state):
     state.setdefault("nov_panel_visible", False)
     state.setdefault("nov_candidates", [])
     state.setdefault("nov_current_index", 0)
+    state.setdefault("nov_auto_play", False)  # when True, auto-advance views (Play); False = Pause
     state.setdefault("nov_view_index_display", "")  # e.g. "1/10"
     state.setdefault("nov_score_display", 0.0)
     state.setdefault("nov_sphere_xy", [])  # for SVG mini-map

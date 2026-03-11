@@ -48,6 +48,8 @@ CAMERA_DISTANCE_DIAMETER_MULT = 5.0
 POPUP_CAMERA_DISTANCE_DIAMETER_MULT = 1.25
 # Minimum angular separation (degrees) between top-10 views so they are distinct
 MIN_TOP10_ANGULAR_SEPARATION_DEG = 30.0
+# Seconds to show each view before auto-advancing to next when Play is on
+NOV_AUTO_PLAY_VIEW_DURATION = 1.5
 
 
 def _direction_vector_deg(t: float, p: float) -> Tuple[float, float, float]:
@@ -713,6 +715,12 @@ def register_nov_callbacks(ctrl, state, _refs):
 
     def _nov_animation_tick():
         """Called from app async loop every ~40ms. Advances one step of NOV camera transition and pushes frame to client."""
+        # Auto-play: when scheduled time reached and no animation running, advance to next view
+        nov_auto_next_after = _refs.get("_nov_auto_next_after") or 0
+        if nov_auto_next_after > 0 and time.time() >= nov_auto_next_after and not _refs.get("_nov_anim"):
+            _refs["_nov_auto_next_after"] = 0
+            switch_smooth(1)
+
         anim = _refs.get("_nov_anim")
         if not anim:
             return
@@ -727,6 +735,18 @@ def register_nov_callbacks(ctrl, state, _refs):
             apply_cam(target_cand)
             if _refs.get("view"):
                 _refs["view"].update()
+            if _refs.get("nov_view") and hasattr(_refs["nov_view"], "update"):
+                _refs["nov_view"].update()
+            # Auto-play: after view settled, schedule next advance or pause at last
+            if getattr(state, "nov_auto_play", False):
+                cands = getattr(state, "nov_candidates", []) or []
+                current_idx = getattr(state, "nov_current_index", 0)
+                if current_idx < len(cands) - 1:
+                    _refs["_nov_auto_next_after"] = time.time() + NOV_AUTO_PLAY_VIEW_DURATION
+                else:
+                    state.nov_auto_play = False
+                    if hasattr(state, "flush"):
+                        state.flush()
             return
         t = (step + 1) / total
         pos, fp, vup = _compute_slerp_frame(anim, t)
@@ -754,15 +774,19 @@ def register_nov_callbacks(ctrl, state, _refs):
             state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), target_idx)
             state.nov_score_display = target_cand["score_normalized"]
             state.nov_view_index_display = f"{target_idx + 1}/{len(cands)}"
+            if hasattr(state, "flush"):
+                state.flush()  # push ?/10 to client immediately during play
             if _refs.get("view"):
                 _refs["view"].update()
             return
-        if _refs.get("_nov_anim"):
-            return
+        # Allow interrupting current animation so user can change view (update ?/10) during play
+        _refs.pop("_nov_anim", None)
         state.nov_current_index = target_idx
         state.nov_sphere_svg = build_nov_sphere_svg(getattr(state, "nov_sphere_xy", []), target_idx)
         state.nov_score_display = target_cand["score_normalized"]
         state.nov_view_index_display = f"{target_idx + 1}/{len(cands)}"
+        if hasattr(state, "flush"):
+            state.flush()  # push ?/10 to client immediately during play
         end_vup = end_vup or [0.0, 1.0, 0.0]
         start_vup = start_vup or [0.0, 1.0, 0.0]
         d0, r0 = _norm([start_pos[j] - start_fp[j] for j in range(3)])
@@ -1250,6 +1274,8 @@ def register_nov_callbacks(ctrl, state, _refs):
 
     def nov_reset():
         """Reset inside popup only: clear best-view results so user can move lens and press Set again. Keep popup and lens open."""
+        state.nov_auto_play = False
+        _refs["_nov_auto_next_after"] = 0
         state.nov_candidates = []
         state.nov_has_results = False
         state.nov_current_index = 0
@@ -1298,6 +1324,17 @@ def register_nov_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def nov_play_pause():
+        """Toggle auto-play: when on, advance to next view after each view is shown (smooth transition then pause on view, then next); stops at last view."""
+        state.nov_auto_play = not getattr(state, "nov_auto_play", False)
+        if state.nov_auto_play:
+            cands = getattr(state, "nov_candidates", []) or []
+            current_idx = getattr(state, "nov_current_index", 0)
+            if cands and current_idx < len(cands) - 1 and not _refs.get("_nov_anim"):
+                _refs["_nov_auto_next_after"] = time.time() + NOV_AUTO_PLAY_VIEW_DURATION
+        else:
+            _refs["_nov_auto_next_after"] = 0
+
     ctrl.nov_toggle = nov_toggle
     ctrl.nov_toggle_channel = nov_toggle_channel
     ctrl.nov_set = nov_set
@@ -1309,6 +1346,7 @@ def register_nov_callbacks(ctrl, state, _refs):
     ctrl.nov_rect_size_minus = lambda: nov_rect_size_step(-0.03)
 
     ctrl.nov_hide_lens = nov_hide_lens
+    ctrl.nov_play_pause = nov_play_pause
     ctrl.nov_prev = lambda: switch_smooth(-1)
     ctrl.nov_next = lambda: switch_smooth(1)
     ctrl.nov_animation_tick = _nov_animation_tick

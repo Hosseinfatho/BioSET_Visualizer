@@ -49,6 +49,10 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
             style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: transparent; border-bottom: 1px solid rgba(255,255,255,0.2); flex: 0 0 auto; min-height: 32px; max-height: 40px; color: rgba(255,255,255,0.95);",
         ):
             with html.Div(style="display: flex; align-items: center; gap: 4px; min-width: 0; color: rgba(255,255,255,0.95);"):
+                with vuetify.VBtn(v_show=("!nov_auto_play", True), icon=True, x_small=True, dense=True, click=ctrl.nov_play_pause, style=_BTN_STYLE):
+                    vuetify.VIcon("mdi-play", small=True)
+                with vuetify.VBtn(v_show=("nov_auto_play", False), icon=True, x_small=True, dense=True, click=ctrl.nov_play_pause, style=_BTN_STYLE):
+                    vuetify.VIcon("mdi-pause", small=True)
                 with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.nov_prev, style=_BTN_STYLE):
                     vuetify.VIcon("mdi-chevron-left", small=True)
                 html.Span("{{ nov_view_index_display }}", style="min-width: 3ch; font-size: 0.7rem; color: rgba(255,255,255,0.95);")
