@@ -87,6 +87,9 @@ def init_state(state):
     # default color picker swatches (nested array for VColorPicker)
     state.setdefault("color_swatches", DEFAULT_COLOR_SWATCHES)
 
+    # Channel intensity histograms (channel_id -> list of normalized bin heights)
+    state.setdefault("channel_histograms", {})
+
     # bioset analysis file loading
     state.setdefault("analysis_loaded", False)
     state.setdefault("analysis_loading", False)
@@ -112,6 +115,7 @@ def init_state(state):
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
+    state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
     state.setdefault("upset_search", "")

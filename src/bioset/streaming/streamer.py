@@ -91,6 +91,7 @@ class VolumeStreamer:
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {} 
         
         self._channel_data_range: Dict[int, Tuple[float, float]] = {}  
+        self._channel_histograms: Dict[int, list] = {}
 
         if self.cfg.channels:
             self._init_low_res_full()
@@ -300,6 +301,19 @@ class VolumeStreamer:
         
         self._render()
 
+    @staticmethod
+    def _compute_histogram(np_arr: np.ndarray, data_range: tuple, n_bins: int = 32) -> list:
+        """Compute a normalized histogram from a numpy volume array.
+        Bins span data_range=(r0, r1) to match the slider's linear mapping.
+        Uses log1p scaling to handle heavily skewed distributions."""
+        flat = np_arr.ravel()
+        counts, _ = np.histogram(flat, bins=n_bins, range=data_range)
+        log_counts = np.log1p(counts.astype(np.float64))
+        max_val = log_counts.max()
+        if max_val == 0:
+            return [0.0] * n_bins
+        return (log_counts / max_val).tolist()
+
     def _load_and_display_channel(self, channel_id: int, component: int, roi: ROI, reset_camera: bool = False):
         """Load a single channel and add to display."""
         spacing = self._spacing_for_component(component)
@@ -317,6 +331,9 @@ class VolumeStreamer:
         
         r0, r1 = img.GetScalarRange()
         self._channel_data_range[channel_id] = (r0, r1)
+        
+        # Compute histogram using the same range as the slider
+        self._channel_histograms[channel_id] = self._compute_histogram(np_arr, (r0, r1))
         
         vol, mapper = self._get_or_create_volume(channel_id)
         mapper.SetInputData(img)
