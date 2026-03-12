@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bioset.llm import BiomniLocalClient
 from .state import get_channel_color
+from bioset.scene.volumes import build_tf_with_range, build_tf_with_range
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -813,12 +814,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
                             break
 
                     if channel_id in streamer._channel_data_range:
-                        from bioset.scene.volumes import build_tf_with_range
                         data_range = streamer._channel_data_range[channel_id]
-                        color_tf, opacity_tf = build_tf_with_range(data_range, tuple(current_range), tint_rgb)
+                        pct_range = streamer._channel_percentile_bounds.get(channel_id, (data_range[0], data_range[1], data_range[1]))
+                        color_tf, opacity_tf = build_tf_with_range(data_range, pct_range, tuple(current_range), tint_rgb)
                     else:
-                        from bioset.scene.volumes import build_histogram_tf
-                        color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
+                        color_tf, opacity_tf, pct_bounds = build_histogram_tf(img, tint_rgb=tint_rgb)
+                        streamer._channel_percentile_bounds[channel_id] = pct_bounds
                     streamer._channel_tfs[channel_id] = (color_tf, opacity_tf)
                     
                     prop = vol.GetProperty()
