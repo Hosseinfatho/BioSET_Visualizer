@@ -856,19 +856,28 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def _get_biomni_client():
         """Get or create the local Biomni client."""
+        base_url = f"http://localhost:{state.biomni_port}"
+
         if _refs["biomni_client"] is None:
-            _refs["biomni_client"] = BiomniLocalClient()
+            _refs["biomni_client"] = BiomniLocalClient(base_url=base_url)
+        else:
+            _refs["biomni_client"].base_url = base_url
+            
         return _refs["biomni_client"]
 
     def chatbot_login():
         """Initialise the Biomni agent on the local server."""
-        print("[callbacks] Biomni init requested")
+        print(f"[callbacks] Biomni init requested with model={state.biomni_model}, mode={state.biomni_mode}")
         state.chatbot_loading = True
 
         try:
             import os
             client = _get_biomni_client()
-            client.init(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            client.init(
+                llm=state.biomni_model,
+                mode=state.biomni_mode,
+                api_key=os.getenv("ANTHROPIC_API_KEY")
+            )
             state.chatbot_authenticated = True
             state.chatbot_messages = []
             print("[callbacks] Biomni initialised successfully")
@@ -880,6 +889,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_messages = [{"role": "error", "content": error_msg}]
         finally:
             state.chatbot_loading = False
+
+    def biomni_add_data(file_info):
+        """Handle data upload from the Biomni Settings file input.
+        
+        Currently a frontend-only stub.
+        """
+        if not file_info:
+            return
+            
+        file_name = file_info.get("name", "unknown")
+        print(f"[callbacks] Stub: Received file upload for Biomni Add Data: {file_name}")
+        
+        state.chatbot_messages = list(state.chatbot_messages) + [
+            {"role": "assistant", "content": f"Added context file: {file_name} (Frontend Stub)"}
+        ]
 
     def _build_markers() -> list[str]:
         """Build the markers list from active channels and their colors."""
@@ -1386,6 +1410,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_bar_data = update_bar_data
     ctrl.update_bar_data_local = update_bar_data_local
     ctrl.chatbot_login = chatbot_login
+    ctrl.biomni_add_data = biomni_add_data
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_clear = chatbot_clear

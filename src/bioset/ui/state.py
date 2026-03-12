@@ -138,6 +138,11 @@ def init_state(state):
     state.setdefault("chatbot_input", "")
     state.setdefault("chatbot_loading", False)
 
+    # Biomni Settings
+    state.setdefault("biomni_model", "claude-sonnet-4-6")
+    state.setdefault("biomni_mode", "full") # one of [full, db, minimal]
+    state.setdefault("biomni_port", 5000)
+    
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""
     return DEFAULT_CHANNEL_COLORS[index % len(DEFAULT_CHANNEL_COLORS)]
