@@ -865,6 +865,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
         return _refs["biomni_client"]
 
+    def get_available_llms():
+        try:
+            client = _get_biomni_client()
+            models = client.get_models()
+            if models:
+                state.biomni_available_models = models
+                if state.biomni_model not in models:
+                    state.biomni_model = models[0]
+        except Exception:
+            pass
+
     def chatbot_login():
         """Initialise the Biomni agent on the local server."""
         print(f"[callbacks] Biomni init requested with model={state.biomni_model}, mode={state.biomni_mode}")
@@ -1414,6 +1425,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_clear = chatbot_clear
+    ctrl.get_available_llms = get_available_llms
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod

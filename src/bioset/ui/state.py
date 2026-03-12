@@ -139,6 +139,7 @@ def init_state(state):
     state.setdefault("chatbot_loading", False)
 
     # Biomni Settings
+    state.setdefault("biomni_available_models", [])
     state.setdefault("biomni_model", "claude-sonnet-4-6")
     state.setdefault("biomni_mode", "full") # one of [full, db, minimal]
     state.setdefault("biomni_port", 5000)

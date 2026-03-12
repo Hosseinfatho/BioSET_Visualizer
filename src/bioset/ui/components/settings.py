@@ -113,7 +113,7 @@ def settings_section(state, ctrl):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         vuetify.VSelect(
                             v_model=("biomni_model",),
-                            items=(["claude-sonnet-4-6", "claude-haiku-3-5", "claude-opus-3", "gpt-4o", "gpt-4o-mini"],),
+                            items=("biomni_available_models",),
                             label="Model",
                             dense=True,
                             outlined=True,
