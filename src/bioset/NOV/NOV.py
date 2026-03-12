@@ -518,19 +518,16 @@ def register_nov_callbacks(ctrl, state, _refs):
     MAX_LENS_SIZE = 0.9    # maximum lens size (90% of view)
 
     def nov_rect_size_step(delta: float):
-        """Increase or decrease rect size by step (delta). Keeps center. Min 5%, max 90% of view."""
+        """Increase or decrease rect size by step (delta). Keeps position (bottom-left) fixed. Min 5%, max 90% of view."""
         rx = getattr(state, "nov_rect_x", 0.35)
         ry = getattr(state, "nov_rect_y", 0.35)
         rw = getattr(state, "nov_rect_w", 0.3)
         rh = getattr(state, "nov_rect_h", 0.3)
         new_w = max(MIN_LENS_SIZE, min(MAX_LENS_SIZE, rw + delta))
         new_h = max(MIN_LENS_SIZE, min(MAX_LENS_SIZE, rh + delta))
-        cx = rx + rw / 2.0
-        cy = ry + rh / 2.0
-        new_x = cx - new_w / 2.0
-        new_y = cy - new_h / 2.0
-        new_x = max(0.0, min(1.0 - new_w, new_x))
-        new_y = max(0.0, min(1.0 - new_h, new_y))
+        # Keep same position (anchor at bottom-left) so lens does not jump to center when resizing
+        new_x = max(0.0, min(1.0 - new_w, rx))
+        new_y = max(0.0, min(1.0 - new_h, ry))
         nov_update_rect(new_x, new_y, new_w, new_h)
 
     def nov_hide_lens():
