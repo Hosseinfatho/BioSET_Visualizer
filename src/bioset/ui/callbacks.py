@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import os
+import tempfile
+
+import requests
+
 from bioset.llm import BiomniLocalClient
+from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
-from bioset.scene.volumes import build_tf_with_range, build_tf_with_range
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -904,16 +909,45 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def biomni_add_data(file_info):
         """Handle data upload from the Biomni Settings file input.
         
-        Currently a frontend-only stub.
+        The VFileInput currently passes the raw bytes of the file to Trame.
         """
         if not file_info:
             return
+
+        print(f"[callbacks] Received file upload for Biomni Add Data ({len(file_info)} bytes)")
+
+        try:
+            file_name = file_info.get("name", "upload")
+            file_content = file_info.get("content")
+
+            if file_content is None:
+                raise ValueError("No file content found in upload payload.")
+
+            _, ext = os.path.splitext(file_name)
+            if not ext:
+                ext = ".csv"
+
+            fd, temp_path = tempfile.mkstemp(prefix="biomni_upload_", suffix=ext)
+            with os.fdopen(fd, 'wb') as f:
+                f.write(file_content)
+
+            print(f"[callbacks] Wrote upload '{file_name}' to {temp_path}")
+
+            client = _get_biomni_client()
+            url = f"{client.base_url}/custom-data"
+            resp = requests.post(url, json={"filepath": temp_path}, timeout=10)
+
+            if resp.status_code == 200:
+                msg = f"Successfully added uploaded context file to Biomni."
+            else:
+                msg = f"Failed to add context data: {resp.text}"
+
+        except Exception as e:
+            msg = f"Error processing file upload: {e}"
+            print(f"[callbacks] {msg}")
             
-        file_name = file_info.get("name", "unknown")
-        print(f"[callbacks] Stub: Received file upload for Biomni Add Data: {file_name}")
-        
         state.chatbot_messages = list(state.chatbot_messages) + [
-            {"role": "assistant", "content": f"Added context file: {file_name} (Frontend Stub)"}
+            {"role": "assistant", "content": msg}
         ]
 
     def _build_markers() -> list[str]:

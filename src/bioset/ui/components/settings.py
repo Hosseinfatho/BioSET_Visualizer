@@ -156,3 +156,15 @@ def settings_section(state, ctrl):
                             __events=["change"],
                             change=(ctrl.biomni_add_data, "[$event]"),
                         )
+
+                with vuetify.VListItem(class_="nav-item nav-item--nested pt-2 pb-2"):
+                    with vuetify.VListItemContent(v_if="!drawer_mini"):
+                        vuetify.VBtn(
+                            "{{ chatbot_authenticated ? 'Update Settings' : 'Initialize Biomni' }}",
+                            click=ctrl.chatbot_login,
+                            block=True,
+                            small=True,
+                            outlined=True,
+                            color=("chatbot_authenticated ? 'success' : ''",),
+                            loading=("chatbot_loading",),
+                        )

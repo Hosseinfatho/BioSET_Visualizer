@@ -30,31 +30,13 @@ def chatbot_section(state, ctrl):
             
             # Panel Content
             with vuetify.VExpansionPanelContent(classes="px-0 py-0"):
-                with html.Div(classes="px-4 py-3"):
-                    
-                    # Initialisation status
-                    with html.Div(v_if="!chatbot_authenticated", classes="mb-3"):
-                        with vuetify.VAlert(
-                            dense=True,
-                            text=True,
-                        ):
-                            with html.Div(classes="d-flex align-center"):
-                                vuetify.VIcon("mdi-exclamation", small=True, classes="mr-1")
-                                html.Span("Start the Biomni server, then initialise", classes="text-caption")
-
-                        vuetify.VBtn(
-                            "Initialize",
-                            click=ctrl.chatbot_login,
-                            block=True,
-                            small=True,
-                        )
-                    
-                    # Chat interface (when authenticated)
-                    with html.Div(v_if="chatbot_authenticated"):
-                        
-                        # Messages container
+                with html.Div(v_if="!chatbot_authenticated", classes="mb-3"):
+                    html.Span("Biomni not initialized.",
+                              classes="text-caption grey--text font-weight-bold letter-spacing-1")
+                with html.Div(v_if="chatbot_authenticated"):
+                    with html.Div(classes="px-4 py-3"):
                         with html.Div(
-                            classes="chatbot-messages mb-3",
+                                classes="chatbot-messages mb-3 mt-3",
                             style="max-height: 400px; overflow-y: auto; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 4px; padding: 8px;",
                         ):
                             # Empty state
@@ -67,7 +49,7 @@ def chatbot_section(state, ctrl):
                                     "Label active channels with Biomni",
                                     classes="text-caption grey--text mt-2",
                                 )
-                            
+
                             # Message list
                             with html.Div(
                                 v_for="(message, index) in chatbot_messages",
@@ -89,7 +71,7 @@ def chatbot_section(state, ctrl):
                                             "{{ message.content }}",
                                             classes="text-body-2",
                                         )
-                                
+
                                 # Assistant message
                                 with html.Div(
                                     v_if="message.role === 'assistant'",
@@ -105,7 +87,7 @@ def chatbot_section(state, ctrl):
                                             "{{ message.content }}",
                                             classes="text-body-2",
                                         )
-                                
+
                                 # Error message
                                 with html.Div(
                                     v_if="message.role === 'error'",
@@ -120,7 +102,7 @@ def chatbot_section(state, ctrl):
                                             "{{ message.content }}",
                                             classes="text-caption",
                                         )
-                            
+
                             # Loading indicator
                             with html.Div(
                                 v_if="chatbot_loading",
@@ -140,7 +122,7 @@ def chatbot_section(state, ctrl):
                                             "Thinking...",
                                             classes="ml-2 text-caption",
                                         )
-                        
+
                         # Input area
                         with html.Div(classes="d-flex align-center"):
                             vuetify.VTextField(
