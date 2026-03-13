@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from trame.widgets import vuetify
 
+from .analysis_parameters import analysis_parameters_section
+from .channels import channels_section
 from .data_sources import data_sources_section
 from .settings import settings_section
-from .channels import channels_section
 
 
 def left_drawer(state, ctrl):
@@ -20,7 +21,7 @@ def left_drawer(state, ctrl):
          v_model=("drawer", True),
         mini_variant=("drawer_mini", False),
         mini_variant_width=100,
-        width=250,
+            width=350,
         permanent=True,
         app=True,
         dark=True,
@@ -40,6 +41,11 @@ def left_drawer(state, ctrl):
         
         # Data Sources
         data_sources_section(state, ctrl)
+
+        vuetify.VDivider()
+
+        # Analysis Parameters
+        analysis_parameters_section(state, ctrl)
         
         vuetify.VDivider()
         
