@@ -86,13 +86,13 @@ def nov_cube_size_from_circum_radius(radius: float) -> float:
 
 
 def nov_popup_initial_size(length: float, width: float, depth: float, comp: Optional[int]) -> Tuple[int, int]:
-    """Initial NOV popup size (width_px, height_px) from lens and LOD. Uses nov_lens_circum_radius and nov_min_lens_side_for_comp."""
+    """Initial NOV popup size (width_px, height_px) from lens and LOD. Uses nov_lens_circum_radius and nov_min_lens_side_for_comp. Sizes 1.5x."""
     circum_r = nov_lens_circum_radius(length, width, depth)
     min_side = nov_min_lens_side_for_comp(comp) if comp is not None else MIN_LENS_HALF * 2
     # Scale window from lens size; keep within [min, max] like before
     w = max(340, min(640, 300 + int(circum_r * 0.04)))
     h = max(220, min(360, 200 + int(circum_r * 0.03)))
-    return (w, h)
+    return (int(w * 1.5), int(h * 1.5))
 
 
 # Corner order: 0=(-,-,-), 1=(+,-,-), 2=(-,+,-), 3=(+,+,-), 4=(-,-,+), 5=(+,-,+), 6=(-,+,+), 7=(+,+,+). Opposite of i is 7-i.
@@ -1339,8 +1339,8 @@ def register_nov_callbacks(ctrl, state, _refs):
     ctrl.nov_refresh_lens_display = nov_refresh_lens_display
     ctrl.nov_update_rect = nov_update_rect
     ctrl.nov_rect_size_step = nov_rect_size_step
-    ctrl.nov_rect_size_plus = lambda: nov_rect_size_step(0.03)
-    ctrl.nov_rect_size_minus = lambda: nov_rect_size_step(-0.03)
+    ctrl.nov_rect_size_plus = lambda: nov_rect_size_step(0.01)
+    ctrl.nov_rect_size_minus = lambda: nov_rect_size_step(-0.01)
 
     ctrl.nov_hide_lens = nov_hide_lens
     ctrl.nov_play_pause = nov_play_pause

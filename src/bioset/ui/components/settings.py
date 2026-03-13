@@ -105,7 +105,7 @@ def settings_section(state, ctrl):
                                 vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
                             html.Span("Next Best View (popup)")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("NOV", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;", click=ctrl.nov_toggle)
+                        html.Span("Optimal View", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;", click=ctrl.nov_toggle)
                 # Bookmark (saved views / snapshots)
                 with vuetify.VListItem(
                     class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),

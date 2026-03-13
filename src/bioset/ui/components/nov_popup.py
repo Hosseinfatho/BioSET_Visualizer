@@ -5,17 +5,17 @@ from __future__ import annotations
 
 from trame.widgets import html, vtk, vuetify
 
-# Base style: position + min/max; width/height come from state (nov_popup_width_px, nov_popup_height_px)
+# Base style: position + min/max; width/height come from state (nov_popup_width_px, nov_popup_height_px). Sizes 1.5x.
 _STYLE_BASE_FULL = (
     "position: fixed; left: 50%; transform: translateX(-50%); bottom: 1%; "
-    "min-width: 420px; max-width: 1080px; min-height: 300px; max-height: 630px; "
+    "min-width: 630px; max-width: 1620px; min-height: 450px; max-height: 945px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; resize: both; "
     "box-shadow: 0 4px 20px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); "
     "display: flex; flex-direction: column; "
 )
 _STYLE_BASE_MIN = (
     "position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; "
-    "width: 600px; height: auto; min-height: 36px; max-height: 36px; "
+    "width: 900px; height: auto; min-height: 36px; max-height: 36px; "
     "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
     "box-shadow: 0 -2px 12px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); border-bottom: none; "
     "display: flex; flex-direction: column;"
@@ -32,7 +32,7 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
         v_show=("nov_panel_visible", False),
         style=(
             "nov_popup_minimized ? nov_popup_style_minimized : ('width: ' + nov_popup_width_px + 'px; height: ' + nov_popup_height_px + 'px; ' + nov_popup_style_full)",
-            "width: 600px; height: 450px; " + _STYLE_BASE_FULL,
+            "width: 900px; height: 675px; " + _STYLE_BASE_FULL,
         ),
         class_="nov-popup-panel",
         attrs={"data-nov-popup": "1"},
