@@ -132,7 +132,7 @@ def init_state(state):
     state.setdefault("bar_expanded", False)
     
     # Chatbot state
-    state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
+    state.setdefault("chatbot_panel_open", False)  # False = closed, True = open
     state.setdefault("chatbot_authenticated", False)
     state.setdefault("chatbot_messages", [])  # List of {role: str, content: str}
     state.setdefault("chatbot_input", "")

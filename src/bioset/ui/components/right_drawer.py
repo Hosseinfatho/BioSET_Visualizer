@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from trame.widgets import html, vuetify
 
-from .chatbot import chatbot_section
-
 
 def right_drawer(state, ctrl):
         
@@ -405,6 +403,3 @@ def right_drawer(state, ctrl):
                 />
                 """
             )
-            
-        # Chatbot section
-        chatbot_section(state, ctrl)

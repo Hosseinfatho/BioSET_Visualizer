@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 from trame.ui.vuetify import VAppLayout
-from trame.widgets import html, vtk, vuetify, client
+from trame.widgets import client
 
-from .styles import register_styles
-from .scripts import register_scripts
-from .state import init_state, register_state_change_handlers
 from .callbacks import register_callbacks
 from .components import left_drawer, right_drawer, viewer
+from .components.floating_chatbot import floating_chatbot_section
+from .scripts import register_scripts
+from .state import init_state, register_state_change_handlers
+from .styles import register_styles
+
 
 def build_ui(server, render_window, streamer=None):
     ctrl = server.controller
@@ -22,7 +24,9 @@ def build_ui(server, render_window, streamer=None):
         # UI components
         left_drawer(state, ctrl)
         right_drawer(state, ctrl)
-        
+
+        floating_chatbot_section(state, ctrl)
+
         # VTK RENDERER
         with layout.root:
             view = viewer(ctrl, render_window)
