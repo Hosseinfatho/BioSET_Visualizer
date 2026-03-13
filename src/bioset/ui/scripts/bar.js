@@ -61,9 +61,9 @@ Vue.component('bar-plot', {
             const width = this.width;
             const height = this.height;
             const marginTop = 30;
-            const marginRight = 10;
-            const marginBottom = 120;
-            const marginLeft = 100;
+            const marginRight = 20;
+            const marginBottom = 80;
+            const marginLeft = 50;
 
             const chartData = renderData.map(d => ({ name: d[0], pct: d[1] }));
 
