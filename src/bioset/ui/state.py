@@ -191,6 +191,7 @@ def init_state(state):
     state.setdefault("nov_popup_width_px", 900)  # resizable NOV popup width (1.5x: 600→900)
     state.setdefault("nov_popup_height_px", 675)  # resizable NOV popup height (1.5x: 450→675)
     state.setdefault("nov_popup_size_str", "")  # "w,h" from client resize to update server
+    state.setdefault("nov_popup_pos", "")  # "leftPx,bottomPx" after drag; empty = default center bottom
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
@@ -312,6 +313,11 @@ def register_state_change_handlers(state, ctrl):
             state.nov_popup_size_str = ""
         except (ValueError, IndexError):
             pass
+
+    @state.change("nov_popup_pos")
+    def on_nov_popup_pos_change(nov_popup_pos, **kwargs):
+        """NOV panel position updated (e.g. after drag)."""
+        pass
 
     @state.change("heatmap_visible")
     def on_heatmap_visible_change(heatmap_visible, **kwargs):

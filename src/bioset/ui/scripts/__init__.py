@@ -58,6 +58,46 @@ NOV_DRAG_SCRIPT = r"""
     document.addEventListener("mousemove", onMove, true);
     document.addEventListener("mouseup", onUp, true);
   };
+
+  /** NOV panel drag: mousedown on header band moves panel by updating its style. */
+  window.novDragStart = function(e) {
+    if (!e || e.button !== 0) return;
+    if (e.target && (e.target.closest("button") || e.target.closest(".v-btn") || e.target.closest("a"))) return;
+    var panel = e.currentTarget;
+    if (!panel || !panel.getBoundingClientRect) return;
+    if (panel.closest && !panel.querySelector("[data-nov-pos-input='1']") && !panel.querySelector("#nov-popup-pos-input")) {
+      var p2 = panel.closest(".nov-popup-panel");
+      if (p2) panel = p2;
+    }
+    var doc = panel.ownerDocument || document;
+    var win = doc.defaultView || window;
+    var r = panel.getBoundingClientRect();
+    var startX = e.clientX, startY = e.clientY;
+    var startLeft = r.left, startBottom = win.innerHeight - r.bottom;
+    function setPanelPos(leftPx, bottomPx) {
+      panel.style.left = Math.round(leftPx) + "px";
+      panel.style.bottom = Math.round(bottomPx) + "px";
+      panel.style.transform = "none";
+    }
+    setPanelPos(startLeft, startBottom);
+    function onMove(ev) {
+      ev.preventDefault();
+      var left = startLeft + (ev.clientX - startX);
+      var bottom = startBottom - (ev.clientY - startY);
+      left = Math.max(0, Math.min(win.innerWidth - panel.offsetWidth, left));
+      bottom = Math.max(0, Math.min(win.innerHeight - 40, bottom));
+      setPanelPos(left, bottom);
+    }
+    function onUp(ev) {
+      if (ev.button !== 0) return;
+      doc.removeEventListener("mousemove", onMove, true);
+      doc.removeEventListener("mouseup", onUp, true);
+      var r2 = panel.getBoundingClientRect();
+      setPanelPos(Math.round(r2.left), Math.round(win.innerHeight - r2.bottom));
+    }
+    doc.addEventListener("mousemove", onMove, true);
+    doc.addEventListener("mouseup", onUp, true);
+  };
 })();
 """
 
