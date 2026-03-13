@@ -15,6 +15,11 @@ from .snapshot_io import (
     delete_snapshot_by_name,
     save_screenshot,
 )
+from .ov_snapshot_io import (
+    ov_save_snapshot,
+    ov_snapshot_names,
+    ov_load_snapshot_by_name,
+)
 from bioset.scene.volumes import build_tf_with_range
 
 
@@ -322,6 +327,96 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "description": v.get("notes") or "",
             "comments": v.get("comments", []),
         }
+
+    # === OV bookmark model (Optimal View-only bookmarks) ===
+
+    def ov_bookmark_refresh_names():
+        """Load OV snapshot names for current dataset into OV dropdown."""
+        dataset_id = _bookmark_dataset_id()
+        names = ov_snapshot_names(dataset_id)
+        state.ov_bookmark_snapshot_names = names or []
+
+    def _ov_bookmark_capture_view():
+        """Capture NOV popup camera and lens only (Optimal View)."""
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "nov_renderer", None):
+            return {}
+        cam = streamer.nov_renderer.GetActiveCamera()
+        camera = {
+            "position": list(cam.GetPosition()),
+            "focalPoint": list(cam.GetFocalPoint()),
+            "viewUp": list(cam.GetViewUp()),
+        }
+        nov_view = None
+        if getattr(state, "nov_lens_center", None) and len(state.nov_lens_center or []) >= 3:
+            nov_view = {
+                "camera": dict(camera),
+                "lens_center": list(state.nov_lens_center),
+                "lens_length": float(getattr(state, "nov_lens_length", 0)),
+                "lens_width": float(getattr(state, "nov_lens_width", 0)),
+                "lens_depth": float(getattr(state, "nov_lens_depth", 0)),
+            }
+        return {
+            "camera": camera,
+            "nov_view": nov_view,
+        }
+
+    def ov_bookmark_save_current():
+        """Save current NOV popup view as OV-only snapshot (independent from main bookmarks)."""
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        cap = _ov_bookmark_capture_view()
+        if not cap or not cap.get("camera"):
+            print("[ov_bookmark] No NOV camera to save")
+            return
+        # Use whatever is in the single field (typed or selected) — always as name string
+        raw = getattr(state, "ov_bookmark_selected_name", "") or ""
+        title = str(raw).strip() or "OV_view"
+        snapshot = {
+            "id": f"ov_{uuid.uuid4()}",
+            "title": title,
+            "created": now,
+            "updated": now,
+            "notes": "",
+            "camera": cap["camera"],
+            "views": [],
+        }
+        if cap.get("nov_view"):
+            snapshot["nov_view"] = cap["nov_view"]
+            snapshot["views"] = [
+                {
+                    "camera": cap["camera"],
+                    "nov_view": cap["nov_view"],
+                    "notes": "",
+                    "comments": [],
+                }
+            ]
+        dataset_id = _bookmark_dataset_id()
+        ov_save_snapshot(snapshot, dataset_id)
+        ov_bookmark_refresh_names()
+        state.ov_bookmark_selected_name = title
+
+    def ov_bookmark_open_selected():
+        """Open selected OV snapshot: apply NOV camera and lens to popup only."""
+        name = (getattr(state, "ov_bookmark_selected_name", "") or "").strip()
+        if not name:
+            print("[ov_bookmark] No OV name selected")
+            return
+        dataset_id = _bookmark_dataset_id()
+        snap = ov_load_snapshot_by_name(name, dataset_id)
+        if not snap:
+            print(f"[ov_bookmark] OV snapshot not found: {name}")
+            return
+        streamer = _refs.get("streamer")
+        nov_data = snap.get("nov_view")
+        if not nov_data:
+            # Try to take from first view if present
+            views = snap.get("views") or []
+            if views and isinstance(views[0], dict):
+                nov_data = views[0].get("nov_view")
+        if not nov_data:
+            print(f"[ov_bookmark] OV snapshot has no nov_view: {name}")
+            return
+        _apply_nov_view(streamer, nov_data)
 
     def bookmark_apply_current_view():
         """Apply current view (camera, channels, TF, background) to the scene."""
@@ -654,3 +749,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     ctrl.bookmark_export_screenshot_save = bookmark_export_screenshot_save
     ctrl.bookmark_comment = bookmark_comment
     ctrl.bookmark_update_snapshot = bookmark_update_snapshot
+    # OV-specific controls (Optimal View-only bookmarks)
+    ctrl.ov_bookmark_refresh_names = ov_bookmark_refresh_names
+    ctrl.ov_bookmark_save_current = ov_bookmark_save_current
+    ctrl.ov_bookmark_open_selected = ov_bookmark_open_selected

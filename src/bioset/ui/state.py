@@ -68,6 +68,10 @@ def init_state(state):
     state.setdefault("bookmark_export_screenshot_caption", "")
     state.setdefault("bookmark_capture_from_nov", False)  # True when saving from NOV popup
 
+    # OV bookmark (Optimal View-only bookmarks inside NOV popup)
+    state.setdefault("ov_bookmark_snapshot_names", [])
+    state.setdefault("ov_bookmark_selected_name", "")
+
     # Right drawer
     state.setdefault("right_drawer_open", False)
     
@@ -424,6 +428,12 @@ def register_state_change_handlers(state, ctrl):
     def on_bookmark_open_change(bookmark_open, **kwargs):
         if bookmark_open and hasattr(ctrl, "bookmark_refresh_names"):
             ctrl.bookmark_refresh_names()
+
+    @state.change("nov_panel_visible")
+    def on_nov_panel_visible_change(nov_panel_visible, **kwargs):
+        """When Optimal View popup becomes visible, refresh OV bookmarks list."""
+        if nov_panel_visible and hasattr(ctrl, "ov_bookmark_refresh_names"):
+            ctrl.ov_bookmark_refresh_names()
 
     @state.change("analysis_channels")
     def on_analysis_channels_change(analysis_channels, **kwargs):

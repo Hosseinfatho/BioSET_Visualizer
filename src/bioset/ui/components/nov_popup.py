@@ -100,9 +100,26 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                         html.Span("Set")
                     with vuetify.VBtn(v_show=("nov_has_results", False), small=True, dense=True, click=ctrl.nov_reset, style=_BTN_STYLE):
                         html.Span("Reset")
-                with html.Div(style="display: flex; align-items: center; flex-shrink: 0; gap: 2px;"):
-                    with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.bookmark_open_new_form_from_nov, style=_BTN_STYLE):
-                        vuetify.VIcon("mdi-bookmark", small=True)
+                with html.Div(style="display: flex; align-items: center; flex-shrink: 0; gap: 4px;"):
+                    # OV bookmark: one field — type new name (then + to save) or select name (then ✓ to open)
+                    vuetify.VCombobox(
+                        v_model=("ov_bookmark_selected_name", ""),
+                        items=("ov_bookmark_snapshot_names", []),
+                        dense=True,
+                        hide_details=True,
+                        placeholder="Name to save or select",
+                        dark=True,
+                        clearable=True,
+                        solo_flat=True,
+                        background_color="rgba(0,0,0,0.35)",
+                        color="#ffffff",
+                        style="max-width: 200px; font-size: 0.72rem; color: #fff !important;",
+                        classes="ov-bookmark-input",
+                    )
+                    with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.ov_bookmark_open_selected, style=_BTN_STYLE):
+                        vuetify.VIcon("mdi-bookmark-check", small=True)
+                    with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.ov_bookmark_save_current, style=_BTN_STYLE):
+                        vuetify.VIcon("mdi-bookmark-plus-outline", small=True)
                     with vuetify.VBtn(v_show=("!nov_popup_minimized", True), icon=True, x_small=True, dense=True, click="nov_popup_minimized = true", style=_BTN_STYLE):
                         vuetify.VIcon("mdi-window-minimize", small=True)
                     with vuetify.VBtn(v_show=("nov_popup_minimized", False), icon=True, x_small=True, dense=True, click="nov_popup_minimized = false", style=_BTN_STYLE):
