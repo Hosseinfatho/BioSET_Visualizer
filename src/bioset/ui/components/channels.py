@@ -19,7 +19,13 @@ def channels_section(state, ctrl):
             with vuetify.VListItemIcon():
                 with vuetify.VTooltip(right=True, disabled=("!drawer_mini",)):
                     with html.Template(v_slot_activator="{ on, attrs }"):
-                        vuetify.VIcon("mdi-layers-triple-outline", style="font-size: 40px;", v_bind="attrs", v_on="on")
+                        vuetify.VIcon(
+                            "mdi-layers-triple-outline",
+                            classes="mt-2",
+                            style="font-size: 30px;",
+                            v_bind="attrs",
+                            v_on="on"
+                        )
                     html.Span("Channels")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 with vuetify.VListItemTitle(classes="d-flex align-center"):

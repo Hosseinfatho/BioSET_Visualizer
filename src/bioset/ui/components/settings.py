@@ -21,6 +21,7 @@ def settings_section(state, ctrl):
     with vuetify.VList(dense=True, nav=True):
         with vuetify.VListItem(
             class_=("settings_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                classes="mb-0",
             link=True,
             ripple=True,
             click=toggle_settings,
@@ -28,7 +29,7 @@ def settings_section(state, ctrl):
             with vuetify.VListItemIcon():
                 with vuetify.VTooltip(right=True):
                     with html.Template(v_slot_activator="{ on, attrs }"):
-                        vuetify.VIcon("mdi-cog-outline", style="font-size: 40px;", v_bind="attrs", v_on="on")
+                        vuetify.VIcon("mdi-cog-outline", style="font-size: 30px;", v_bind="attrs", v_on="on")
                     html.Span("Settings")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Settings", classes="text-overline")
@@ -165,6 +166,5 @@ def settings_section(state, ctrl):
                             block=True,
                             small=True,
                             outlined=True,
-                            color=("chatbot_authenticated ? 'success' : ''",),
                             loading=("chatbot_loading",),
                         )
