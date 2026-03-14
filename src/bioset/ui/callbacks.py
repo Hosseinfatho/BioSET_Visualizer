@@ -333,6 +333,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                   f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
             
             update_heatmap()
+            update_heatmap_combinations()
             update_upset_data()
             update_bar_data()
             
