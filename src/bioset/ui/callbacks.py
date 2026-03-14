@@ -389,9 +389,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
             print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
             streamer.activate_channel(channel_id, color_hex)
-            if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
-                tile_x = state.selected_tile["tile_x"]
-                tile_y = state.selected_tile["tile_y"]
             if (state.selected_tile and mesh_mgr and mesh_mgr.is_available
                     and channel_id not in state.surface_hidden_channels):
                 tile_x = state.selected_tile["tile_x"]
@@ -405,9 +402,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     opacity=1.0,
                 )
                 print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
-                
-                print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
-                
+
         if streamer._channel_histograms:
             state.channel_histograms = {
                 str(ch_id): streamer._channel_histograms[ch_id] for ch_id in new_active if ch_id in streamer._channel_histograms
@@ -1154,17 +1149,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if mesh_mgr and mesh_mgr.is_available and active_channels:
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
                 vox_y = (tile.y0 + tile.y1) / 2.0 * 128
-                
-                first_ch = active_channels[0]
-                mesh_tile = mesh_mgr.find_tile_at_voxel(first_ch, vox_x, vox_y)
-                
-                if mesh_tile:
-                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                    
-                    for ch_id in active_channels:
-                        if ch_id in state.surface_hidden_channels:
-                            continue
+                state.selected_tile = None
+
+                for ch_id in active_channels:
+                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
+                    if not mesh_tile:
+                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
+                        continue
+                    if state.selected_tile is None:
+                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
+                    if ch_id not in state.surface_hidden_channels:
                         color_hex = "#FFFFFF"
                         for ch in state.channels:
                             if ch["id"] == ch_id:
@@ -1178,8 +1173,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                             tile_y=mesh_tile.tile_y,
                             opacity=1.0,
                         )
-                else:
-                    print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
 
             if _refs["view"]:
                 _refs["view"].update()
@@ -1313,17 +1306,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if mesh_mgr and mesh_mgr.is_available and active_channels:
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
                 vox_y = (tile.y0 + tile.y1) / 2.0 * 128
-                
-                first_ch = active_channels[0]
-                mesh_tile = mesh_mgr.find_tile_at_voxel(first_ch, vox_x, vox_y)
-                
-                if mesh_tile:
-                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                    
-                    for ch_id in active_channels:
-                        if ch_id in state.surface_hidden_channels:
-                            continue
+                state.selected_tile = None
+
+                for ch_id in active_channels:
+                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
+                    if not mesh_tile:
+                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
+                        continue
+                    if state.selected_tile is None:
+                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
+                    if ch_id not in state.surface_hidden_channels:
                         color_hex = "#FFFFFF"
                         for ch in state.channels:
                             if ch["id"] == ch_id:
@@ -1337,8 +1330,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                             tile_y=mesh_tile.tile_y,
                             opacity=1.0,
                         )
-                else:
-                    print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
 
             if _refs["view"]:
                 _refs["view"].update()
