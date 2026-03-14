@@ -73,6 +73,7 @@ class VolumeStreamer:
 
         self._channel_tfs: Dict[int,
                                 Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
+        self._channel_percentile_bounds: Dict[int, Tuple[float, float, float]] = {}
 
         self._pending_request: Optional[LoadRequest] = None
         self._debounce_lock = threading.Lock()
@@ -319,6 +320,19 @@ class VolumeStreamer:
         
         self._render()
 
+    @staticmethod
+    def _compute_histogram(np_arr: np.ndarray, data_range: tuple, n_bins: int = 32) -> list:
+        """Compute a normalized histogram from a numpy volume array.
+        Bins span data_range=(r0, r1) to match the slider's linear mapping.
+        Uses log1p scaling to handle heavily skewed distributions."""
+        flat = np_arr.ravel()
+        counts, _ = np.histogram(flat, bins=n_bins, range=data_range)
+        log_counts = np.log1p(counts.astype(np.float64))
+        max_val = log_counts.max()
+        if max_val == 0:
+            return [0.0] * n_bins
+        return (log_counts / max_val).tolist()
+
     def _load_and_display_channel(self, channel_id: int, component: int, roi: ROI, reset_camera: bool = False):
         """Load a single channel and add to display."""
         spacing = self._spacing_for_component(component)
@@ -348,12 +362,16 @@ class VolumeStreamer:
         r0, r1 = img.GetScalarRange()
         self._channel_data_range[channel_id] = (r0, r1)
         
+        # Compute histogram using the same range as the slider
+        self._channel_histograms[channel_id] = self._compute_histogram(np_arr, (r0, r1))
+        
         vol, mapper = self._get_or_create_volume(channel_id)
         mapper.SetInputData(img)
         
         tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
-        color_tf, opacity_tf = build_histogram_tf(img, tint_rgb=tint_rgb)
+        color_tf, opacity_tf, pct_range = build_histogram_tf(img, tint_rgb=tint_rgb)
         self._channel_tfs[channel_id] = (color_tf, opacity_tf)
+        self._channel_percentile_bounds[channel_id] = pct_range
         
         prop = vol.GetProperty()
         prop.SetColor(color_tf)
@@ -939,7 +957,8 @@ class VolumeStreamer:
         data_range = self._channel_data_range[channel_id]
         tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
         
-        color_tf, opacity_tf = build_tf_with_range(data_range, range_pct, tint_rgb)
+        pct_bounds = self._channel_percentile_bounds.get(channel_id, (data_range[0], data_range[1], data_range[1]))
+        color_tf, opacity_tf = build_tf_with_range(data_range, pct_bounds, range_pct, tint_rgb)
         self._channel_tfs[channel_id] = (color_tf, opacity_tf)
         
         if channel_id in self.volumes:

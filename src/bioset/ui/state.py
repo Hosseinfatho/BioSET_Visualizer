@@ -111,6 +111,9 @@ def init_state(state):
     # default color picker swatches (nested array for VColorPicker)
     state.setdefault("color_swatches", DEFAULT_COLOR_SWATCHES)
 
+    # Channel intensity histograms (channel_id -> list of normalized bin heights)
+    state.setdefault("channel_histograms", {})
+
     # bioset analysis file loading
     state.setdefault("analysis_loaded", False)
     state.setdefault("analysis_loading", False)
@@ -136,12 +139,15 @@ def init_state(state):
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
+    state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
+    state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
     state.setdefault("upset_search", "")
     state.setdefault("upset_filtered_channels", []) # Channels shown in filter list
     state.setdefault("upset_filter_dialog", False)
     state.setdefault("upset_expanded", False)
+    state.setdefault("upset_min_channels", 2)  # default minimum combination limit
 
     # Bar Plot filtering
     state.setdefault("bar_selected_channels", [])  # Channels to include in Bar
@@ -401,6 +407,12 @@ def register_state_change_handlers(state, ctrl):
     @state.change("upset_selected_channels")
     def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
         print(f"[state] UpSet selected channels changed: {len(upset_selected_channels)} channels")
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data()
+
+    @state.change("upset_min_channels")
+    def on_upset_min_channels_change(upset_min_channels, **kwargs):
+        print(f"[state] UpSet min channels changed: {upset_min_channels}")
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
 

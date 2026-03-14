@@ -241,7 +241,7 @@ def build_histogram_tf(image, *, tint_rgb=(0.2, 0.8, 1.0)):
         color = vtkColorTransferFunction()
         color.AddRGBPoint(r0, *tint_rgb)
         color.AddRGBPoint(r1, *tint_rgb)
-        return color, opacity
+        return color, opacity, (r0, r1, r1)
 
     lo = max(p10, r0)
     hi = max(p99, lo + 1.0)
@@ -260,7 +260,7 @@ def build_histogram_tf(image, *, tint_rgb=(0.2, 0.8, 1.0)):
     color.AddRGBPoint(hi, *tint_rgb)
     color.AddRGBPoint(r1, *tint_rgb)
 
-    return color, opacity
+    return color, opacity, (p10, p99, p995)
 
 
 def apply_volume_properties(prop: vtkVolumeProperty, image, *, shade=True):
@@ -280,6 +280,7 @@ def apply_volume_properties(prop: vtkVolumeProperty, image, *, shade=True):
 
 def build_tf_with_range(
     data_range: Tuple[float, float],
+    percentile_range: Tuple[float, float, float],
     intensity_range_pct: Tuple[float, float],  
     tint_rgb: Tuple[float, float, float],
 ) -> Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]:
@@ -288,14 +289,20 @@ def build_tf_with_range(
     
     Args:
         data_range: (min, max) scalar values from the data
+        percentile_range: (p10, p99, p995) percentile ranges 
         intensity_range_pct: [low%, high%] from slider (0-100)
         tint_rgb: Channel color as RGB tuple (0-1 range)
     """
     r0, r1 = data_range
+    p10, p99, p995 = percentile_range
+
     pct_lo, pct_hi = intensity_range_pct
     
-    lo = r0 + (pct_lo / 100.0) * (r1 - r0)
-    hi = r0 + (pct_hi / 100.0) * (r1 - r0)
+    bounded_lo = max(p10, r0)
+    bounded_hi = max(p99, bounded_lo + 1.0)
+
+    lo = bounded_lo + (pct_lo / 100.0) * (bounded_hi - bounded_lo)
+    hi = bounded_lo + (pct_hi / 100.0) * (bounded_hi - bounded_lo)
     
     if hi <= lo:
         hi = lo + 1.0
@@ -306,7 +313,7 @@ def build_tf_with_range(
     opacity.AddPoint(lo + 0.25 * (hi - lo), 0.03)
     opacity.AddPoint(lo + 0.60 * (hi - lo), 0.12)
     opacity.AddPoint(hi, 0.25)
-    opacity.AddPoint(r1, 0.25)
+    opacity.AddPoint(max(p995, hi), 0.25)
     
     color = vtkColorTransferFunction()
     color.AddRGBPoint(r0, 0.0, 0.0, 0.0)

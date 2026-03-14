@@ -16,7 +16,7 @@ Project is being actively developed.
 ### Clone (including the Biomni submodule)
 
 ```bash
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules https://github.com/Chahat08/BioSET_Visualizer.git
 ```
 
 If you already cloned without `--recurse-submodules`, initialise the submodule afterwards:
