@@ -83,14 +83,23 @@ def channels_section(state, ctrl):
                                         style="flex-shrink: 0;",
                                         v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
                                     ):
+                                        vuetify.VIcon(
+                                            "{{ surface_hidden_channels.includes(channel.id) ? 'mdi-cube-off-outline' : 'mdi-cube-outline' }}",
+                                            class_="eye-icon mr-5 pr-5",
+                                            style="margin-left: 5px;",
+                                            v_if="active_channels.includes(channel.id)",
+                                            click=(ctrl.toggle_channel_surface, "[channel.id]"),
+                                        )
                                         with vuetify.VMenu(
                                             offset_y=True,
                                             close_on_content_click=False,
-                                        ):
+                                                v_if="active_channels.includes(channel.id)",
+                                        ):                                            
                                             with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
                                                 vuetify.VIcon(
                                                     "mdi-circle",
-                                                    style=("`color: ${channel.color || '#fff'}; cursor: pointer; font-size: 24px;`",),
+                                                    style=(
+                                                        "`color: ${channel.color || '#fff'}; cursor: pointer; font-size: 24px; margin-left: 5px;`",),
                                                     v_bind="menuAttrs",
                                                     v_on="menuOn",
                                                     click_stop=True,
