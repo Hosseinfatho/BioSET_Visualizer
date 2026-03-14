@@ -166,6 +166,11 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             _refs.pop("bookmark_camera_animate", None)
             if _refs.get("view"):
                 _refs["view"].update()
+            if getattr(streamer, "on_interaction_end", None):
+                try:
+                    streamer.on_interaction_end()
+                except Exception:
+                    pass
             import time as _time
             _refs["bookmark_camera_apply_once"] = {"camera": anim["end"], "set_at": _time.time()}
             return
