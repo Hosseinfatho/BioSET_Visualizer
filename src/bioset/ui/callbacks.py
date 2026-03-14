@@ -219,10 +219,42 @@ def register_callbacks(ctrl, state, view, streamer=None):
             active.remove(channel_id)
             state.active_channels = active
 
+    def toggle_channel_surface(channel_id):
+        """Toggle mesh surface visibility for a channel."""
+        mesh_mgr = _refs.get("mesh_manager")
+        hidden = list(state.surface_hidden_channels)
+
+        if channel_id in hidden:
+            hidden.remove(channel_id)
+            state.surface_hidden_channels = hidden
+            if (channel_id in state.active_channels
+                    and state.selected_tile and mesh_mgr and mesh_mgr.is_available):
+                color_hex = "#FFFFFF"
+                for ch in state.channels:
+                    if ch["id"] == channel_id:
+                        color_hex = ch["color"]
+                        break
+                color_rgb = _hex_to_rgb_tuple(color_hex)
+                mesh_mgr.activate_channel_mesh(
+                    channel_idx=channel_id,
+                    color_rgb=color_rgb,
+                    tile_x=state.selected_tile["tile_x"],
+                    tile_y=state.selected_tile["tile_y"],
+                    opacity=1.0,
+                )
+        else:
+            hidden.append(channel_id)
+            state.surface_hidden_channels = hidden
+            if mesh_mgr:
+                mesh_mgr.deactivate_channel_mesh(channel_id)
+
+        if _refs["view"]:
+            _refs["view"].update()
+
     def load_analysis_file(file_info):
         """
         Load analysis results from uploaded .bioset file.
-        
+
         Args:
             file_info: File info dict from trame file upload containing 'content' (base64) and 'name'
         """
@@ -308,6 +340,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                   f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
             
             update_heatmap()
+            update_heatmap_combinations()
             update_upset_data()
             update_bar_data()
             
@@ -364,10 +397,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
             print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
             streamer.activate_channel(channel_id, color_hex)
-            if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
-                tile_x = state.selected_tile["tile_x"]
-                tile_y = state.selected_tile["tile_y"]
-            if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
+            if (state.selected_tile and mesh_mgr and mesh_mgr.is_available
+                    and channel_id not in state.surface_hidden_channels):
                 tile_x = state.selected_tile["tile_x"]
                 tile_y = state.selected_tile["tile_y"]
                 color_rgb = _hex_to_rgb_tuple(color_hex)
@@ -379,13 +410,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     opacity=1.0,
                 )
                 print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
-                
-                print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
-                
+
         if streamer._channel_histograms:
             state.channel_histograms = {
                 str(ch_id): streamer._channel_histograms[ch_id] for ch_id in new_active if ch_id in streamer._channel_histograms
             }
+            
+        if to_activate and not currently_active:
+            heatmap_lod = _refs.get("heatmap_lod")
+            if heatmap_lod:
+                from bioset.streaming.lod import camera_distance_to_focal
+                renderer = streamer.renderer
+                dist = camera_distance_to_focal(renderer.GetActiveCamera())
+                heatmap_lod.on_camera_moved(dist)
 
         if _refs["view"]:
             _refs["view"].update()
@@ -484,14 +521,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """
         # Keep HeatmapLOD in sync with the current combination and dilation
         heatmap_lod = _refs.get("heatmap_lod")
+        streamer = _refs.get("streamer")
         if heatmap_lod:
             heatmap_lod.update_dilation(state.current_dilation)
             heatmap_lod.update_channels(state.heatmap_combination or [])
+            # Correct stale LOD level: channels are now set, so check the
+            # actual camera distance and override current_hierarchy_level if
+            # it no longer matches (e.g. after all channels were deactivated
+            # and camera reset to far-out position).
+            if heatmap_lod._auto_mode and streamer:
+                from bioset.streaming.lod import camera_distance_to_focal, choose_heatmap_level
+                dist = camera_distance_to_focal(streamer.renderer.GetActiveCamera())
+                correct_level = choose_heatmap_level(dist, heatmap_lod._distance_rules)
+                if correct_level != heatmap_lod._current_level:
+                    print(f"[callbacks] Correcting stale LOD level: "
+                          f"{heatmap_lod._current_level} -> {correct_level} (dist={dist:.1f})")
+                    heatmap_lod._current_level = correct_level
+                    state.current_hierarchy_level = correct_level
 
         loader = _refs.get("analysis_loader")
         heatmap = _refs.get("heatmap")
-        streamer = _refs.get("streamer")
-        
+
         if not loader or not loader.is_loaded or not heatmap:
             print("[callbacks] Cannot update heatmap - loader or heatmap not ready")
             return
@@ -1192,15 +1242,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if mesh_mgr and mesh_mgr.is_available and active_channels:
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
                 vox_y = (tile.y0 + tile.y1) / 2.0 * 128
-                
-                first_ch = active_channels[0]
-                mesh_tile = mesh_mgr.find_tile_at_voxel(first_ch, vox_x, vox_y)
-                
-                if mesh_tile:
-                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                    
-                    for ch_id in active_channels:
+                state.selected_tile = None
+
+                for ch_id in active_channels:
+                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
+                    if not mesh_tile:
+                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
+                        continue
+                    if state.selected_tile is None:
+                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
+                    if ch_id not in state.surface_hidden_channels:
                         color_hex = "#FFFFFF"
                         for ch in state.channels:
                             if ch["id"] == ch_id:
@@ -1214,12 +1266,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                             tile_y=mesh_tile.tile_y,
                             opacity=1.0,
                         )
-                else:
-                    print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
-            
+
             if _refs["view"]:
                 _refs["view"].update()
-        
+
 
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
@@ -1349,15 +1399,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if mesh_mgr and mesh_mgr.is_available and active_channels:
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
                 vox_y = (tile.y0 + tile.y1) / 2.0 * 128
-                
-                first_ch = active_channels[0]
-                mesh_tile = mesh_mgr.find_tile_at_voxel(first_ch, vox_x, vox_y)
-                
-                if mesh_tile:
-                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                    
-                    for ch_id in active_channels:
+                state.selected_tile = None
+
+                for ch_id in active_channels:
+                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
+                    if not mesh_tile:
+                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
+                        continue
+                    if state.selected_tile is None:
+                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
+                    if ch_id not in state.surface_hidden_channels:
                         color_hex = "#FFFFFF"
                         for ch in state.channels:
                             if ch["id"] == ch_id:
@@ -1371,12 +1423,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                             tile_y=mesh_tile.tile_y,
                             opacity=1.0,
                         )
-                else:
-                    print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
-            
+
             if _refs["view"]:
                 _refs["view"].update()
-        
+
 
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
@@ -1488,6 +1538,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.on_channel_color_change = on_channel_color_change
     ctrl.add_channel_to_visible = add_channel_to_visible
     ctrl.remove_channel_from_visible = remove_channel_from_visible
+    ctrl.toggle_channel_surface = toggle_channel_surface
     ctrl.on_channel_range_change = on_channel_range_change
     ctrl.update_upset_data = update_upset_data
     ctrl.update_upset_data_local = update_upset_data_local

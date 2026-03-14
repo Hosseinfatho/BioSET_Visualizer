@@ -116,6 +116,7 @@ def init_state(state):
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
+    state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
