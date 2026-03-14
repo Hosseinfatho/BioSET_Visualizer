@@ -212,10 +212,42 @@ def register_callbacks(ctrl, state, view, streamer=None):
             active.remove(channel_id)
             state.active_channels = active
 
+    def toggle_channel_surface(channel_id):
+        """Toggle mesh surface visibility for a channel."""
+        mesh_mgr = _refs.get("mesh_manager")
+        hidden = list(state.surface_hidden_channels)
+
+        if channel_id in hidden:
+            hidden.remove(channel_id)
+            state.surface_hidden_channels = hidden
+            if (channel_id in state.active_channels
+                    and state.selected_tile and mesh_mgr and mesh_mgr.is_available):
+                color_hex = "#FFFFFF"
+                for ch in state.channels:
+                    if ch["id"] == channel_id:
+                        color_hex = ch["color"]
+                        break
+                color_rgb = _hex_to_rgb_tuple(color_hex)
+                mesh_mgr.activate_channel_mesh(
+                    channel_idx=channel_id,
+                    color_rgb=color_rgb,
+                    tile_x=state.selected_tile["tile_x"],
+                    tile_y=state.selected_tile["tile_y"],
+                    opacity=1.0,
+                )
+        else:
+            hidden.append(channel_id)
+            state.surface_hidden_channels = hidden
+            if mesh_mgr:
+                mesh_mgr.deactivate_channel_mesh(channel_id)
+
+        if _refs["view"]:
+            _refs["view"].update()
+
     def load_analysis_file(file_info):
         """
         Load analysis results from uploaded .bioset file.
-        
+
         Args:
             file_info: File info dict from trame file upload containing 'content' (base64) and 'name'
         """
@@ -360,7 +392,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
                 tile_x = state.selected_tile["tile_x"]
                 tile_y = state.selected_tile["tile_y"]
-            if state.selected_tile and mesh_mgr and mesh_mgr.is_available:
+            if (state.selected_tile and mesh_mgr and mesh_mgr.is_available
+                    and channel_id not in state.surface_hidden_channels):
                 tile_x = state.selected_tile["tile_x"]
                 tile_y = state.selected_tile["tile_y"]
                 color_rgb = _hex_to_rgb_tuple(color_hex)
@@ -1130,6 +1163,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
                     
                     for ch_id in active_channels:
+                        if ch_id in state.surface_hidden_channels:
+                            continue
                         color_hex = "#FFFFFF"
                         for ch in state.channels:
                             if ch["id"] == ch_id:
@@ -1145,10 +1180,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                         )
                 else:
                     print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
-            
+
             if _refs["view"]:
                 _refs["view"].update()
-        
+
 
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
@@ -1287,6 +1322,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
                     
                     for ch_id in active_channels:
+                        if ch_id in state.surface_hidden_channels:
+                            continue
                         color_hex = "#FFFFFF"
                         for ch in state.channels:
                             if ch["id"] == ch_id:
@@ -1302,10 +1339,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                         )
                 else:
                     print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
-            
+
             if _refs["view"]:
                 _refs["view"].update()
-        
+
 
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
@@ -1380,6 +1417,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.on_channel_color_change = on_channel_color_change
     ctrl.add_channel_to_visible = add_channel_to_visible
     ctrl.remove_channel_from_visible = remove_channel_from_visible
+    ctrl.toggle_channel_surface = toggle_channel_surface
     ctrl.on_channel_range_change = on_channel_range_change
     ctrl.update_upset_data = update_upset_data
     ctrl.update_upset_data_local = update_upset_data_local
