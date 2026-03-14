@@ -34,7 +34,7 @@ def floating_chatbot_section(state, ctrl):
 
     with html.Div(
             v_if="chatbot_panel_open === true",
-            style="position: fixed; bottom: 95px; right: 366px; z-index: 200; width: 350px;"
+            v_bind_style="{'position': 'fixed', 'bottom': '95px', 'z-index': '200', 'width': '350px', 'right': right_drawer_open ? '366px': '16px'}"
     ):
         with vuetify.VCard(
                 dark=True,
