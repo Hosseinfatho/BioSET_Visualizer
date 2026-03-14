@@ -52,7 +52,10 @@ def init_state(state):
     state.setdefault("bookmark_open", False)
     state.setdefault("bookmark_snapshot_names", [])
     state.setdefault("bookmark_selected_name", "Name")
+    state.setdefault("bookmark_categories", [])
+    state.setdefault("bookmark_selected_category", "Uncategorized")
     state.setdefault("bookmark_form_dialog", False)
+    state.setdefault("bookmark_form_category", "Uncategorized")
     state.setdefault("bookmark_form_name", "")
     state.setdefault("bookmark_form_description", "")
     state.setdefault("bookmark_form_new_comment", "")
@@ -61,12 +64,21 @@ def init_state(state):
     state.setdefault("bookmark_form_minimized", False)
     state.setdefault("bookmark_dataset_id", "default")   # per-dataset folder under recordings
     state.setdefault("bookmark_edit_title", "")
+    state.setdefault("bookmark_edit_category", "")
     state.setdefault("bookmark_edit_description", "")
     state.setdefault("bookmark_edit_comment", "")
     state.setdefault("bookmark_export_screenshot_dialog", False)
     state.setdefault("bookmark_export_screenshot_name", "")
     state.setdefault("bookmark_export_screenshot_caption", "")
     state.setdefault("bookmark_capture_from_nov", False)  # True when saving from NOV popup
+    # Bookmark flags overlay (Show category): visible, list of flags, popup for one flag
+    state.setdefault("bookmark_flags_visible", False)
+    state.setdefault("bookmark_flags_data", [])
+    state.setdefault("bookmark_flag_popup", None)  # { name, category, channels_active, description } or null
+    state.setdefault("bookmark_flag_popup_html", "")  # single HTML string for popup body (no extra layout)
+    state.setdefault("bookmark_flag_popup_screen", "")   # "x,y" for positioning popup
+    state.setdefault("bookmark_flag_popup_left", 0)
+    state.setdefault("bookmark_flag_popup_top", 0)
 
     # OV bookmark (Optimal View-only bookmarks inside NOV popup)
     state.setdefault("ov_bookmark_snapshot_names", [])
@@ -438,8 +450,12 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("bookmark_open")
     def on_bookmark_open_change(bookmark_open, **kwargs):
-        if bookmark_open and hasattr(ctrl, "bookmark_refresh_names"):
-            ctrl.bookmark_refresh_names()
+        if bookmark_open:
+            if hasattr(ctrl, "bookmark_refresh_categories"):
+                ctrl.bookmark_refresh_categories()
+        else:
+            if getattr(state, "bookmark_flags_visible", False) and hasattr(ctrl, "bookmark_hide_flags"):
+                ctrl.bookmark_hide_flags()
 
     @state.change("nov_panel_visible")
     def on_nov_panel_visible_change(nov_panel_visible, **kwargs):

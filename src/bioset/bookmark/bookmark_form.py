@@ -21,6 +21,12 @@ def bookmark_form_panel(state, ctrl):
         with html.Div(v_show=("bookmark_form_dialog", False)):
             with html.Div(style=_FORM):
                 vuetify.VTextField(
+                    v_model=("bookmark_form_category",),
+                    placeholder="Category",
+                    **_FIELD,
+                )
+                html.Div(style="margin-bottom: 6px;")
+                vuetify.VTextField(
                     v_model=("bookmark_form_name",),
                     placeholder="Name",
                     **_FIELD,
@@ -42,6 +48,15 @@ def bookmark_form_panel(state, ctrl):
                 with html.Div(style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;"):
                     vuetify.VBtn("Cancel", text=True, x_small=True, click="bookmark_form_dialog = false", **_BTN)
                     vuetify.VBtn("Save", x_small=True, click=ctrl.bookmark_save_snapshot, **_BTN)
+        # Flag popup: when user clicks a bookmark flag, show small popup (top-right of flag)
+        with html.Div(
+            v_show=("bookmark_flag_popup", False),
+            style=("'position: fixed; z-index: 400; left: ' + (bookmark_flag_popup_left || 0) + 'px; top: ' + (bookmark_flag_popup_top || 0) + 'px; transform: translateY(-100%); min-width: 200px; max-width: 320px; padding: 10px 12px; border-radius: 6px; background: rgba(0,0,0,0.9); color: #fff; font-size: 1rem; box-shadow: 0 2px 12px rgba(0,0,0,0.4); white-space: pre-wrap; word-break: break-word; line-height: 1.1; pointer-events: auto;'",),
+        ):
+            with html.Div(v_html=("bookmark_flag_popup_html", ""), style="color: #fff; font-size: 1rem; line-height: 1.2; margin: 0; padding: 0;"):
+                pass
+            with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_close_flag_popup, style="position: absolute; top: 4px; right: 4px; color: #fff;"):
+                vuetify.VIcon("mdi-close", x_small=True)
         with html.Div(v_show=("bookmark_display_snapshot && !bookmark_form_dialog && !bookmark_form_minimized", False)):
             with html.Div(style=_FORM + " margin-top: 8px; max-width: 100%;"):
                 with html.Div(style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;"):
@@ -61,6 +76,12 @@ def bookmark_form_panel(state, ctrl):
                         vuetify.VIcon("mdi-window-minimize", x_small=True)
                     with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_close_display, **_BTN):
                         vuetify.VIcon("mdi-close", x_small=True)
+                vuetify.VTextField(
+                    v_model=("bookmark_edit_category",),
+                    placeholder="Category",
+                    **_FIELD,
+                )
+                html.Div(style="margin-bottom: 6px;")
                 vuetify.VTextField(
                     v_model=("bookmark_edit_title",),
                     placeholder="Name",

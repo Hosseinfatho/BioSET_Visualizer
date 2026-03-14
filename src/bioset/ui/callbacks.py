@@ -28,6 +28,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "mesh_manager": None,
         "heatmap_lod": None,
         "heatmap_lod": None,
+        "interactor": None,
     }
 
     def set_view(v):
@@ -60,6 +61,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the heatmap LOD renderer reference."""
         _refs["heatmap_lod"] = heatmap_lod
         print(f"[callbacks] Heatmap LOD set: {heatmap_lod}")
+
+    def set_interactor(interactor):
+        """Set the main VTK interactor for bookmark flag picking."""
+        _refs["interactor"] = interactor
+
+    ctrl.set_interactor = set_interactor
 
     def set_heatmap_lod_auto_mode(enabled: bool):
         """Set heatmap LOD auto mode (controlled by UI toggle)."""

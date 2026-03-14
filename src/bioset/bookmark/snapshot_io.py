@@ -48,13 +48,33 @@ def _safe_filename(name: str) -> str:
     return (s[:80] or "unnamed") + ".json"
 
 
-def load_snapshots(dataset_id: str = DEFAULT_DATASET) -> List[Dict[str, Any]]:
-    """Load all snapshots from this dataset's recordings folder."""
-    rec = _recordings_dir(dataset_id)
-    if not rec.exists():
-        return []
+def _safe_folder_name(category: str) -> str:
+    """Safe folder name from category (for recordings/<dataset_id>/<category>/)."""
+    s = (category or "Uncategorized").strip() or "Uncategorized"
+    s = re.sub(r'[^\w\s\-]', '', s)
+    s = re.sub(r'[\s\-]+', '_', s).strip('_')
+    return (s[:60] or "Uncategorized")
+
+
+def _iter_snapshot_paths(rec: Path) -> List[Path]:
+    """Yield all .json paths under rec (root level and category subfolders). Skip Screenshot."""
     out = []
-    for path in rec.glob("*.json"):
+    if not rec.exists():
+        return out
+    for p in rec.glob("*.json"):
+        out.append(p)
+    for sub in rec.iterdir():
+        if sub.is_dir() and sub.name != "Screenshot":
+            for p in sub.glob("*.json"):
+                out.append(p)
+    return out
+
+
+def load_snapshots(dataset_id: str = DEFAULT_DATASET) -> List[Dict[str, Any]]:
+    """Load all snapshots from this dataset (root and category subfolders)."""
+    rec = _recordings_dir(dataset_id)
+    out = []
+    for path in _iter_snapshot_paths(rec):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -66,19 +86,24 @@ def load_snapshots(dataset_id: str = DEFAULT_DATASET) -> List[Dict[str, Any]]:
 
 
 def load_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> Optional[Dict[str, Any]]:
-    """Load one snapshot by title/name (same ID as user set)."""
+    """Load one snapshot by title/name (search root and all category folders)."""
     rec = _recordings_dir(dataset_id)
     if not rec.exists():
         return None
     safe = _safe_filename(name)
-    path = rec / safe
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[bookmark] Failed to load {path}: {e}")
-    for p in rec.glob("*.json"):
+    # Try root then each category folder
+    to_try = [rec / safe]
+    for sub in rec.iterdir():
+        if sub.is_dir() and sub.name != "Screenshot":
+            to_try.append(sub / safe)
+    for path in to_try:
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[bookmark] Failed to load {path}: {e}")
+    for p in _iter_snapshot_paths(rec):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -89,22 +114,54 @@ def load_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> Optio
     return None
 
 
-def delete_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> bool:
-    """Remove snapshot file by title/name. Returns True if deleted."""
+def delete_snapshot_in_category(name: str, dataset_id: str, category: str) -> bool:
+    """Remove snapshot file at recordings/<dataset_id>/<category>/<name>.json. Returns True if deleted."""
     rec = _recordings_dir(dataset_id)
-    path = rec / _safe_filename(name)
+    if not rec.exists():
+        return False
+    folder = rec / _safe_folder_name(category)
+    safe = _safe_filename(name)
+    path = folder / safe
     if path.exists():
         path.unlink()
         return True
     return False
 
 
+def delete_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> bool:
+    """Remove snapshot file by title/name (from root or category folder). Returns True if deleted."""
+    rec = _recordings_dir(dataset_id)
+    if not rec.exists():
+        return False
+    safe = _safe_filename(name)
+    if (rec / safe).exists():
+        (rec / safe).unlink()
+        return True
+    for sub in rec.iterdir():
+        if sub.is_dir() and sub.name != "Screenshot" and (sub / safe).exists():
+            (sub / safe).unlink()
+            return True
+    for p in _iter_snapshot_paths(rec):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("title") == name or data.get("id") == name:
+                p.unlink()
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -> None:
-    """Save one snapshot to recordings/<dataset_id>/<name>.json (same ID as user set)."""
+    """Save snapshot to recordings/<dataset_id>/<category>/<name>.json (category folder)."""
     rec = _recordings_dir(dataset_id)
     rec.mkdir(parents=True, exist_ok=True)
     title = (snapshot.get("title") or snapshot.get("id") or "Unnamed").strip() or "Unnamed"
-    path = rec / _safe_filename(title)
+    category = (snapshot.get("category") or "").strip() or "Uncategorized"
+    folder = rec / _safe_folder_name(category)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / _safe_filename(title)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
@@ -112,3 +169,24 @@ def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -
 def snapshot_names(dataset_id: str = DEFAULT_DATASET) -> List[str]:
     """List of snapshot names for dropdown (from this dataset's recordings)."""
     return [s.get("title") or s.get("id") or "" for s in load_snapshots(dataset_id) if s.get("title") or s.get("id")]
+
+
+def snapshot_categories(dataset_id: str = DEFAULT_DATASET) -> List[str]:
+    """List of unique category names from all snapshots (default 'Uncategorized' if missing)."""
+    snapshots = load_snapshots(dataset_id)
+    cats = set()
+    for s in snapshots:
+        cat = (s.get("category") or "").strip() or "Uncategorized"
+        cats.add(cat)
+    return sorted(cats) if cats else ["Uncategorized"]
+
+
+def load_snapshots_by_category(dataset_id: str, category: str) -> List[Dict[str, Any]]:
+    """Load all snapshots that belong to the given category."""
+    all_snapshots = load_snapshots(dataset_id)
+    out = []
+    for s in all_snapshots:
+        cat = (s.get("category") or "").strip() or "Uncategorized"
+        if cat == (category or "Uncategorized"):
+            out.append(s)
+    return out

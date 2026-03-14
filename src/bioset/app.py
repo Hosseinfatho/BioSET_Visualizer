@@ -65,6 +65,8 @@ def main():
 
     if scene.streamer is not None:
         ctrl.set_streamer(scene.streamer)
+    if hasattr(scene, "interactor") and scene.interactor is not None:
+        ctrl.set_interactor(scene.interactor)
 
     if scene.streamer is not None:
         import asyncio
@@ -102,12 +104,14 @@ def main():
                     print(f"[error] check_loaded_data: {e}")
 
         async def _nov_animation_loop():
-            """Drive NOV camera transition: one frame every 40ms so client sees smooth rotation between views."""
+            """Drive NOV camera transition and bookmark camera animation: one frame every 40ms."""
             while True:
                 await asyncio.sleep(0.04)
                 try:
                     if hasattr(ctrl, "nov_animation_tick"):
                         ctrl.nov_animation_tick()
+                    if hasattr(ctrl, "bookmark_camera_animation_tick"):
+                        ctrl.bookmark_camera_animation_tick()
                 except Exception:
                     pass
 

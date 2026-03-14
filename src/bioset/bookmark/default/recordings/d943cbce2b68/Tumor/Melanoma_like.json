@@ -1,0 +1,146 @@
+{
+  "id": "238ccd68-18a1-4547-8c67-0c4e328d4f06",
+  "title": "Melanoma like",
+  "category": "Tumor",
+  "created": "2026-03-14T17:14:39Z",
+  "updated": "2026-03-14T19:53:14Z",
+  "notes": "increasing interaction between MITF ans SOX10",
+  "camera": {
+    "position": [
+      415.62390429402467,
+      523.6151364709939,
+      1323.3472918835787
+    ],
+    "focalPoint": [
+      512.8477880680779,
+      465.60767115745915,
+      65.34767047336958
+    ],
+    "viewUp": [
+      0.021047380161773373,
+      0.9987908277430093,
+      -0.044428484160057166
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FFFF00",
+      "range": [
+        29.0,
+        67.0
+      ]
+    },
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        23.0,
+        65.0
+      ]
+    },
+    {
+      "id": 7,
+      "name": "SOX10",
+      "color": "#00FF00",
+      "range": [
+        34.0,
+        88.0
+      ]
+    }
+  ],
+  "active_channels": [
+    3,
+    7,
+    0
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 3064,
+    "height": 1606
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          415.62390429402467,
+          523.6151364709939,
+          1323.3472918835787
+        ],
+        "focalPoint": [
+          512.8477880680779,
+          465.60767115745915,
+          65.34767047336958
+        ],
+        "viewUp": [
+          0.021047380161773373,
+          0.9987908277430093,
+          -0.044428484160057166
+        ]
+      },
+      "notes": "increasing interaction between MITF ans SOX10",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FFFF00",
+          "range": [
+            29.0,
+            67.0
+          ]
+        },
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            23.0,
+            65.0
+          ]
+        },
+        {
+          "id": 7,
+          "name": "SOX10",
+          "color": "#00FF00",
+          "range": [
+            34.0,
+            88.0
+          ]
+        }
+      ],
+      "active_channels": [
+        3,
+        7,
+        0
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 3064,
+        "height": 1606
+      },
+      "optional_LOD": {
+        "component": 2,
+        "roi": {
+          "x0": 320,
+          "x1": 1567,
+          "y0": 465,
+          "y1": 1152
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 2,
+    "roi": {
+      "x0": 320,
+      "x1": 1567,
+      "y0": 465,
+      "y1": 1152
+    }
+  },
+  "description": "increasing interaction between MITF ans SOX10"
+}

@@ -123,27 +123,38 @@ def settings_section(state, ctrl):
                 with vuetify.VExpandTransition():
                     with html.Div(v_show=("bookmark_open", False)):
                         with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;"):
-                                vuetify.VAutocomplete(
-                                    v_model=("bookmark_selected_name", "Name"),
-                                    items=("bookmark_snapshot_names", []),
+                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; flex-direction: column; gap: 6px;"):
+                                vuetify.VSelect(
+                                    v_model=("bookmark_selected_category", "Uncategorized"),
+                                    items=("bookmark_categories", []),
                                     dense=True,
                                     hide_details=True,
-                                    placeholder="Select...",
-                                    style="flex: 0.4 1 0; min-width: 0;",
+                                    placeholder="Category",
+                                    label="Category",
+                                    style="min-width: 0;",
                                 )
-                                with vuetify.VBtn(
-                                    x_small=True,
-                                    color="primary",
-                                    disabled=("!bookmark_selected_name || !String(bookmark_selected_name).trim()",),
-                                    click=ctrl.bookmark_open_snapshot,
-                                    style="flex: 0.3 1 0; min-width: 0;",
-                                ):
-                                    html.Span("Open")
-                                with vuetify.VBtn(
-                                    x_small=True,
-                                    color="secondary",
-                                    click=ctrl.bookmark_open_new_form,
-                                    style="flex: 0.3 1 0; min-width: 0;",
-                                ):
-                                    html.Span("New")
+                                with html.Div(style="display: flex; gap: 6px; flex-wrap: wrap;"):
+                                    with vuetify.VBtn(
+                                        v_show=("!bookmark_flags_visible", True),
+                                        x_small=True,
+                                        color="primary",
+                                        click=ctrl.bookmark_show_category_flags,
+                                        style="flex: 1 1 0; min-width: 0;",
+                                    ):
+                                        html.Span("Show")
+                                    with vuetify.VBtn(
+                                        v_show=("bookmark_flags_visible", False),
+                                        x_small=True,
+                                        color="primary",
+                                        outlined=True,
+                                        click=ctrl.bookmark_hide_flags,
+                                        style="flex: 1 1 0; min-width: 0;",
+                                    ):
+                                        html.Span("Hide")
+                                    with vuetify.VBtn(
+                                        x_small=True,
+                                        color="secondary",
+                                        click=ctrl.bookmark_open_new_form,
+                                        style="flex: 1 1 0; min-width: 0;",
+                                    ):
+                                        html.Span("New")
