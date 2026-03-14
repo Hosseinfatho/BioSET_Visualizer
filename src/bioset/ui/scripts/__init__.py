@@ -101,10 +101,11 @@ NOV_DRAG_SCRIPT = r"""
 })();
 """
 
-
+# register js files here
 def register_scripts(client):
     client.Script(NOV_DRAG_SCRIPT)  # Load first so window.novStartDrag exists when lens is clicked
     client.Script(_read_js("upset.js"))
     client.Script(_read_js("bar.js"))
     client.Script(_read_js("mousemove.js"))
     client.Script(_read_js("histogram.js"))
+    client.Script(_read_js("download.js"))

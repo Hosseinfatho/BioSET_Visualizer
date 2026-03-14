@@ -6,6 +6,7 @@ from __future__ import annotations
 from trame.widgets import vuetify
 
 from .data_sources import data_sources_section
+from .report_generation import report_generation_section
 from .settings import settings_section
 from .channels import channels_section
 
@@ -47,6 +48,11 @@ def left_drawer(state, ctrl):
         settings_section(state, ctrl)
         
         vuetify.VDivider()
-        
+
+        # Report Generation
+        report_generation_section(state, ctrl)
+
+        vuetify.VDivider()
+
         # Channels
         channels_section(state, ctrl)
