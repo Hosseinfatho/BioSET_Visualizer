@@ -185,14 +185,19 @@ class AnalysisLoader:
         if cache_key in self._total_tiles_cache:
             return self._total_tiles_cache[cache_key]
         
-        # Try channel_stats first (most reliable — every tile should appear)
-        cursor = self._conn.execute('''
-            SELECT COUNT(DISTINCT tile_x0 || ',' || tile_y0) as n
-            FROM channel_stats
-            WHERE hierarchy_level = ?
-        ''', (hierarchy_level,))
-        row = cursor.fetchone()
-        total = row["n"] if row and row["n"] else 0
+        total = 0
+        try:
+            # Try channel_stats first (most reliable — every tile should appear)
+            cursor = self._conn.execute('''
+                SELECT COUNT(DISTINCT tile_x0 || ',' || tile_y0) as n
+                FROM channel_stats
+                WHERE hierarchy_level = ?
+            ''', (hierarchy_level,))
+            row = cursor.fetchone()
+            total = row["n"] if row and row["n"] else 0
+        except sqlite3.OperationalError as e:
+            if "no such table: channel_stats" not in str(e):
+                raise
         
         if total == 0:
             # Fallback: count from combinations/tiles
@@ -380,30 +385,33 @@ class AnalysisLoader:
         if total_volume == 0:
             return []
         
-        cursor = self._conn.execute('''
-            SELECT 
-                channel,
-                SUM(voxel_count) as total_voxels
-            FROM channel_stats
-            WHERE dilation = ? AND hierarchy_level = ?
-            GROUP BY channel
-            ORDER BY total_voxels DESC
-        ''', (dilation, hierarchy_level))
-        
-        rows = cursor.fetchall()
-        
-        # Fallback to dilation=0.0
-        if not rows and dilation != 0.0:
+        try:
             cursor = self._conn.execute('''
                 SELECT 
                     channel,
                     SUM(voxel_count) as total_voxels
                 FROM channel_stats
-                WHERE dilation = 0.0 AND hierarchy_level = ?
+                WHERE dilation = ? AND hierarchy_level = ?
                 GROUP BY channel
                 ORDER BY total_voxels DESC
-            ''', (hierarchy_level,))
+            ''', (dilation, hierarchy_level))
             rows = cursor.fetchall()
+            # Fallback to dilation=0.0
+            if not rows and dilation != 0.0:
+                cursor = self._conn.execute('''
+                    SELECT 
+                        channel,
+                        SUM(voxel_count) as total_voxels
+                    FROM channel_stats
+                    WHERE dilation = 0.0 AND hierarchy_level = ?
+                    GROUP BY channel
+                    ORDER BY total_voxels DESC
+                ''', (hierarchy_level,))
+                rows = cursor.fetchall()
+        except sqlite3.OperationalError as e:
+            if "no such table: channel_stats" in str(e):
+                return []
+            raise
         
         results = []
         for row in rows:
@@ -455,24 +463,27 @@ class AnalysisLoader:
         z_depth: int,
     ) -> list[TileData]:
         """Get tiles from channel_stats for a single channel."""
-        cursor = self._conn.execute('''
-            SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
-            FROM channel_stats
-            WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
-            ORDER BY voxel_count DESC
-        ''', (channel, dilation, hierarchy_level))
-        
-        rows = cursor.fetchall()
-        
-        # Fallback to dilation=0.0
-        if not rows and dilation != 0.0:
+        try:
             cursor = self._conn.execute('''
                 SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
                 FROM channel_stats
-                WHERE channel = ? AND dilation = 0.0 AND hierarchy_level = ?
+                WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
                 ORDER BY voxel_count DESC
-            ''', (channel, hierarchy_level))
+            ''', (channel, dilation, hierarchy_level))
             rows = cursor.fetchall()
+            # Fallback to dilation=0.0
+            if not rows and dilation != 0.0:
+                cursor = self._conn.execute('''
+                    SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
+                    FROM channel_stats
+                    WHERE channel = ? AND dilation = 0.0 AND hierarchy_level = ?
+                    ORDER BY voxel_count DESC
+                ''', (channel, hierarchy_level))
+                rows = cursor.fetchall()
+        except sqlite3.OperationalError as e:
+            if "no such table: channel_stats" in str(e):
+                return []
+            raise
         
         results = []
         for row in rows:
@@ -632,13 +643,18 @@ class AnalysisLoader:
         """Get total voxels for a single channel across all tiles."""
         if not self.is_loaded:
             return 0
-        cursor = self._conn.execute('''
-            SELECT SUM(voxel_count) as total
-            FROM channel_stats
-            WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
-        ''', (channel, dilation, level))
-        row = cursor.fetchone()
-        return row["total"] if row and row["total"] else 0
+        try:
+            cursor = self._conn.execute('''
+                SELECT SUM(voxel_count) as total
+                FROM channel_stats
+                WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
+            ''', (channel, dilation, level))
+            row = cursor.fetchone()
+            return row["total"] if row and row["total"] else 0
+        except sqlite3.OperationalError as e:
+            if "no such table: channel_stats" in str(e):
+                return 0
+            raise
     
     # ──────────────────────────────────────────────
     # Cleanup

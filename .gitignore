@@ -15,5 +15,10 @@ __pycache__/
 *.pyc
 
 data/*
-
-.env
+/src/ROI/GAT/Hi_res/Inflammation_roi1/NormalizedChannel_Tile_gat_128_128_194
+/src/ROI/GAT/NormalizedChannel_Tile_gat_128_128_194
+/src/ROI/GAT/Hi_res/Inflammation_roi1/preprocessed_Tile_gat_128_128_194
+/src/ROI/GAT/preprocessed_Tile_gat_128_128_194
+/src/ROI/GAT/Hi_res/Inflammation_roi1/dataset
+/src/ROI/GAT/dataset
+analysis_results.bioset

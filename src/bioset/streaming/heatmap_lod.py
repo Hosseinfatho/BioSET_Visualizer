@@ -45,21 +45,26 @@ def _run_tile_query(conn, channels, channel_order, dilation, level, z_depth):
 
     if len(channels) == 1:
         channel = channels[0]
-        cursor = conn.execute('''
-            SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
-            FROM channel_stats
-            WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
-            ORDER BY voxel_count DESC
-        ''', (channel, dilation, level))
-        rows = cursor.fetchall()
-        if not rows and dilation != 0.0:
+        try:
             cursor = conn.execute('''
                 SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
                 FROM channel_stats
-                WHERE channel = ? AND dilation = 0.0 AND hierarchy_level = ?
+                WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
                 ORDER BY voxel_count DESC
-            ''', (channel, level))
+            ''', (channel, dilation, level))
             rows = cursor.fetchall()
+            if not rows and dilation != 0.0:
+                cursor = conn.execute('''
+                    SELECT tile_x0, tile_x1, tile_y0, tile_y1, voxel_count
+                    FROM channel_stats
+                    WHERE channel = ? AND dilation = 0.0 AND hierarchy_level = ?
+                    ORDER BY voxel_count DESC
+                ''', (channel, level))
+                rows = cursor.fetchall()
+        except sqlite3.OperationalError as e:
+            if "no such table: channel_stats" in str(e):
+                return []
+            raise
         results = []
         for row in rows:
             x_span = max(1, row["tile_x1"] - row["tile_x0"])

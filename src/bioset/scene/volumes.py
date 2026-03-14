@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Tuple
 import numpy as np
 
 from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction

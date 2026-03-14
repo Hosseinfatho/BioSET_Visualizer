@@ -56,7 +56,12 @@ def main():
     server = get_server(client_type="vue2")
     server.enable_module({"serve": {"assets": str(ASSETS_DIR)}})
 
-    ctrl, view = build_ui(server, scene.render_window, streamer=scene.streamer)
+    ctrl, view = build_ui(
+        server,
+        scene.render_window,
+        streamer=scene.streamer,
+        nov_render_window=scene.nov_render_window,
+    )
 
     if scene.streamer is not None:
         ctrl.set_streamer(scene.streamer)
@@ -64,8 +69,10 @@ def main():
     if scene.streamer is not None:
         import asyncio
 
+        _scale_bar_tick = [0]  # mutable so inner function can update
+
         async def _check_loaded_data_loop():
-            """Periodically check if background loading has finished and apply to VTK"""
+            """Periodically check if background loading has finished and apply to VTK; also apply NOV progressive resolution updates and adaptive scale bar."""
             while True:
                 await asyncio.sleep(0.1)
                 try:
@@ -80,12 +87,34 @@ def main():
                     if updated:
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
                         view.update()
+                    if scene.streamer.process_nov_progressive_queue():
+                        view.update()
+                    _scale_bar_tick[0] += 1
+                    if _scale_bar_tick[0] >= 5:
+                        _scale_bar_tick[0] = 0
+                        if getattr(server.state, "nov_panel_visible", False) and hasattr(ctrl, "update_nov_scale_bar"):
+                            try:
+                                ctrl.update_nov_scale_bar()
+                                view.update()
+                            except Exception:
+                                pass
                 except Exception as e:
                     print(f"[error] check_loaded_data: {e}")
+
+        async def _nov_animation_loop():
+            """Drive NOV camera transition: one frame every 40ms so client sees smooth rotation between views."""
+            while True:
+                await asyncio.sleep(0.04)
+                try:
+                    if hasattr(ctrl, "nov_animation_tick"):
+                        ctrl.nov_animation_tick()
+                except Exception:
+                    pass
 
         @ctrl.add("on_server_ready")
         def _start_check_loop(**_):
             asyncio.create_task(_check_loaded_data_loop())
+            asyncio.create_task(_nov_animation_loop())
 
     if scene.streamer is not None:
         scene.streamer.set_render_callback(view.update)

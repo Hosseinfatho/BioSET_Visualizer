@@ -105,3 +105,17 @@ html::-webkit-scrollbar, body::-webkit-scrollbar {
 .chatbot-messages::-webkit-scrollbar-thumb:hover {
     background-color: rgba(255, 255, 255, 0.5);
 }
+
+/* OV bookmark input in Optimal View popup: white text on dark header */
+.nov-popup-panel .ov-bookmark-input input,
+.nov-popup-panel .ov-bookmark-input .v-select__selection,
+.nov-popup-panel .ov-bookmark-input .v-input__slot input {
+    color: #ffffff !important;
+    caret-color: #ffffff;
+}
+.nov-popup-panel .ov-bookmark-input .v-input__slot input::placeholder {
+    color: rgba(255, 255, 255, 0.7) !important;
+}
+.nov-popup-panel .ov-bookmark-input .v-icon {
+    color: rgba(255, 255, 255, 0.9) !important;
+}

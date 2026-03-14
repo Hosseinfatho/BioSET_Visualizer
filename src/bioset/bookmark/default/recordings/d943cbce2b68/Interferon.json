@@ -1,0 +1,273 @@
+{
+  "id": "343728cc-ff0e-48a6-b504-b8adc931e6db",
+  "title": "Interferon",
+  "created": "2026-02-22T19:22:13Z",
+  "updated": "2026-02-24T04:03:15Z",
+  "notes": "removing one channel to show interferon interaction",
+  "camera": {
+    "position": [
+      801.4086249973645,
+      485.16328289977173,
+      86.9459696861037
+    ],
+    "focalPoint": [
+      757.1199999999999,
+      380.8,
+      27.020000000000003
+    ],
+    "viewUp": [
+      -0.1602841572419787,
+      0.5417904640559478,
+      -0.8250891357879278
+    ]
+  },
+  "channels": [
+    {
+      "id": 1,
+      "name": "5'hmC",
+      "color": "#00FF00",
+      "range": [
+        7.0,
+        17.0
+      ]
+    },
+    {
+      "id": 2,
+      "name": "MX1",
+      "color": "#0000FF",
+      "range": [
+        6.0,
+        18.0
+      ]
+    }
+  ],
+  "active_channels": [
+    2,
+    1
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1920,
+    "height": 911
+  },
+  "comments": [
+    {
+      "date": "2026-02-22T19:26:47Z",
+      "text": "this is not correct reason"
+    }
+  ],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          757.1199999999999,
+          379.7467363727988,
+          301.9017930631746
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          0.9999926591314814,
+          0.003831668454990532
+        ]
+      },
+      "notes": "interferon and epigenic interaction",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF0000",
+          "range": [
+            3.0,
+            23.0
+          ]
+        },
+        {
+          "id": 1,
+          "name": "5'hmC",
+          "color": "#00FF00",
+          "range": [
+            7.0,
+            17.0
+          ]
+        },
+        {
+          "id": 2,
+          "name": "MX1",
+          "color": "#0000FF",
+          "range": [
+            6.0,
+            24.0
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        2,
+        1
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 911
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2078,
+          "x1": 3329,
+          "y0": 1055,
+          "y1": 1665
+        }
+      }
+    },
+    {
+      "camera": {
+        "position": [
+          785.2412604193511,
+          447.5634518500614,
+          164.2349201929389
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          -0.03679537336267074,
+          0.9015458352276133,
+          -0.43111623430676616
+        ]
+      },
+      "notes": "better view of interaction ....",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF0000",
+          "range": [
+            3.0,
+            23.0
+          ]
+        },
+        {
+          "id": 1,
+          "name": "5'hmC",
+          "color": "#00FF00",
+          "range": [
+            7.0,
+            17.0
+          ]
+        },
+        {
+          "id": 2,
+          "name": "MX1",
+          "color": "#0000FF",
+          "range": [
+            6.0,
+            18.0
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        2,
+        1
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 911
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2150,
+          "x1": 3079,
+          "y0": 1014,
+          "y1": 1544
+        }
+      }
+    },
+    {
+      "camera": {
+        "position": [
+          801.4086249973645,
+          485.16328289977173,
+          86.9459696861037
+        ],
+        "focalPoint": [
+          757.1199999999999,
+          380.8,
+          27.020000000000003
+        ],
+        "viewUp": [
+          -0.1602841572419787,
+          0.5417904640559478,
+          -0.8250891357879278
+        ]
+      },
+      "notes": "removing one channel to show interferon interaction",
+      "comments": [
+        {
+          "date": "2026-02-22T19:26:47Z",
+          "text": "this is not correct reason"
+        }
+      ],
+      "channels": [
+        {
+          "id": 1,
+          "name": "5'hmC",
+          "color": "#00FF00",
+          "range": [
+            7.0,
+            17.0
+          ]
+        },
+        {
+          "id": 2,
+          "name": "MX1",
+          "color": "#0000FF",
+          "range": [
+            6.0,
+            18.0
+          ]
+        }
+      ],
+      "active_channels": [
+        2,
+        1
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 911
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 1840,
+          "x1": 2992,
+          "y0": 654,
+          "y1": 1612
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 1840,
+      "x1": 2992,
+      "y0": 654,
+      "y1": 1612
+    }
+  },
+  "description": "removing one channel to show interferon interaction"
+}

@@ -36,12 +36,12 @@ def settings_section(state, ctrl):
 
         with vuetify.VExpandTransition():
             with html.Div(v_show=("settings_open", False)):
-                
+
                 # Camera / View Settings Header
                 with vuetify.VListItem(v_if="!drawer_mini", classes="mt-2 text-left pl-4"):
                     with vuetify.VListItemContent(classes="py-0"):
                         html.Span("Camera / View", classes="text-caption grey--text font-weight-bold letter-spacing-1")
-                
+
                 # Toggle Theme
                 with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
                     with vuetify.VListItemIcon():
@@ -144,7 +144,7 @@ def settings_section(state, ctrl):
                             outlined=True,
                             hide_details=True,
                         )
-                
+
                 # Context Data Upload
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(v_if="!drawer_mini", classes="pb-3"):
@@ -168,3 +168,55 @@ def settings_section(state, ctrl):
                             outlined=True,
                             loading=("chatbot_loading",),
                         )
+
+
+                # NOV: press to show box and panel; Set/Reset are in the popup window
+                with vuetify.VListItem(class_="nav-item nav-item--nested", style="overflow: visible;"):
+                    with vuetify.VListItemIcon():
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Next Best View (popup)")
+                    with vuetify.VListItemContent(v_if="!drawer_mini"):
+                        html.Span("Optimal View", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;", click=ctrl.nov_toggle)
+                # Bookmark (saved views / snapshots)
+                with vuetify.VListItem(
+                    class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                    link=True,
+                    ripple=True,
+                    click="bookmark_open = !bookmark_open",
+                ):
+                    with vuetify.VListItemIcon():
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon("mdi-bookmark", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Bookmark")
+                    with vuetify.VListItemContent(v_if="!drawer_mini"):
+                        html.Span("Bookmark")
+                with vuetify.VExpandTransition():
+                    with html.Div(v_show=("bookmark_open", False)):
+                        with vuetify.VListItem(class_="nav-item nav-item--nested"):
+                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;"):
+                                vuetify.VAutocomplete(
+                                    v_model=("bookmark_selected_name", "Name"),
+                                    items=("bookmark_snapshot_names", []),
+                                    dense=True,
+                                    hide_details=True,
+                                    placeholder="Select...",
+                                    style="flex: 0.4 1 0; min-width: 0;",
+                                )
+                                with vuetify.VBtn(
+                                    x_small=True,
+                                    color="primary",
+                                    disabled=("!bookmark_selected_name || !String(bookmark_selected_name).trim()",),
+                                    click=ctrl.bookmark_open_snapshot,
+                                    style="flex: 0.3 1 0; min-width: 0;",
+                                ):
+                                    html.Span("Open")
+                                with vuetify.VBtn(
+                                    x_small=True,
+                                    color="secondary",
+                                    click=ctrl.bookmark_open_new_form,
+                                    style="flex: 0.3 1 0; min-width: 0;",
+                                ):
+                                    html.Span("New")

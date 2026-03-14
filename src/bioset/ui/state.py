@@ -49,6 +49,30 @@ def init_state(state):
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)
     
+    # Bookmark (saved views / snapshots: name, open, new form)
+    state.setdefault("bookmark_open", False)
+    state.setdefault("bookmark_snapshot_names", [])
+    state.setdefault("bookmark_selected_name", "Name")
+    state.setdefault("bookmark_form_dialog", False)
+    state.setdefault("bookmark_form_name", "")
+    state.setdefault("bookmark_form_description", "")
+    state.setdefault("bookmark_form_new_comment", "")
+    state.setdefault("bookmark_display_snapshot", None)
+    state.setdefault("bookmark_current_view_index", 0)
+    state.setdefault("bookmark_form_minimized", False)
+    state.setdefault("bookmark_dataset_id", "default")   # per-dataset folder under recordings
+    state.setdefault("bookmark_edit_title", "")
+    state.setdefault("bookmark_edit_description", "")
+    state.setdefault("bookmark_edit_comment", "")
+    state.setdefault("bookmark_export_screenshot_dialog", False)
+    state.setdefault("bookmark_export_screenshot_name", "")
+    state.setdefault("bookmark_export_screenshot_caption", "")
+    state.setdefault("bookmark_capture_from_nov", False)  # True when saving from NOV popup
+
+    # OV bookmark (Optimal View-only bookmarks inside NOV popup)
+    state.setdefault("ov_bookmark_snapshot_names", [])
+    state.setdefault("ov_bookmark_selected_name", "")
+
     # Right drawer
     state.setdefault("right_drawer_open", False)
     
@@ -133,6 +157,53 @@ def init_state(state):
     state.setdefault("bar_filter_dialog", False)
     state.setdefault("bar_expanded", False)
     
+    # NOV (Next Best View) — 2D rectangle overlay (resize/pan); depth = 2× diagonal of rect in world
+    state.setdefault("nov_show_rect", False)  # show 2D rectangle overlay on main view
+    state.setdefault("nov_rect_x", 0.35)  # 0-1 left
+    state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
+    state.setdefault("nov_rect_w", 0.3)
+    state.setdefault("nov_rect_h", 0.3)
+    # Lens drag (Trame-only: client sets these via v_on; server commits on nov_dragging -> false)
+    state.setdefault("nov_dragging", False)
+    state.setdefault("nov_drag_start_rect_x", 0.35)
+    state.setdefault("nov_drag_start_rect_y", 0.35)
+    state.setdefault("nov_drag_start_client_x", 0)
+    state.setdefault("nov_drag_start_client_y", 0)
+    state.setdefault("nov_viewport_w", 1)
+    state.setdefault("nov_viewport_h", 1)
+    state.setdefault("nov_drag_delta_x", 0.0)
+    state.setdefault("nov_drag_delta_y", 0.0)
+    state.setdefault("nov_drag_end", "")  # "x,y,w,h" set on mouseup so server commits once
+    state.setdefault("nov_drag_live_str", "")  # "x,y" during drag so lens position updates in UI
+    state.setdefault("nov_open", False)
+    state.setdefault("nov_drawing_box", False)
+    state.setdefault("nov_lens_center", None)
+    state.setdefault("nov_lens_length", 0.0)
+    state.setdefault("nov_lens_width", 0.0)
+    state.setdefault("nov_lens_depth", 0.0)
+    state.setdefault("nov_dragging_corner", None)  # 0..7 when dragging a corner pin
+    state.setdefault("nov_dragging_lens_center", False)  # True when right-drag inside lens to move it
+    state.setdefault("nov_panel_visible", False)
+    state.setdefault("nov_candidates", [])
+    state.setdefault("nov_current_index", 0)
+    state.setdefault("nov_auto_play", False)  # when True, auto-advance views (Play); False = Pause
+    state.setdefault("nov_view_index_display", "")  # e.g. "1/10"
+    state.setdefault("nov_score_display", 0.0)
+    state.setdefault("nov_sphere_xy", [])  # for SVG mini-map
+    state.setdefault("nov_sphere_svg", "")
+    state.setdefault("nov_popup_minimized", False)  # minimize NOV popup (header only)
+    state.setdefault("nov_popup_open", False)  # True after "Set"; "Reset" only clears results inside, does not close
+    state.setdefault("nov_selected_channels", [])  # Channel ids selected in NOV popup for top-10 entropy views
+    state.setdefault("nov_has_results", False)  # True after Set computed candidates; drives single Set vs Reset button
+    state.setdefault("nov_active_channel_items", [])  # [{id, name, color}] for active channels only (same as main scene)
+    state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
+    state.setdefault("nov_scale_bar_label", "")  # e.g. "10 µm" for scale bar in NOV popup
+    state.setdefault("nov_scale_bar_width_px", 0)  # pixel width of scale bar (updates with zoom)
+    state.setdefault("nov_popup_width_px", 900)  # resizable NOV popup width (1.5x: 600→900)
+    state.setdefault("nov_popup_height_px", 675)  # resizable NOV popup height (1.5x: 450→675)
+    state.setdefault("nov_popup_size_str", "")  # "w,h" from client resize to update server
+    state.setdefault("nov_popup_pos", "")  # "leftPx,bottomPx" after drag; empty = default center bottom
+
     # Chatbot state
     state.setdefault("chatbot_panel_open", False)  # False = closed, True = open
     state.setdefault("chatbot_authenticated", False)
@@ -193,13 +264,84 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_upset_data_local()
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
-            
+        if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
+            ctrl.nov_recompute_scores_if_visible()
+
+    @state.change("channels")
+    def on_channels_change(channels, **kwargs):
+        """When channel list or per-channel range changes, update NOV scores if panel is open."""
+        if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
+            ctrl.nov_recompute_scores_if_visible()
+
+    @state.change("nov_selected_channels")
+    def on_nov_selected_channels_change(nov_selected_channels, **kwargs):
+        """When user checks/unchecks channels in NOV popup, show only selected channels in the NOV window."""
+        if hasattr(ctrl, 'nov_update_visibility'):
+            ctrl.nov_update_visibility()
+
+    @state.change("nov_drag_live_str")
+    def on_nov_drag_live_change(nov_drag_live_str, **kwargs):
+        """During drag: update nov_rect_x/y from script so the lens moves in the UI (no 3D update)."""
+        if not nov_drag_live_str:
+            return
+        state.nov_drag_live_str = ""
+        try:
+            parts = nov_drag_live_str.strip().split(",")
+            if len(parts) >= 2:
+                side = float(getattr(state, "nov_rect_w", 0.3))
+                side = max(0.05, min(0.9, side))
+                x = max(0, min(1 - side, float(parts[0])))
+                y = max(0, min(1 - side, float(parts[1])))
+                state.nov_rect_x = x
+                state.nov_rect_y = y
+        except (TypeError, ValueError):
+            pass
+
+    @state.change("nov_drag_end")
+    def on_nov_drag_end_change(nov_drag_end, **kwargs):
+        """When client sets nov_drag_end to 'x,y,w,h' on mouseup, commit lens position and 3D."""
+        if not nov_drag_end:
+            return
+        state.nov_drag_end = ""
+        try:
+            parts = nov_drag_end.strip().split(",")
+            if len(parts) >= 4:
+                x = max(0, min(1, float(parts[0])))
+                y = max(0, min(1, float(parts[1])))
+                w = max(0.05, min(0.9, float(parts[2])))
+                h = max(0.05, min(0.9, float(parts[3])))
+                if hasattr(ctrl, "nov_update_rect"):
+                    ctrl.nov_update_rect(x, y, w, h)
+        except (TypeError, ValueError):
+            pass
+
+    @state.change("nov_popup_size_str")
+    def on_nov_popup_size_str_change(nov_popup_size_str, **kwargs):
+        """When client sets nov_popup_size_str to 'w,h' after resizing the NOV popup, update state."""
+        if not nov_popup_size_str:
+            return
+        try:
+            parts = nov_popup_size_str.strip().split(",")
+            if len(parts) >= 2:
+                w = max(420, min(1080, int(float(parts[0]))))
+                h = max(300, min(630, int(float(parts[1]))))
+                state.nov_popup_width_px = w
+                state.nov_popup_height_px = h
+            state.nov_popup_size_str = ""
+        except (ValueError, IndexError):
+            pass
+
+    @state.change("nov_popup_pos")
+    def on_nov_popup_pos_change(nov_popup_pos, **kwargs):
+        """NOV panel position updated (e.g. after drag)."""
+        pass
+
     @state.change("heatmap_visible")
     def on_heatmap_visible_change(heatmap_visible, **kwargs):
         print(f"[state] Heatmap visible changed: {heatmap_visible}")
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
-            
+
     @state.change("heatmap_combination")
     def on_heatmap_combination_change(heatmap_combination, **kwargs):
         print(f"[state] Heatmap combination changed: {heatmap_combination}")
@@ -300,6 +442,17 @@ def register_state_change_handlers(state, ctrl):
     @state.change("bar_search")
     def on_bar_search_change(bar_search, **kwargs):
         state.bar_filtered_channels = _filter_channels(state.analysis_channels, bar_search)
+
+    @state.change("bookmark_open")
+    def on_bookmark_open_change(bookmark_open, **kwargs):
+        if bookmark_open and hasattr(ctrl, "bookmark_refresh_names"):
+            ctrl.bookmark_refresh_names()
+
+    @state.change("nov_panel_visible")
+    def on_nov_panel_visible_change(nov_panel_visible, **kwargs):
+        """When Optimal View popup becomes visible, refresh OV bookmarks list."""
+        if nov_panel_visible and hasattr(ctrl, "ov_bookmark_refresh_names"):
+            ctrl.ov_bookmark_refresh_names()
 
     @state.change("analysis_channels")
     def on_analysis_channels_change(analysis_channels, **kwargs):

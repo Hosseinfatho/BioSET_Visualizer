@@ -5,3 +5,4 @@ from .data_sources import data_sources_section
 from .settings import settings_section
 from .channels import channels_section
 from .chatbot import chatbot_section
+from .nov_popup import nov_popup_panel
