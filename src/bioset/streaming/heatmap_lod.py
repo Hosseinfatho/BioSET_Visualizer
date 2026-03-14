@@ -235,11 +235,19 @@ class HeatmapLOD:
         Returns True if anything was applied (triggers view.update()).
         """
         applied = False
+        heatmap_visible = getattr(state, 'heatmap_visible', True)
         while True:
             try:
                 result = self._queue.get_nowait()
             except queue.Empty:
                 break
+
+            self._current_level = result.level
+            state.current_hierarchy_level = result.level
+
+            if not heatmap_visible:
+                print(f"[heatmap_lod] Heatmap hidden — discarding level {result.level} result")
+                continue
 
             spacing = (
                 getattr(state, 'physical_size_x', 1.0),
@@ -250,10 +258,6 @@ class HeatmapLOD:
             color = hex_to_rgb(getattr(state, 'heatmap_color', '#FFFFFF'))
 
             heatmap_renderer.update_tiles(result.tiles, spacing=spacing, color=color)
-            self._current_level = result.level
-
-            state.current_hierarchy_level = result.level
-
             print(f"[heatmap_lod] Applied level {result.level}: {len(result.tiles)} tiles")
             applied = True
 
