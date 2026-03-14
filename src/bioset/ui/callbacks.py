@@ -408,6 +408,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.channel_histograms = {
                 str(ch_id): streamer._channel_histograms[ch_id] for ch_id in new_active if ch_id in streamer._channel_histograms
             }
+            
+        if to_activate and not currently_active:
+            heatmap_lod = _refs.get("heatmap_lod")
+            if heatmap_lod:
+                from bioset.streaming.lod import camera_distance_to_focal
+                renderer = streamer.renderer
+                dist = camera_distance_to_focal(renderer.GetActiveCamera())
+                heatmap_lod.on_camera_moved(dist)
 
         if _refs["view"]:
             _refs["view"].update()
@@ -506,14 +514,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """
         # Keep HeatmapLOD in sync with the current combination and dilation
         heatmap_lod = _refs.get("heatmap_lod")
+        streamer = _refs.get("streamer")
         if heatmap_lod:
             heatmap_lod.update_dilation(state.current_dilation)
             heatmap_lod.update_channels(state.heatmap_combination or [])
+            # Correct stale LOD level: channels are now set, so check the
+            # actual camera distance and override current_hierarchy_level if
+            # it no longer matches (e.g. after all channels were deactivated
+            # and camera reset to far-out position).
+            if heatmap_lod._auto_mode and streamer:
+                from bioset.streaming.lod import camera_distance_to_focal, choose_heatmap_level
+                dist = camera_distance_to_focal(streamer.renderer.GetActiveCamera())
+                correct_level = choose_heatmap_level(dist, heatmap_lod._distance_rules)
+                if correct_level != heatmap_lod._current_level:
+                    print(f"[callbacks] Correcting stale LOD level: "
+                          f"{heatmap_lod._current_level} -> {correct_level} (dist={dist:.1f})")
+                    heatmap_lod._current_level = correct_level
+                    state.current_hierarchy_level = correct_level
 
         loader = _refs.get("analysis_loader")
         heatmap = _refs.get("heatmap")
-        streamer = _refs.get("streamer")
-        
+
         if not loader or not loader.is_loaded or not heatmap:
             print("[callbacks] Cannot update heatmap - loader or heatmap not ready")
             return
