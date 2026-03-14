@@ -92,6 +92,7 @@ class VolumeStreamer:
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {} 
         
         self._channel_data_range: Dict[int, Tuple[float, float]] = {}
+        self._channel_histograms: Dict[int, list] = {}
 
         # NOV box clip: when set, only voxels inside the box are shown in the NOV popup view (main view stays full)
         self._nov_lens_clip: Optional[Tuple[Tuple[float, float, float], float, float, float]] = None
