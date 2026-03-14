@@ -78,9 +78,10 @@ def channels_section(state, ctrl):
                                         v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
                                     ):
                                         vuetify.VIcon(
-                                            "{{ surface_hidden_channels.includes(channel.id) ? 'mdi-cube-outline' : 'mdi-cube-off-outline' }}",
+                                            "{{ surface_hidden_channels.includes(channel.id) ? 'mdi-cube-off-outline' : 'mdi-cube-outline' }}",
                                             class_="eye-icon mr-5 pr-5",
                                             style="margin-left: 5px;",
+                                            v_if="active_channels.includes(channel.id)",
                                             click=(ctrl.toggle_channel_surface, "[channel.id]"),
                                         )
                                         with vuetify.VMenu(
