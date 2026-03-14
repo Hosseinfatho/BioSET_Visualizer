@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import datetime
 import os
 import tempfile
 
 import requests
 
 from bioset.llm import BiomniLocalClient
+from bioset.report import generate_report_bytes
 from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
 
@@ -1433,6 +1435,43 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    def generate_pdf_report(report_data=None):
+        """
+        API endpoint to generate and download a PDF report.
+        report_data: dict with 'title', 'params', 'channels', etc.
+        """
+        if report_data is None:
+            # Fallback: gather current app state if no specific data provided
+            active_channel_names = []
+            for ch_id in state.active_channels:
+                for ch in state.channels:
+                    if ch["id"] == ch_id:
+                        active_channel_names.append(ch["name"])
+                        break
+
+            report_data = {
+                "title": f"BioSET Analysis - {state.analysis_file_name or 'Current View'}",
+                "params": {
+                    "Dilation": f"{state.current_dilation}µm",
+                    "Hierarchy Level": state.current_hierarchy_level,
+                    "Heatmap Visible": state.heatmap_visible,
+                },
+                "channels": active_channel_names
+            }
+
+        print(f"[callbacks] Generating PDF report: {report_data.get('title')}")
+        try:
+            pdf_bytes = generate_report_bytes(report_data)
+            filename = f"BioSET_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+
+            with open(filename, "wb") as f:
+                f.write(pdf_bytes)
+
+            print(f"Saved PDF to: {os.path.abspath(filename)}")
+
+        except Exception as e:
+            print(f"[callbacks] Error generating report: {e}")
+
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
@@ -1469,4 +1508,4 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
     ctrl.trigger("on_hover")(on_hover)
-
+    ctrl.generate_pdf_report = generate_pdf_report
