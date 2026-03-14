@@ -87,11 +87,13 @@ def channels_section(state, ctrl):
                                         with vuetify.VMenu(
                                             offset_y=True,
                                             close_on_content_click=False,
+                                                v_if="active_channels.includes(channel.id)",
                                         ):                                            
                                             with html.Template(v_slot_activator="{ on: menuOn, attrs: menuAttrs }"):
                                                 vuetify.VIcon(
                                                     "mdi-circle",
-                                                    style=("`color: ${channel.color || '#fff'}; cursor: pointer; font-size: 24px;`",),
+                                                    style=(
+                                                        "`color: ${channel.color || '#fff'}; cursor: pointer; font-size: 24px; margin-left: 5px;`",),
                                                     v_bind="menuAttrs",
                                                     v_on="menuOn",
                                                     click_stop=True,
