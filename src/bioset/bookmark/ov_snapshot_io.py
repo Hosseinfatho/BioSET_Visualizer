@@ -77,23 +77,25 @@ def ov_load_snapshots(dataset_id: str = DEFAULT_DATASET) -> List[Dict[str, Any]]
 
 
 def ov_snapshot_categories(dataset_id: str = DEFAULT_DATASET) -> List[str]:
-    """Unique OV categories: subfolders that contain ov_*.json, plus Uncategorized for root ov_*.json."""
+    """Unique OV categories: subfolders that contain ov_*.json, plus Uncategorized for root ov_*.json. Excludes empty names."""
     rec = ov__recordings_dir(dataset_id)
     cats: set[str] = set()
     if rec.exists():
         if any(rec.glob("ov_*.json")):
             cats.add("Uncategorized")
         for sub in rec.iterdir():
-            if sub.is_dir() and sub.name != "Screenshot":
+            if sub.is_dir() and sub.name != "Screenshot" and (sub.name or "").strip():
                 if any(sub.glob("ov_*.json")):
                     cats.add(sub.name)
     for s in ov_load_snapshots(dataset_id):
         cat = (s.get("category") or "").strip() or "Uncategorized"
-        cats.add(cat)
-        folder = s.get("_folder")
+        if (cat or "").strip():
+            cats.add(cat)
+        folder = (s.get("_folder") or "").strip()
         if folder:
             cats.add(folder)
-    return sorted(cats) if cats else ["Uncategorized"]
+    filtered = [c for c in cats if (c or "").strip()]
+    return sorted(filtered) if filtered else ["Uncategorized"]
 
 
 def ov_load_snapshots_by_category(dataset_id: str, category: str) -> List[Dict[str, Any]]:

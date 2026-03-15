@@ -176,8 +176,8 @@ def init_state(state):
     state.setdefault("nov_show_rect", False)  # show 2D rectangle overlay on main view
     state.setdefault("nov_rect_x", 0.35)  # 0-1 left
     state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
-    state.setdefault("nov_rect_w", 0.3)
-    state.setdefault("nov_rect_h", 0.3)
+    state.setdefault("nov_rect_w", 0.2)   # 20% of view
+    state.setdefault("nov_rect_h", 0.2)   # 20% of view
     # Lens drag (Trame-only: client sets these via v_on; server commits on nov_dragging -> false)
     state.setdefault("nov_dragging", False)
     state.setdefault("nov_drag_start_rect_x", 0.35)
@@ -297,7 +297,7 @@ def register_state_change_handlers(state, ctrl):
         try:
             parts = nov_drag_live_str.strip().split(",")
             if len(parts) >= 2:
-                side = float(getattr(state, "nov_rect_w", 0.3))
+                side = float(getattr(state, "nov_rect_w", 0.2))
                 side = max(0.05, min(0.9, side))
                 x = max(0, min(1 - side, float(parts[0])))
                 y = max(0, min(1 - side, float(parts[1])))

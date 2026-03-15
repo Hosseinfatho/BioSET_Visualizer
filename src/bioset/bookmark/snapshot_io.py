@@ -180,20 +180,22 @@ def snapshot_names(dataset_id: str = DEFAULT_DATASET) -> List[str]:
 
 
 def snapshot_categories(dataset_id: str = DEFAULT_DATASET) -> List[str]:
-    """Unique categories: from snapshot 'category' field, from _folder (path), and from subfolder names under recordings."""
+    """Unique categories: from snapshot 'category' field, from _folder (path), and from subfolder names under recordings. Excludes empty names."""
     rec = _recordings_dir(dataset_id)
     cats = set()
     if rec.exists():
         for sub in rec.iterdir():
-            if sub.is_dir() and sub.name != "Screenshot":
+            if sub.is_dir() and sub.name != "Screenshot" and (sub.name or "").strip():
                 cats.add(sub.name)
     for s in load_snapshots(dataset_id):
         cat = (s.get("category") or "").strip() or "Uncategorized"
-        cats.add(cat)
-        folder = s.get("_folder")
+        if (cat or "").strip():
+            cats.add(cat)
+        folder = (s.get("_folder") or "").strip()
         if folder:
             cats.add(folder)
-    return sorted(cats) if cats else ["Uncategorized"]
+    filtered = [c for c in cats if (c or "").strip()]
+    return sorted(filtered) if filtered else ["Uncategorized"]
 
 
 def load_snapshots_by_category(dataset_id: str, category: str) -> List[Dict[str, Any]]:
