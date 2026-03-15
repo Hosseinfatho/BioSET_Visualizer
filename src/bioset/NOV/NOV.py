@@ -1256,6 +1256,11 @@ def register_nov_callbacks(ctrl, state, _refs):
             streamer.set_nov_lens_clip((center[0], center[1], center[2]), L, W, D)
         if getattr(streamer, "sync_nov_volumes", None):
             streamer.sync_nov_volumes()
+        # Center NOV camera on lens (align with TF_inv_2 so data appears in middle of popup)
+        if candidates:
+            _point_nov_camera_at_lens_center()
+        if getattr(streamer, "nov_render_window", None):
+            streamer.nov_render_window.Render()
         state.nov_popup_open = True
         if _refs.get("nov_view"):
             _refs["nov_view"].update()
