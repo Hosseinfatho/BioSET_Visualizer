@@ -221,11 +221,22 @@ def init_state(state):
     state.setdefault("nov_popup_pos", "")  # "leftPx,bottomPx" after drag; empty = default center bottom
 
     # Chatbot state
-    state.setdefault("chatbot_panel_open", None)  # None = closed, 0 = open
+    state.setdefault("chatbot_panel_open", False)  # False = closed, True = open
     state.setdefault("chatbot_authenticated", False)
     state.setdefault("chatbot_messages", [])  # List of {role: str, content: str}
     state.setdefault("chatbot_input", "")
     state.setdefault("chatbot_loading", False)
+
+    # Biomni Settings
+    state.setdefault("biomni_available_models", [])
+    state.setdefault("biomni_model", "claude-sonnet-4-6")
+    state.setdefault("biomni_mode", "full") # one of [full, db, minimal]
+    state.setdefault("biomni_port", 5000)
+
+    # Report Settings
+    state.setdefault("export_general", True)
+    state.setdefault("export_analysis", True)
+    state.setdefault("export_chat", True)
 
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""

@@ -10,8 +10,9 @@ from bioset.llm import BiomniLocalClient
 from bioset.report import generate_report_bytes
 from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
-from ..report.content_sections.Chat import ChatContent, Chat
-from ..report.content_sections.Dataset import DatasetContent, Dataset
+from ..report.content_sections.AnalysisDataset import AnalysisDatasetContent, AnalysisDataset
+from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
+from ..report.content_sections.General import GeneralContent, General
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -1424,15 +1425,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
         API endpoint to generate and download a PDF report.
         report_data: dict with 'title', 'params', 'channels', etc.
         """
-        dataset_content = DatasetContent(state.analysis_file_name, state.analysis_channels)
-        dataset = Dataset(dataset_content)
+        report_data = []
 
-        chat_contents = []
-        for message in state.chatbot_messages:
-            chat_contents.append(ChatContent(message["content"], message["role"] == "user"))
-        chat = Chat(chat_contents)
+        if state.export_general:
+            general_content = GeneralContent(state.zarr_url, state.metadata_url, datetime.datetime.now())
+            general = General(general_content)
+            report_data.append(general)
 
-        report_data = [dataset, chat]
+        if state.export_analysis:
+            dataset_content = AnalysisDatasetContent(state.analysis_file_name, state.analysis_channels)
+            dataset = AnalysisDataset(dataset_content)
+            report_data.append(dataset)
+
+        if state.export_chat:
+            chat_contents = []
+            for message in state.chatbot_messages:
+                chat_contents.append(ChatContent(message["content"], message["role"] == "user"))
+
+            llm_settings = LLMSettings(state.biomni_model, state.biomni_mode)
+            chat = Chat(chat_contents, llm_settings)
+            report_data.append(chat)
 
         print(f"[callbacks] Generating PDF report: {report_data}")
         try:
