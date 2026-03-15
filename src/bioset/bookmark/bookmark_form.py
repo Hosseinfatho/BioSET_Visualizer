@@ -47,7 +47,12 @@ def bookmark_form_panel(state, ctrl):
                 )
                 with html.Div(style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;"):
                     vuetify.VBtn("Cancel", text=True, x_small=True, click="bookmark_form_dialog = false", **_BTN)
-                    vuetify.VBtn("Save", x_small=True, click=ctrl.bookmark_save_snapshot, **_BTN)
+                    vuetify.VBtn(
+                        "Save",
+                        x_small=True,
+                        click=(ctrl.bookmark_save_snapshot, "[bookmark_form_category, bookmark_form_name, bookmark_form_description, bookmark_form_new_comment]"),
+                        **_BTN,
+                    )
         # Flag popup: when user clicks a bookmark flag, show small popup (top-right of flag)
         with html.Div(
             v_show=("bookmark_flag_popup", False),

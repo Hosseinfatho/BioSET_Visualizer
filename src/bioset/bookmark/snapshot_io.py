@@ -1,7 +1,6 @@
 # snapshot_io.py
-"""Load and save bookmark (saved view) snapshots per dataset.
-   For each dataset link, use a folder under bookmark/default/recordings/<dataset_id>/.
-   One JSON file per area/snapshot, same ID/name as user set.
+"""Load and save bookmark (saved view) snapshots.
+   Recordings: bookmark/recordings/<category>/<name>.json
 """
 
 from __future__ import annotations
@@ -12,18 +11,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 BOOKMARK_ROOT = Path(__file__).resolve().parent
-RECORDINGS_BASE = BOOKMARK_ROOT / "default" / "recordings"
+RECORDINGS_BASE = BOOKMARK_ROOT / "recordings"
 DEFAULT_DATASET = "default"
 
 
-def _recordings_dir(dataset_id: str) -> Path:
-    """Folder for this dataset's recordings: bookmark/default/recordings/<dataset_id>/."""
-    safe_id = re.sub(r'[^\w\-]', '_', (dataset_id or DEFAULT_DATASET).strip()) or DEFAULT_DATASET
-    return RECORDINGS_BASE / safe_id
+def _recordings_dir(dataset_id: str = DEFAULT_DATASET) -> Path:
+    """Folder for recordings: bookmark/recordings/."""
+    return RECORDINGS_BASE
 
 
 def screenshot_dir(dataset_id: str = DEFAULT_DATASET) -> Path:
-    """Folder for screenshots: recordings/<dataset_id>/Screenshot/."""
+    """Folder for screenshots: recordings/Screenshot/."""
     return _recordings_dir(dataset_id) / "Screenshot"
 
 
@@ -49,7 +47,7 @@ def _safe_filename(name: str) -> str:
 
 
 def _safe_folder_name(category: str) -> str:
-    """Safe folder name from category (for recordings/<dataset_id>/<category>/)."""
+    """Safe folder name from category (for recordings/<category>/)."""
     s = (category or "Uncategorized").strip() or "Uncategorized"
     s = re.sub(r'[^\w\s\-]', '', s)
     s = re.sub(r'[\s\-]+', '_', s).strip('_')
@@ -57,21 +55,28 @@ def _safe_folder_name(category: str) -> str:
 
 
 def _iter_snapshot_paths(rec: Path) -> List[Path]:
-    """Yield all .json paths under rec (root level and category subfolders). Skip Screenshot."""
+    """Yield all .json paths under rec (root level and category subfolders). Skip Screenshot. Deduplicate by resolved path."""
+    seen: set[Path] = set()
     out = []
     if not rec.exists():
         return out
     for p in rec.glob("*.json"):
-        out.append(p)
+        r = p.resolve()
+        if r not in seen:
+            seen.add(r)
+            out.append(p)
     for sub in rec.iterdir():
         if sub.is_dir() and sub.name != "Screenshot":
             for p in sub.glob("*.json"):
-                out.append(p)
+                r = p.resolve()
+                if r not in seen:
+                    seen.add(r)
+                    out.append(p)
     return out
 
 
 def load_snapshots(dataset_id: str = DEFAULT_DATASET) -> List[Dict[str, Any]]:
-    """Load all snapshots from this dataset (root and category subfolders)."""
+    """Load all snapshots from this dataset (root and category subfolders). Store _folder from path for category list."""
     rec = _recordings_dir(dataset_id)
     out = []
     for path in _iter_snapshot_paths(rec):
@@ -79,6 +84,8 @@ def load_snapshots(dataset_id: str = DEFAULT_DATASET) -> List[Dict[str, Any]]:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict) and (data.get("title") is not None or data.get("id")):
+                if path.parent != rec:
+                    data = {**data, "_folder": path.parent.name}
                 out.append(data)
         except Exception as e:
             print(f"[bookmark] Skip {path}: {e}")
@@ -154,7 +161,7 @@ def delete_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> boo
 
 
 def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -> None:
-    """Save snapshot to recordings/<dataset_id>/<category>/<name>.json (category folder)."""
+    """Save snapshot to recordings/<category>/<name>.json. Empty category → Uncategorized folder."""
     rec = _recordings_dir(dataset_id)
     rec.mkdir(parents=True, exist_ok=True)
     title = (snapshot.get("title") or snapshot.get("id") or "Unnamed").strip() or "Unnamed"
@@ -162,8 +169,9 @@ def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -
     folder = rec / _safe_folder_name(category)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / _safe_filename(title)
+    out = {k: v for k, v in snapshot.items() if k != "_folder"}
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(snapshot, f, indent=2, ensure_ascii=False)
+        json.dump(out, f, indent=2, ensure_ascii=False)
 
 
 def snapshot_names(dataset_id: str = DEFAULT_DATASET) -> List[str]:
@@ -172,21 +180,40 @@ def snapshot_names(dataset_id: str = DEFAULT_DATASET) -> List[str]:
 
 
 def snapshot_categories(dataset_id: str = DEFAULT_DATASET) -> List[str]:
-    """List of unique category names from all snapshots (default 'Uncategorized' if missing)."""
-    snapshots = load_snapshots(dataset_id)
+    """Unique categories: from snapshot 'category' field, from _folder (path), and from subfolder names under recordings."""
+    rec = _recordings_dir(dataset_id)
     cats = set()
-    for s in snapshots:
+    if rec.exists():
+        for sub in rec.iterdir():
+            if sub.is_dir() and sub.name != "Screenshot":
+                cats.add(sub.name)
+    for s in load_snapshots(dataset_id):
         cat = (s.get("category") or "").strip() or "Uncategorized"
         cats.add(cat)
+        folder = s.get("_folder")
+        if folder:
+            cats.add(folder)
     return sorted(cats) if cats else ["Uncategorized"]
 
 
 def load_snapshots_by_category(dataset_id: str, category: str) -> List[Dict[str, Any]]:
-    """Load all snapshots that belong to the given category."""
+    """Return snapshots for the selected category. If snapshot has _folder (from subfolder), match only by folder; else match by JSON category."""
     all_snapshots = load_snapshots(dataset_id)
+    norm = (category or "Uncategorized").strip() or "Uncategorized"
+    seen: set[tuple[Any, Any]] = set()
     out = []
     for s in all_snapshots:
-        cat = (s.get("category") or "").strip() or "Uncategorized"
-        if cat == (category or "Uncategorized"):
-            out.append(s)
+        key = (s.get("title"), s.get("id"))
+        if key in seen:
+            continue
+        folder = s.get("_folder")
+        if folder:
+            if folder == norm:
+                seen.add(key)
+                out.append(s)
+        else:
+            cat = (s.get("category") or "").strip() or "Uncategorized"
+            if cat == norm:
+                seen.add(key)
+                out.append(s)
     return out

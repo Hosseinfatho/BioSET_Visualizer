@@ -81,8 +81,12 @@ def init_state(state):
     state.setdefault("bookmark_flag_popup_top", 0)
 
     # OV bookmark (Optimal View-only bookmarks inside NOV popup)
+    state.setdefault("ov_bookmark_categories", ["Uncategorized"])
+    state.setdefault("ov_bookmark_selected_category", "Uncategorized")
     state.setdefault("ov_bookmark_snapshot_names", [])
     state.setdefault("ov_bookmark_selected_name", "")
+    state.setdefault("ov_bookmark_flags_visible", False)
+    state.setdefault("ov_bookmark_flags_data", [])
 
     # Right drawer
     state.setdefault("right_drawer_open", False)
@@ -459,8 +463,20 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("nov_panel_visible")
     def on_nov_panel_visible_change(nov_panel_visible, **kwargs):
-        """When Optimal View popup becomes visible, refresh OV bookmarks list."""
-        if nov_panel_visible and hasattr(ctrl, "ov_bookmark_refresh_names"):
+        """When Optimal View popup becomes visible, refresh OV categories and names; when closing, hide OV flags."""
+        if nov_panel_visible:
+            if hasattr(ctrl, "ov_bookmark_refresh_categories"):
+                ctrl.ov_bookmark_refresh_categories()
+            if hasattr(ctrl, "ov_bookmark_refresh_names"):
+                ctrl.ov_bookmark_refresh_names()
+        else:
+            if getattr(state, "ov_bookmark_flags_visible", False) and hasattr(ctrl, "ov_bookmark_hide_flags"):
+                ctrl.ov_bookmark_hide_flags()
+
+    @state.change("ov_bookmark_selected_category")
+    def on_ov_bookmark_selected_category_change(ov_bookmark_selected_category, **kwargs):
+        """When OV category changes, refresh names list."""
+        if hasattr(ctrl, "ov_bookmark_refresh_names"):
             ctrl.ov_bookmark_refresh_names()
 
     @state.change("analysis_channels")
