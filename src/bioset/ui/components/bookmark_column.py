@@ -1,5 +1,5 @@
 # bookmark_column.py
-"""Bookmark column next to the left drawer: same size and visual (VNavigationDrawer). Category dropdown, Show, New, list of bookmarks."""
+"""Bookmark column as overlay next to the left drawer: same width and style. Category dropdown, Show, New, list of bookmarks. Does not change view size."""
 
 from __future__ import annotations
 
@@ -7,15 +7,10 @@ from trame.widgets import html, vuetify
 
 
 def bookmark_column(state, ctrl):
-    """Second drawer (same width 250px, same style) shown when bookmark_open. Sits next to the main left drawer."""
-    with vuetify.VNavigationDrawer(
-        v_show=("bookmark_open", False),
-        width=250,
-        permanent=True,
-        app=True,
-        dark=True,
-        color="rgba(18, 18, 18, 0.6)",
-        style="flex-shrink: 0;",
+    """Overlay column (250px wide, same style as left drawer) shown when bookmark_open. Rendered inside overlay wrapper in layout."""
+    with html.Div(
+        class_="bookmark-overlay-column",
+        style="width: 100%; height: 100%; background: rgba(18, 18, 18, 0.6); display: flex; flex-direction: column; overflow: hidden;",
     ):
         with html.Div(style="display: flex; flex-direction: column; height: 100%; overflow: hidden;"):
             # Header

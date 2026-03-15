@@ -119,3 +119,15 @@ html::-webkit-scrollbar, body::-webkit-scrollbar {
 .nov-popup-panel .ov-bookmark-input .v-icon {
     color: rgba(255, 255, 255, 0.9) !important;
 }
+
+/* Bookmark overlay column: sits next to left drawer, does not change view size */
+.bookmark-overlay-column {
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Bookmark panel positioned to the right of the left drawer (not on top of it) */
+.bookmark-panel-beside-drawer {
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
