@@ -1,5 +1,13 @@
 from abc import abstractmethod, ABC
 
+TITLE_FONT_SIZE = 16
+SUBTITLE_FONT_SIZE = 14
+CATEGORY_FONT_SIZE = 12
+FONT_SIZE = 10
+
+TITLE_COLOR = '#000000'
+SUBTITLE_COLOR = '#444444'
+COLOR = '#666666'
 
 class PDFSection(ABC):
     def __init__(self, name: str):

@@ -30,16 +30,31 @@ def report_generation_section(state, ctrl):
                     v_show=("report_generation_open", False),
                     classes="mt-1",
             ):
-                # Action List Header
-                with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-2 mt-2"):
-                    html.Span("To be filled.")
+                with html.Div(classes="mb-2 px-2"):
+                    vuetify.VCheckbox(
+                        label="General Information",
+                        v_model="export_general",
+                        dense=True,
+                        hide_details=True,
+                    )
+                    vuetify.VCheckbox(
+                        label="Analysis Dataset",
+                        v_model="export_analysis",
+                        dense=True,
+                        hide_details=True,
+                    )
+                    vuetify.VCheckbox(
+                        label="Chat History",
+                        v_model="export_chat",
+                        dense=True,
+                        hide_details=True,
+                    )
 
-                # Generate Header
-                with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-2 mt-2"):
+                with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-2 mt-4"):
                     vuetify.VBtn(
                         "Generate Report",
+                        block=True,
                         small=True,
-                        outlined=True,
                         classes="ml-1 px-2 text-none",
                         click=ctrl.generate_pdf_report,
                     )

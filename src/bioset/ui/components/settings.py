@@ -165,7 +165,6 @@ def settings_section(state, ctrl):
                             click=ctrl.chatbot_login,
                             block=True,
                             small=True,
-                            outlined=True,
                             loading=("chatbot_loading",),
                         )
 
