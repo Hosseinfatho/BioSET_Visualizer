@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 import tempfile
 
 import requests
 
-import hashlib
-from datetime import datetime
-
+from bioset.NOV import register_nov_callbacks
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
 from bioset.report import generate_report_bytes
 from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
-from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
-from bioset.NOV import register_nov_callbacks
+from ..report.content_sections.Chat import ChatContent, Chat
+from ..report.content_sections.Dataset import DatasetContent, Dataset
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -1486,26 +1486,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
         API endpoint to generate and download a PDF report.
         report_data: dict with 'title', 'params', 'channels', etc.
         """
-        if report_data is None:
-            # Fallback: gather current app state if no specific data provided
-            active_channel_names = []
-            for ch_id in state.active_channels:
-                for ch in state.channels:
-                    if ch["id"] == ch_id:
-                        active_channel_names.append(ch["name"])
-                        break
+        dataset_content = DatasetContent(state.analysis_file_name, state.analysis_channels)
+        dataset = Dataset(dataset_content)
 
-            report_data = {
-                "title": f"BioSET Analysis - {state.analysis_file_name or 'Current View'}",
-                "params": {
-                    "Dilation": f"{state.current_dilation}µm",
-                    "Hierarchy Level": state.current_hierarchy_level,
-                    "Heatmap Visible": state.heatmap_visible,
-                },
-                "channels": active_channel_names
-            }
+        chat_contents = []
+        for message in state.chatbot_messages:
+            chat_contents.append(ChatContent(message["content"], message["role"] == "user"))
+        chat = Chat(chat_contents)
 
-        print(f"[callbacks] Generating PDF report: {report_data.get('title')}")
+        report_data = [dataset, chat]
+
+        print(f"[callbacks] Generating PDF report: {report_data}")
         try:
             pdf_bytes = generate_report_bytes(report_data)
             filename = f"BioSET_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
