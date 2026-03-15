@@ -1,5 +1,6 @@
 from .viewer import viewer
 from .left_drawer import left_drawer
+from .bookmark_column import bookmark_column
 from .right_drawer import right_drawer
 from .data_sources import data_sources_section
 from .settings import settings_section

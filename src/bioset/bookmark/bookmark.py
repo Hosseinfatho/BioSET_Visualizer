@@ -17,6 +17,9 @@ from .snapshot_io import (
     delete_snapshot_by_name,
     delete_snapshot_in_category,
     save_screenshot,
+    thumbnail_path,
+    thumbnail_path_or_fallback,
+    save_thumbnail,
 )
 from .ov_snapshot_io import (
     ov_save_snapshot,
@@ -261,6 +264,33 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         state.bookmark_categories = snapshot_categories(dataset_id)
         if not getattr(state, "bookmark_selected_category", None) or state.bookmark_selected_category not in state.bookmark_categories:
             state.bookmark_selected_category = (state.bookmark_categories or ["Uncategorized"])[0]
+
+    def bookmark_refresh_list():
+        """Load bookmarks for selected category into bookmark_list_items (name, category, description, thumbnail)."""
+        import base64
+        dataset_id = _bookmark_dataset_id()
+        category = getattr(state, "bookmark_selected_category", None) or "Uncategorized"
+        snapshots = load_snapshots_by_category(dataset_id, category)
+        items = []
+        for s in snapshots:
+            title = (s.get("title") or s.get("id") or "").strip() or "Unnamed"
+            cat = (s.get("category") or s.get("_folder") or "").strip() or "Uncategorized"
+            views = s.get("views") or []
+            notes = (views[0].get("notes") or s.get("notes") or "") if views else (s.get("notes") or "")
+            if not isinstance(notes, str):
+                notes = str(notes or "")[:200]
+            else:
+                notes = (notes or "")[:200]
+            thumb_path = thumbnail_path_or_fallback(cat, title, dataset_id)
+            thumbnail = ""
+            if thumb_path:
+                try:
+                    raw = thumb_path.read_bytes()
+                    thumbnail = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+                except Exception:
+                    pass
+            items.append({"name": title, "category": cat, "description": notes, "thumbnail": thumbnail})
+        state.bookmark_list_items = items
 
     def bookmark_open_snapshot(name=None):
         """Open selected snapshot (or by name if given): restore camera, channels, colors, LOD, TF; show description/comment."""
@@ -982,8 +1012,15 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             snapshot["nov_view"] = cap["nov_view"]
         dataset_id = _bookmark_dataset_id()
         save_snapshot(snapshot, dataset_id)
+        # Capture thumbnail from current view and save in same category folder with same name
+        streamer = _refs.get("streamer")
+        if streamer:
+            png_bytes = capture_screenshot_png_bytes(streamer)
+            if png_bytes:
+                save_thumbnail(png_bytes, category, title, dataset_id)
         bookmark_refresh_names()
         bookmark_refresh_categories()
+        bookmark_refresh_list()
         state.bookmark_selected_name = title
         state.bookmark_selected_category = category
         state.bookmark_form_dialog = False
@@ -1075,7 +1112,14 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if (old_title, old_category) != (new_title, new_category):
             delete_snapshot_in_category(old_title, dataset_id, old_category)
         save_snapshot(snap, dataset_id)
+        # Update thumbnail from current view
+        streamer = _refs.get("streamer")
+        if streamer:
+            png_bytes = capture_screenshot_png_bytes(streamer)
+            if png_bytes:
+                save_thumbnail(png_bytes, new_category, new_title, dataset_id)
         bookmark_refresh_names()
+        bookmark_refresh_list()
         state.bookmark_selected_name = snap["title"]
         state.bookmark_display_snapshot = {
             "title": snap["title"],
@@ -1145,6 +1189,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     # Attach to ctrl
     ctrl.bookmark_refresh_names = bookmark_refresh_names
     ctrl.bookmark_refresh_categories = bookmark_refresh_categories
+    ctrl.bookmark_refresh_list = bookmark_refresh_list
     ctrl.bookmark_open_snapshot = bookmark_open_snapshot
     ctrl.bookmark_open_new_form = bookmark_open_new_form
     ctrl.bookmark_open_new_form_from_nov = bookmark_open_new_form_from_nov

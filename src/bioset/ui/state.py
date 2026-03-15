@@ -79,6 +79,7 @@ def init_state(state):
     state.setdefault("bookmark_flag_popup_screen", "")   # "x,y" for positioning popup
     state.setdefault("bookmark_flag_popup_left", 0)
     state.setdefault("bookmark_flag_popup_top", 0)
+    state.setdefault("bookmark_list_items", [])  # list of { name, category, description, thumbnail } for selected category
 
     # OV bookmark (Optimal View-only bookmarks inside NOV popup)
     state.setdefault("ov_bookmark_categories", ["Uncategorized"])
@@ -457,9 +458,16 @@ def register_state_change_handlers(state, ctrl):
         if bookmark_open:
             if hasattr(ctrl, "bookmark_refresh_categories"):
                 ctrl.bookmark_refresh_categories()
+            if hasattr(ctrl, "bookmark_refresh_list"):
+                ctrl.bookmark_refresh_list()
         else:
             if getattr(state, "bookmark_flags_visible", False) and hasattr(ctrl, "bookmark_hide_flags"):
                 ctrl.bookmark_hide_flags()
+
+    @state.change("bookmark_selected_category")
+    def on_bookmark_selected_category_change(bookmark_selected_category, **kwargs):
+        if hasattr(ctrl, "bookmark_refresh_list"):
+            ctrl.bookmark_refresh_list()
 
     @state.change("nov_panel_visible")
     def on_nov_panel_visible_change(nov_panel_visible, **kwargs):

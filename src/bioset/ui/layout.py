@@ -8,7 +8,7 @@ from .styles import register_styles
 from .scripts import register_scripts
 from .state import init_state, register_state_change_handlers
 from .callbacks import register_callbacks
-from .components import left_drawer, right_drawer, viewer, nov_popup_panel
+from .components import left_drawer, right_drawer, viewer, bookmark_column, nov_popup_panel
 from bioset.bookmark import bookmark_form_panel
 
 def build_ui(server, render_window, streamer=None, nov_render_window=None):
@@ -24,7 +24,10 @@ def build_ui(server, render_window, streamer=None, nov_render_window=None):
         left_drawer(state, ctrl)
         right_drawer(state, ctrl)
         with layout.root:
-            view = viewer(ctrl, render_window)
+            with html.Div(style="display: flex; flex: 1; min-height: 0; width: 100%;"):
+                bookmark_column(state, ctrl)
+                with html.Div(style="flex: 1; min-width: 0; min-height: 0;"):
+                    view = viewer(ctrl, render_window)
             ctrl.set_view(view)
             bookmark_form_panel(state, ctrl)
             nov_popup_panel(state, ctrl, nov_render_window)
