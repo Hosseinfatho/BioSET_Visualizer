@@ -391,8 +391,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                     "start": start_cam,
                     "end": end_cam,
                     "start_time": _time.time(),
-                    "duration": 20.0,
-                    "num_steps": 20,
+                    "duration": 10.0,
+                    "num_steps": 10,
                 }
         state.bookmark_edit_title = snap.get("title") or ""
         state.bookmark_edit_category = (snap.get("category") or "").strip() or ""
