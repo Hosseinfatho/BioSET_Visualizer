@@ -205,6 +205,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         state.right_drawer_open = False
 
+        # Close bookmark UI (column, forms, popups) when data is cleared
+        # Hide the bookmark side panel
+        state.bookmark_open = False
+        # Close any open bookmark display / details panel
+        state.bookmark_display_snapshot = None
+        state.bookmark_form_minimized = False
+        # Close new-bookmark form (bottom-left)
+        state.bookmark_form_dialog = False
+        # Close flag popups and hide bookmark flags
+        state.bookmark_flag_popup = None
+        state.bookmark_flag_popup_html = ""
+        state.bookmark_flag_popup_screen = ""
+        state.bookmark_flag_popup_left = 0
+        state.bookmark_flag_popup_top = 0
+        state.bookmark_flags_visible = False
+        state.bookmark_flags_data = []
+        # Close export-screenshot dialog if open
+        state.bookmark_export_screenshot_dialog = False
+        state.bookmark_export_screenshot_name = ""
+        state.bookmark_export_screenshot_caption = ""
+
         # Reset NOV and hide 2D rect overlay
         state.nov_show_rect = False
         state.nov_drawing_box = False
