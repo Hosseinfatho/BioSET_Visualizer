@@ -641,7 +641,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            heatmap.update_tiles(tiles, spacing=spacing, color=color)
+            outline_only = getattr(state, "heatmap_outline_only", False)
+            heatmap.update_tiles(tiles, spacing=spacing, color=color, outline_only=outline_only)
             state.heatmap_tile_count = len(tiles)
         
         if _refs["view"]:
