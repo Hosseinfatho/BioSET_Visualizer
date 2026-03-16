@@ -37,6 +37,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "heatmap": None,
         "mesh_manager": None,
         "heatmap_lod": None,
+        "renderer": None,
+        "label_manager": None,
+        "biomni_client": None,
+        "last_tile_channel_stats": None,
         "interactor": None,
     }
 
@@ -86,6 +90,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
     register_bookmark_callbacks(ctrl, state, _refs)
     register_nov_callbacks(ctrl, state, _refs)
 
+    def set_renderer(renderer):
+        """Set the VTK renderer reference (needed for label placement)."""
+        _refs["renderer"] = renderer
+        print(f"[callbacks] Renderer set for label system")
+    
     def load_data():
         """Load data from zarr_url and metadata_url."""
         if state.data_loading:
@@ -195,10 +204,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if heatmap_lod:
             heatmap_lod.clear_analysis()
 
-        heatmap_lod = _refs.get("heatmap_lod")
-        if heatmap_lod:
-            heatmap_lod.clear_analysis()
-        
+        label_mgr = _refs.get("label_manager")
+        if label_mgr:
+            label_mgr.clear()
+            _refs["label_manager"] = None
+
         state.channels = []
         state.active_channels = []
         state.visible_channel_ids = []
@@ -347,20 +357,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             loader = _refs["analysis_loader"]
             metadata = loader.load_from_bytes(file_bytes)
-
-            # Notify HeatmapLOD of new analysis context
-            heatmap_lod = _refs.get("heatmap_lod")
-            if heatmap_lod and loader.db_path:
-                z_depth = 1
-                bounds = metadata.volume_bounds
-                if bounds and "z" in bounds:
-                    z_depth = max(1, bounds["z"][1] - bounds["z"][0])
-                heatmap_lod.set_analysis(
-                    db_path=loader.db_path,
-                    channel_order=list(metadata.channels),
-                    z_depth=z_depth,
-                )
-
 
             # Notify HeatmapLOD of new analysis context
             heatmap_lod = _refs.get("heatmap_lod")
@@ -905,10 +901,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if mesh_mgr and channel_id in state.active_channels:
             mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
 
-        mesh_mgr = _refs.get("mesh_manager")
-        if mesh_mgr and channel_id in state.active_channels:
-            mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
-        
         new_channels = []
         for ch in state.channels:
             if ch["id"] == channel_id:
@@ -978,7 +970,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         nov_view = _refs.get("nov_view")
         if nov_view and hasattr(nov_view, "update"):
             nov_view.update()
-
+            
     _refs["biomni_client"] = None
     _refs["last_tile_channel_stats"] = None  # populated on right-click tile selection
 
@@ -1183,6 +1175,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             ]
             print("[callbacks] Biomni label response received")
 
+            if raw_labels:
+                _apply_mesh_labels(raw_labels, overall)
+
         except Exception as e:
             error_msg = f"Error: {e}"
             print(f"[callbacks] Biomni label error: {error_msg}")
@@ -1247,6 +1242,65 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print("[callbacks] Clearing chatbot messages")
         state.chatbot_messages = []
         state.chatbot_input = ""
+
+    def _apply_mesh_labels(raw_labels: dict, overall: list):
+        """Create/restart LabelSceneManager with the new labels from Biomni /label."""
+        from bioset.scene.labels import LabelSceneManager
+        renderer = _refs.get("renderer")
+        mesh_mgr = _refs.get("mesh_manager")
+        if renderer is None or mesh_mgr is None or not mesh_mgr.is_available:
+            print("[callbacks] Cannot apply labels: missing renderer or mesh_manager")
+            return
+
+        polydata_by_name = {}
+        for ch_id in (state.active_channels or []):
+            ch_name = next((ch["name"] for ch in state.channels if ch["id"] == ch_id), None)
+            if ch_name is None:
+                continue
+            manifest_idx = mesh_mgr.channel_idx_for_name(ch_name)
+            if manifest_idx is None:
+                continue
+            pd = mesh_mgr.get_channel_polydata(manifest_idx)
+            if pd is not None:
+                polydata_by_name[ch_name] = pd
+
+        if not polydata_by_name:
+            print("[callbacks] No mesh polydata available for label placement")
+            return
+
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is None:
+            label_mgr = LabelSceneManager(renderer)
+            _refs["label_manager"] = label_mgr
+        else:
+            label_mgr.clear()
+
+        label_mgr.start_preprocessing(polydata_by_name, raw_labels, overall)
+        print(f"[callbacks] Label preprocessing started for {list(polydata_by_name.keys())}")
+
+    def check_label_setup():
+        """Poll for completed label preprocessing; call from the app poll loop."""
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is None:
+            return
+        if label_mgr.check_and_apply_setup():
+            # Preprocessing just finished — do an initial placement pass
+            if label_mgr.update():
+                view = _refs.get("view")
+                if view:
+                    view.update()
+
+    def setup_label_interaction_observer(interactor):
+        """Register EndInteractionEvent observer to refresh labels on camera move."""
+        def _on_end_interaction(obj, event):
+            label_mgr = _refs.get("label_manager")
+            if label_mgr and label_mgr.update():
+                view = _refs.get("view")
+                if view:
+                    view.update()
+
+        interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
+        print("[callbacks] Label EndInteractionEvent observer registered")
 
     def capture_screenshot():
         """Capture current VTK view as base64-encoded PNG."""
@@ -1353,7 +1407,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             cam = streamer.renderer.GetActiveCamera()
             cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 3.0)
             cam.SetViewUp(0, 1, 0)
             streamer.renderer.ResetCameraClippingRange()
             
@@ -1749,8 +1803,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
     ctrl.trigger("on_hover")(on_hover)
-    # ctrl.setup_right_click_picker = setup_right_click_picker
-    # ctrl.set_heatmap_lod = set_heatmap_lod
-    # ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
-    # ctrl.trigger("on_hover")(on_hover)
     ctrl.generate_pdf_report = generate_pdf_report
+    ctrl.set_renderer = set_renderer
+    ctrl.check_label_setup = check_label_setup
+    ctrl.setup_label_interaction_observer = setup_label_interaction_observer
+

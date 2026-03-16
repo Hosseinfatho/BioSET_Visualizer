@@ -17,7 +17,7 @@ import requests
 
 _DEFAULT_BASE_URL = "http://localhost:5000"
 _DEFAULT_LLM = "claude-sonnet-4-6"
-_DEFAULT_MODE = "full"
+_DEFAULT_MODE = "minimal"
 
 _MODELS_FILE = Path(__file__).parent / "models.txt"
 
