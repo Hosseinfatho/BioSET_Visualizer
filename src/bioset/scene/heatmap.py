@@ -24,6 +24,8 @@ class HeatmapConfig:
     percentile_cutoff: float = 0.7  # Only show tiles above this active_fraction percentile
     opacity_scale: str = 'exponential'  # 'linear' or 'exponential'
     gamma: float = 8.0  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
+    outline_only: bool = False  # If True, draw only tile outlines (wireframe); brightness = gray→white by value, same thickness
+    outline_line_width: float = 5.0  # Fixed line width for all outline tiles
 
 
 class HeatmapRenderer:    
@@ -44,6 +46,7 @@ class HeatmapRenderer:
         tiles: List[TileData],
         spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         color: Optional[Tuple[float, float, float]] = None,
+        outline_only: Optional[bool] = None,
     ):
         self.clear()
         
@@ -52,6 +55,8 @@ class HeatmapRenderer:
         
         self._current_tiles = tiles
         self._current_spacing = spacing
+        if outline_only is not None:
+            self.config.outline_only = outline_only
         
         fractions = [t.active_fraction for t in tiles]
         fractions_sorted = sorted(fractions)
@@ -63,6 +68,8 @@ class HeatmapRenderer:
             return
         max_frac = max(fractions) if fractions else 1.0
         scale = max_frac if max_frac > 0 else 1.0
+        min_frac = min(fractions) if fractions else 0.0
+        frac_range = scale - min_frac if scale > min_frac else 1.0
         
         sx, sy, sz = spacing
         base_color = color if color else self.config.base_color
@@ -76,22 +83,28 @@ class HeatmapRenderer:
             y_size = (tile.y1 - tile.y0) * sy
             z_size = self.config.z_height
             
-            # Map active_fraction to opacity
-            if self.config.opacity_scale == 'linear':
+            # Outline mode: only brightness (gray→white by value); same line width for all.
+            if self.config.outline_only:
+                normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 1.0
+                value_0_10 = max(0.0, min(10.0, normalized * 10.0))
+                tile_color = (value_0_10 / 10.0, value_0_10 / 10.0, value_0_10 / 10.0)  # 0=black, 10=white
+                opacity = 1.0
+            elif self.config.opacity_scale == 'linear':
                 normalized = tile.active_fraction / scale
-            elif self.config.opacity_scale == 'exponential':
-                min_frac = min(fractions)
-                frac_range = scale - min_frac if scale > min_frac else 1.0
-                normalized = (tile.active_fraction - min_frac) / frac_range
+            else:
+                normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 0.0
                 normalized = normalized ** self.config.gamma
             
-            opacity = self.config.min_opacity + normalized * (self.config.max_opacity - self.config.min_opacity)
+            if not self.config.outline_only:
+                opacity = self.config.min_opacity + normalized * (self.config.max_opacity - self.config.min_opacity)
+                tile_color = base_color
 
             actor = self._create_cube_actor(
                 center=(x_center, y_center, z_center),
                 size=(x_size, y_size, z_size),
-                color=base_color,
+                color=tile_color,
                 opacity=opacity,
+                outline_only=self.config.outline_only,
             )
             
             tile_key = (tile.x0, tile.y0)
@@ -107,6 +120,7 @@ class HeatmapRenderer:
         size: Tuple[float, float, float],
         color: Tuple[float, float, float],
         opacity: float,
+        outline_only: bool = False,
     ) -> vtkActor:
         cube = vtkCubeSource()
         cube.SetCenter(*center)
@@ -119,16 +133,21 @@ class HeatmapRenderer:
         
         actor = vtkActor()
         actor.SetMapper(mapper)
-        actor.SetScale(128,128,1.0) #TOD
+        actor.SetScale(128, 128, 1.0)  # TOD
         
         prop = actor.GetProperty()
         prop.SetColor(*color)
         prop.SetOpacity(opacity)
         
-        if self.config.edge_visibility:
-            prop.EdgeVisibilityOff()
-            prop.SetEdgeColor(*self.config.edge_color)
-            prop.SetLineWidth(self.config.edge_width)
+        if outline_only:
+            # Wireframe: full tile border; fixed thickness, brightness varies by tile value
+            prop.SetRepresentationToWireframe()
+            prop.SetLineWidth(self.config.outline_line_width)
+        else:
+            if self.config.edge_visibility:
+                prop.EdgeVisibilityOff()
+                prop.SetEdgeColor(*self.config.edge_color)
+                prop.SetLineWidth(self.config.edge_width)
         
         return actor
     

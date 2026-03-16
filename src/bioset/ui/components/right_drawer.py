@@ -79,6 +79,23 @@ def right_drawer(state, ctrl):
                             style=("heatmap_visible ? 'color:white' : 'color:#555'",),
                         )
                         
+                # Outline only: show tile outlines (wireframe) with intensity per-tile
+                with html.Div(classes="d-flex align-center justify-center mb-2"):
+                    html.Span(
+                        "Filled",
+                        style="color: grey; font-size: 11px; margin-right: 4px;",
+                    )
+                    vuetify.VSwitch(
+                        v_model=("heatmap_outline_only",),
+                        dense=True,
+                        hide_details=True,
+                        color="white",
+                        style="display: inline-flex; margin-top: 0;",
+                    )
+                    html.Span(
+                        "Outline",
+                        style="color: grey; font-size: 11px; margin-left: 4px;",
+                    )
                 # Auto/Manual resolution toggle
                 with html.Div(classes="d-flex align-center justify-center mb-2"):
                     html.Span(
