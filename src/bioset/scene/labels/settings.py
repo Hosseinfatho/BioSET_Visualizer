@@ -71,21 +71,24 @@ label_config = {
     # =====================================================================
     # SURFACE LABEL SETTINGS
     # =====================================================================
-    "DILATION_AMOUNT": 5.0,
+    "DILATION_AMOUNT": 8.0,
     "SMOOTH_ITERATIONS": 100,
     "SURFACE_LABEL_HEIGHT": 1.5,
     "WALK_STEP": 0.3,
     "WALK_STEPS": 30,
     "WALK_NORMAL_COS_THRESHOLD": 0.5,
     "LOOP_THRESHOLD": 0.3,
+    # If the walk is shorter than text_width * this fraction, the text would
+    # be scrunched into a small area — fall back to FLAGPOLE instead.
+    "SURFACE_MIN_WALK_FRACTION": 0.6,
     "CENTROID_BIAS": 0.7,
     "SURFACE_LABEL_COLOR": (1.0, 1.0, 1.0),
 
     # =====================================================================
     # FLAGPOLE LABEL SETTINGS
     # =====================================================================
-    "FLAGPOLE_HEIGHT": 5.0,
-    "FLAGPOLE_TEXT_SCALE": 0.5,
+    "FLAGPOLE_HEIGHT": 10.0,
+    "FLAGPOLE_TEXT_SCALE": 4.0,
     "FLAGPOLE_COLOR": (1.0, 1.0, 1.0),
     "FLAGPOLE_LINE_COLOR": (1.0, 1.0, 1.0),
     "FLAGPOLE_LINE_WIDTH": 1.5,

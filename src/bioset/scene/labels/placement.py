@@ -474,6 +474,15 @@ def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, 
         return render_flagpole(region, anchor_pos, anchor_normal,
                                renderer.GetActiveCamera(), renderer)
 
+    # If the walk is too short relative to the text width, the deformation maps
+    # the full text onto a tiny arc — every letter gets scrunched. Fall back to
+    # flagpole instead. (Catches early termination from curvature rejection,
+    # front-face culling, or hitting the region edge.)
+    min_fraction = config.get("SURFACE_MIN_WALK_FRACTION", 0.6)
+    if arc_total < text_width * min_fraction:
+        return render_flagpole(region, anchor_pos, anchor_normal,
+                               renderer.GetActiveCamera(), renderer)
+
     # Trim to text width
     if arc_total > text_width:
         arc = [0.0]
