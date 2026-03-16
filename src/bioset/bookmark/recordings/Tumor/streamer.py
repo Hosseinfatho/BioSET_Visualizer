@@ -58,7 +58,7 @@ class VolumeStreamer:
         if VolumeStreamer._executor is None:
             VolumeStreamer._executor = ThreadPoolExecutor(max_workers=2)
 
-        max_bytes = int(cfg.cache_size_gb * (1024**3))
+        max_bytes = int(cfg.cache_size_gb * (1024 ** 3))
         self.zsrc = ZarrMultiscaleSource(
             url=cfg.zarr_url,
             cache_enabled=cfg.cache_enabled,
@@ -71,7 +71,7 @@ class VolumeStreamer:
         self.state: Dict[int, ChannelState] = {}
 
         self._channel_tfs: Dict[int,
-                                Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
+        Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
         self._channel_percentile_bounds: Dict[int, Tuple[float, float, float]] = {}
 
         self._pending_request: Optional[LoadRequest] = None
@@ -87,7 +87,7 @@ class VolumeStreamer:
         self._last_component: Optional[int] = None
         self._initial_camera: Optional[dict] = None  # position, focalPoint, viewUp after first load
 
-        self._active_channels: set[int] = set() 
+        self._active_channels: set[int] = set()
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {}
 
         self._channel_data_range: Dict[int, Tuple[float, float]] = {}
@@ -118,7 +118,7 @@ class VolumeStreamer:
         print(f"[stream] Setting zarr URL: {url}")
         for vol in self.volumes.values():
             self.renderer.RemoveVolume(vol)
-        max_bytes = int(self.cfg.cache_size_gb * (1024**3))
+        max_bytes = int(self.cfg.cache_size_gb * (1024 ** 3))
         self.zsrc = ZarrMultiscaleSource(
             url=url,
             cache_enabled=self.cfg.cache_enabled,
@@ -137,9 +137,9 @@ class VolumeStreamer:
     def set_spacing(self, sx: float, sy: float, sz: float):
         """Update the base spacing."""
         self.cfg = self.cfg.__class__(**{**self.cfg.__dict__,
-                                        "base_sx": sx,
-                                        "base_sy": sy,
-                                        "base_sz": sz})
+                                         "base_sx": sx,
+                                         "base_sy": sy,
+                                         "base_sz": sz})
         print(f"[stream] Updated spacing: ({sx}, {sy}, {sz})")
 
     def _hex_to_rgb(self, color_hex: str) -> Tuple[float, float, float]:
@@ -158,28 +158,28 @@ class VolumeStreamer:
     #     if channel_id in self._active_channels:
     #         print(f"[stream] Channel {channel_id} already active")
     #         return
-        
+
     #     print(f"[stream] Activating channel {channel_id} with color {color_hex}")
-        
+
     #     self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
     #     is_first_volume = len(self._active_channels) == 0 
     #     self._active_channels.add(channel_id)
-        
+
     #     comp = self.cfg.start_component
-        
+
     #     try:
     #         z, y, x = self._dims_for_component(comp)
     #     except Exception as e:
     #         print(f"[stream] Error getting dims: {e}")
     #         self._active_channels.discard(channel_id)  
     #         return
-        
+
     #     roi = ROI(0, x, 0, y)
-        
+
     #     print(f"[stream] Initial load at low-res comp={comp} (dims: {x}x{y}x{z})")
-        
+
     #     self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
-        
+
     #     if self._last_component is not None and self._last_component < comp:
     #         print(f"[stream] Scheduling upgrade from comp={comp} to current view")
     #         self._trigger_lod_update_for_new_channel()
@@ -188,21 +188,21 @@ class VolumeStreamer:
         """Trigger an async LOD update after adding a new channel."""
         if not self._active_channels:
             return
-        
+
         cam = self.renderer.GetActiveCamera()
         dist = camera_distance_to_focal(cam)
-        
+
         desired_comp = choose_component(
             dist,
             self.cfg.distance_rules,
             min_component=self.cfg.min_component,
             max_component=self.cfg.max_component,
         )
-        
+
         spacing = self._spacing_for_component(desired_comp)
         zdim, ydim, xdim = self._dims_for_component(desired_comp)
         bounds = self._volume_bounds_world(desired_comp)
-        
+
         roi = compute_visible_xy_roi_vox(
             self.renderer,
             bounds_world=bounds,
@@ -212,15 +212,15 @@ class VolumeStreamer:
             y_dim=ydim,
             margin_vox=self.cfg.roi_margin_vox,
         )
-        
+
         print(f"[stream] Scheduling LOD update: comp={desired_comp} roi={roi}")
-        
+
         request = LoadRequest(
             component=desired_comp,
             roi=roi,
             timestamp=time.time(),
         )
-        
+
         self._schedule_load(request)
 
     def activate_channel(self, channel_id: int, color_hex: str):
@@ -231,40 +231,40 @@ class VolumeStreamer:
         if channel_id in self._active_channels:
             print(f"[stream] Channel {channel_id} already active")
             return
-        
+
         print(f"[stream] Activating channel {channel_id} with color {color_hex}")
-        
+
         self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
-        is_first_volume = len(self._active_channels) == 0 
+        is_first_volume = len(self._active_channels) == 0
         self._active_channels.add(channel_id)
-        
+
         if is_first_volume or self._last_component is None:
             comp = self.cfg.start_component
             try:
                 z, y, x = self._dims_for_component(comp)
             except Exception as e:
                 print(f"[stream] Error getting dims: {e}")
-                self._active_channels.discard(channel_id)  
+                self._active_channels.discard(channel_id)
                 return
             roi = ROI(0, x, 0, y)
             print(f"[stream] First volume - loading at start_component={comp}")
         else:
             cam = self.renderer.GetActiveCamera()
             dist = camera_distance_to_focal(cam)
-            
+
             comp = choose_component(
                 dist,
                 self.cfg.distance_rules,
                 min_component=self.cfg.min_component,
                 max_component=self.cfg.max_component,
             )
-            
+
             existing_state = None
             for ch_id in self._active_channels:
                 if ch_id != channel_id and ch_id in self.state:
                     existing_state = self.state[ch_id]
                     break
-            
+
             if existing_state and existing_state.component == comp:
                 roi = existing_state.roi
                 print(f"[stream] Matching existing view: comp={comp} roi={roi}")
@@ -272,7 +272,7 @@ class VolumeStreamer:
                 spacing = self._spacing_for_component(comp)
                 zdim, ydim, xdim = self._dims_for_component(comp)
                 bounds = self._volume_bounds_world(comp)
-                
+
                 roi = compute_visible_xy_roi_vox(
                     self.renderer,
                     bounds_world=bounds,
@@ -283,9 +283,9 @@ class VolumeStreamer:
                     margin_vox=self.cfg.roi_margin_vox,
                 )
                 print(f"[stream] Computed view: comp={comp} roi={roi}")
-        
+
         self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
-        
+
     def deactivate_channel(self, channel_id: int):
         """
         Deactivate a channel - remove from rendering.
@@ -293,16 +293,16 @@ class VolumeStreamer:
         if channel_id not in self._active_channels:
             print(f"[stream] Channel {channel_id} not active")
             return
-        
+
         print(f"[stream] Deactivating channel {channel_id}")
-        
+
         self._active_channels.discard(channel_id)
-        
+
         if channel_id in self.volumes:
             vol = self.volumes[channel_id]
             self.renderer.RemoveVolume(vol)
             del self.volumes[channel_id]
-        
+
         if channel_id in self.mappers:
             del self.mappers[channel_id]
         if channel_id in self.nov_volumes and self.nov_renderer:
@@ -311,13 +311,13 @@ class VolumeStreamer:
             del self.nov_volumes[channel_id]
         if channel_id in self.nov_mappers:
             del self.nov_mappers[channel_id]
-        
+
         if channel_id in self.state:
             del self.state[channel_id]
-        
+
         if channel_id in self._channel_tfs:
             del self._channel_tfs[channel_id]
-        
+
         self._render()
 
     @staticmethod
@@ -336,9 +336,9 @@ class VolumeStreamer:
     def _load_and_display_channel(self, channel_id: int, component: int, roi: ROI, reset_camera: bool = False):
         """Load a single channel and add to display."""
         spacing = self._spacing_for_component(component)
-        
+
         print(f"[stream] Loading channel {channel_id} at comp={component} roi={roi}")
-        
+
         try:
             np_arr = self._load_channel_data(component, channel_id, roi)
         except Exception as e:
@@ -358,34 +358,34 @@ class VolumeStreamer:
         except ValueError as e:
             print(f"[stream] Skipping channel {channel_id}: {e}")
             return
-        
+
         r0, r1 = img.GetScalarRange()
         self._channel_data_range[channel_id] = (r0, r1)
-        
+
         # Compute histogram using the same range as the slider
         self._channel_histograms[channel_id] = self._compute_histogram(np_arr, (r0, r1))
-        
+
         vol, mapper = self._get_or_create_volume(channel_id)
         mapper.SetInputData(img)
-        
+
         tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
         color_tf, opacity_tf, pct_range = build_histogram_tf(img, tint_rgb=tint_rgb)
         self._channel_tfs[channel_id] = (color_tf, opacity_tf)
         self._channel_percentile_bounds[channel_id] = pct_range
-        
+
         prop = vol.GetProperty()
         prop.SetColor(color_tf)
         prop.SetScalarOpacity(opacity_tf)
         # prop.SetScalarOpacityUnitDistance(
         #     max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
         # )
-        
+
         if not self.renderer.HasViewProp(vol):
             self.renderer.AddVolume(vol)
-        
+
         self.state[channel_id] = ChannelState(component=component, roi=roi)
         self._last_component = component
-        
+
         if reset_camera:
             print(f"[stream] Resetting camera for first volume")
             self.renderer.ResetCamera()
@@ -402,10 +402,10 @@ class VolumeStreamer:
                 "focalPoint": fp,
                 "viewUp": vup,
             }
-        
+
         self.renderer.ResetCameraClippingRange()
         self._render()
-        
+
         print(f"[stream] Channel {channel_id} displayed")
 
     def reset_camera_to_initial(self) -> None:
@@ -940,12 +940,12 @@ class VolumeStreamer:
         """Compute and cache transfer function for a channel."""
         color_name = self.cfg.channel_colors[
             list(self.cfg.channels).index(ch) % len(self.cfg.channel_colors)
-        ]
+            ]
         tint = color_name_to_rgb(color_name)
         color_tf, opacity_tf = build_histogram_tf(sample_image, tint_rgb=tint)
         self._channel_tfs[ch] = (color_tf, opacity_tf)
         return color_tf, opacity_tf
-    
+
     def update_channel_intensity_range(self, channel_id: int, range_pct: Tuple[float, float]):
         """
         Update the intensity range for a channel.
@@ -956,24 +956,24 @@ class VolumeStreamer:
         """
         if channel_id not in self._active_channels:
             return
-        
+
         if channel_id not in self._channel_data_range:
             print(f"[stream] No data range stored for channel {channel_id}")
             return
-        
+
         data_range = self._channel_data_range[channel_id]
         tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
-        
+
         pct_bounds = self._channel_percentile_bounds.get(channel_id, (data_range[0], data_range[1], data_range[1]))
         color_tf, opacity_tf = build_tf_with_range(data_range, pct_bounds, range_pct, tint_rgb)
         self._channel_tfs[channel_id] = (color_tf, opacity_tf)
-        
+
         if channel_id in self.volumes:
             vol = self.volumes[channel_id]
             prop = vol.GetProperty()
             prop.SetColor(color_tf)
             prop.SetScalarOpacity(opacity_tf)
-        
+
         self._render()
 
     def _get_or_create_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
@@ -1039,10 +1039,10 @@ class VolumeStreamer:
     MAX_TEXTURE_DIM = 2048
 
     def _create_vtk_image(
-        self,
-        np_vol_zyx: np.ndarray,
-        spacing: SpacingConfig,
-        origin_xyz: Tuple[float, float, float],
+            self,
+            np_vol_zyx: np.ndarray,
+            spacing: SpacingConfig,
+            origin_xyz: Tuple[float, float, float],
             for_nov_view: bool = False,
     ) -> vtkImageData:
         """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only)."""
@@ -1133,12 +1133,12 @@ class VolumeStreamer:
 
         darr = self.zsrc.array(component)
         vol_zyx = darr[self.cfg.zarr_time_index,
-                       ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
+        ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
         np_arr = vol_zyx.compute()
 
         t1 = time.perf_counter()
         print(
-            f"[loaded] comp={component} ch={ch} in {t1-t0:.2f}s, shape={np_arr.shape}")
+            f"[loaded] comp={component} ch={ch} in {t1 - t0:.2f}s, shape={np_arr.shape}")
 
         self._put_cached_array(component, ch, roi, np_arr)
         return np_arr
@@ -1148,7 +1148,7 @@ class VolumeStreamer:
         if not self.cfg.channels:
             print("[stream] No channels to initialize")
             return
-    
+
         comp = self.cfg.start_component
         spacing = self._spacing_for_component(comp)
 
@@ -1251,11 +1251,11 @@ class VolumeStreamer:
             roi = request.roi
 
             channel_arrays: Dict[int, np.ndarray] = {}
-            for ch in self._active_channels: 
+            for ch in self._active_channels:
                 ch = int(ch)
                 prev = self.state.get(ch)
                 need_update = (prev is None) or (
-                    prev.component != component) or (prev.roi != roi)
+                        prev.component != component) or (prev.roi != roi)
 
                 if need_update:
                     channel_arrays[ch] = self._load_channel_data(
@@ -1348,7 +1348,7 @@ class VolumeStreamer:
             f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
 
         needs_update = False
-        for ch in self._active_channels:  
+        for ch in self._active_channels:
             ch = int(ch)
             prev = self.state.get(ch)
             if prev is None or prev.component != desired_comp or prev.roi != roi:

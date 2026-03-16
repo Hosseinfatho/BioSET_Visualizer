@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 
 import requests
 
+from bioset.NOV import register_nov_callbacks
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
 from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
@@ -22,15 +25,24 @@ def register_callbacks(ctrl, state, view, streamer=None):
         return (r, g, b)
 
     _refs = {
-        "streamer": None,
+        "streamer": streamer,
         "view": view,
-        "analysis_loader": None,
         "analysis_loader": None,
         "heatmap": None,
         "mesh_manager": None,
         "heatmap_lod": None,
-        "heatmap_lod": None,
+        "interactor": None,
     }
+
+    def set_view(v):
+        _refs["view"] = v
+
+    ctrl.set_view = set_view
+
+    def set_nov_view(v):
+        _refs["nov_view"] = v
+
+    ctrl.set_nov_view = set_nov_view
 
     def set_streamer(streamer):
         """Set the streamer reference."""
@@ -49,27 +61,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
               f" (available={mesh_manager.is_available if mesh_manager else False})")
 
     def set_heatmap_lod(heatmap_lod):
-        """Set the HeatmapLOD reference."""
+        """Set the heatmap LOD renderer reference."""
         _refs["heatmap_lod"] = heatmap_lod
-        print(f"[callbacks] HeatmapLOD set: {heatmap_lod}")
+        print(f"[callbacks] Heatmap LOD set: {heatmap_lod}")
+
+    def set_interactor(interactor):
+        """Set the main VTK interactor for bookmark flag picking."""
+        _refs["interactor"] = interactor
+
+    ctrl.set_interactor = set_interactor
 
     def set_heatmap_lod_auto_mode(enabled: bool):
-        """Sync the auto-mode flag on HeatmapLOD when the UI toggle changes."""
+        """Set heatmap LOD auto mode (controlled by UI toggle)."""
         heatmap_lod = _refs.get("heatmap_lod")
-        if heatmap_lod:
+        if heatmap_lod and hasattr(heatmap_lod, "set_auto_mode"):
             heatmap_lod.set_auto_mode(enabled)
 
-    def set_heatmap_lod(heatmap_lod):
-        """Set the HeatmapLOD reference."""
-        _refs["heatmap_lod"] = heatmap_lod
-        print(f"[callbacks] HeatmapLOD set: {heatmap_lod}")
+    register_bookmark_callbacks(ctrl, state, _refs)
+    register_nov_callbacks(ctrl, state, _refs)
 
-    def set_heatmap_lod_auto_mode(enabled: bool):
-        """Sync the auto-mode flag on HeatmapLOD when the UI toggle changes."""
-        heatmap_lod = _refs.get("heatmap_lod")
-        if heatmap_lod:
-            heatmap_lod.set_auto_mode(enabled)
-    
     def load_data():
         """Load data from zarr_url and metadata_url."""
         if state.data_loading:
@@ -121,7 +131,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             initial_visible = channels if len(channels) < state.default_num_channels else [ch["id"] for ch in channels[:state.default_num_channels]]
             state.visible_channel_ids = initial_visible
             state.data_loaded = True
-            
+            # Per-dataset folder for bookmark recordings (one folder per dataset link)
+            try:
+                url = getattr(state, "zarr_url", "") or ""
+                state.bookmark_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
+            except Exception:
+                state.bookmark_dataset_id = "default"
+
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
             
@@ -191,7 +207,46 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.heatmap_tile_count = 0
         
         state.right_drawer_open = False
-    
+
+        # Close bookmark UI (column, forms, popups) when data is cleared
+        # Hide the bookmark side panel
+        state.bookmark_open = False
+        # Close any open bookmark display / details panel
+        state.bookmark_display_snapshot = None
+        state.bookmark_form_minimized = False
+        # Close new-bookmark form (bottom-left)
+        state.bookmark_form_dialog = False
+        # Close flag popups and hide bookmark flags
+        state.bookmark_flag_popup = None
+        state.bookmark_flag_popup_html = ""
+        state.bookmark_flag_popup_screen = ""
+        state.bookmark_flag_popup_left = 0
+        state.bookmark_flag_popup_top = 0
+        state.bookmark_flags_visible = False
+        state.bookmark_flags_data = []
+        # Close export-screenshot dialog if open
+        state.bookmark_export_screenshot_dialog = False
+        state.bookmark_export_screenshot_name = ""
+        state.bookmark_export_screenshot_caption = ""
+
+        # Reset NOV and hide 2D rect overlay
+        state.nov_show_rect = False
+        state.nov_drawing_box = False
+        state.nov_dragging_corner = None
+        state.nov_lens_center = None
+        state.nov_lens_length = 0.0
+        state.nov_lens_width = 0.0
+        state.nov_lens_depth = 0.0
+        state.nov_panel_visible = False
+        state.nov_candidates = []
+        state.nov_current_index = 0
+        state.nov_view_index_display = ""
+        state.nov_score_display = 0.0
+        state.nov_sphere_svg = ""
+        state.nov_sphere_xy = []
+        if hasattr(ctrl, "nov_hide_lens"):
+            ctrl.nov_hide_lens()
+
         if _refs["view"]:
             _refs["view"].update()
         
@@ -755,13 +810,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Bar local data updated: {len(local_bar_data)} channels")
     
     def reset_camera():
-        """Reset the VTK camera to default view."""
-        print(f"[callbacks] Resetting camera")
+        """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
         streamer = _refs.get("streamer")
-        if streamer and hasattr(streamer, 'renderer'):
-            streamer.renderer.ResetCamera()
-            streamer.renderer.ResetCameraClippingRange()
-        if _refs["view"]:
+        if streamer and getattr(streamer, "renderer", None):
+            if hasattr(streamer, "reset_camera_to_initial"):
+                streamer.reset_camera_to_initial()
+            else:
+                streamer.renderer.ResetCamera()
+                streamer.renderer.ResetCameraClippingRange()
+        if _refs.get("view"):
             _refs["view"].update()
     
     def update_background_color(color_hex):
@@ -884,10 +941,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     prop = vol.GetProperty()
                     prop.SetColor(color_tf)
                     prop.SetScalarOpacity(opacity_tf)
-        
+            if hasattr(streamer, "apply_main_channel_to_nov"):
+                streamer.apply_main_channel_to_nov(channel_id)
         if _refs["view"]:
             _refs["view"].update()
-            
+        nov_view = _refs.get("nov_view")
+        if nov_view and hasattr(nov_view, "update"):
+            nov_view.update()
+
     def on_channel_range_change(channel_id, range_value):
         """Handle intensity range slider change."""
         print(f"[callbacks] Channel {channel_id} range changed to: {range_value}")
@@ -903,21 +964,22 @@ def register_callbacks(ctrl, state, view, streamer=None):
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
             streamer.update_channel_intensity_range(channel_id, tuple(range_value))
-        
+            if hasattr(streamer, "apply_main_channel_to_nov"):
+                streamer.apply_main_channel_to_nov(channel_id)
         if _refs["view"]:
             _refs["view"].update()
+        nov_view = _refs.get("nov_view")
+        if nov_view and hasattr(nov_view, "update"):
+            nov_view.update()
 
     _refs["biomni_client"] = None
 
     def _get_biomni_client():
         """Get or create the local Biomni client."""
-        base_url = f"http://localhost:{state.biomni_port}"
+        url = f"http://localhost:{state.biomni_port}"
 
         if _refs["biomni_client"] is None:
-            _refs["biomni_client"] = BiomniLocalClient(base_url=base_url)
-        else:
-            _refs["biomni_client"].base_url = base_url
-            
+            _refs["biomni_client"] = BiomniLocalClient(base_url=url)
         return _refs["biomni_client"]
 
     def get_available_llms():
@@ -933,7 +995,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def chatbot_login():
         """Initialise the Biomni agent on the local server."""
-        print(f"[callbacks] Biomni init requested with model={state.biomni_model}, mode={state.biomni_mode}")
+        print(f"[callbacks] Biomni init requested with llm {state.biomni_model} and mode {state.biomni_mode}")
         state.chatbot_loading = True
 
         try:
@@ -957,27 +1019,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_loading = False
 
     def biomni_add_data(file_info):
-        """Handle data upload from the Biomni Settings file input.
-        
-        The VFileInput currently passes the raw bytes of the file to Trame.
-        """
-        if not file_info:
-            return
-
         print(f"[callbacks] Received file upload for Biomni Add Data ({len(file_info)} bytes)")
 
         try:
             file_name = file_info.get("name", "upload")
             file_content = file_info.get("content")
 
-            if file_content is None:
-                raise ValueError("No file content found in upload payload.")
-
             _, ext = os.path.splitext(file_name)
-            if not ext:
-                ext = ".csv"
 
-            fd, temp_path = tempfile.mkstemp(prefix="biomni_upload_", suffix=ext)
+            fd, temp_path = tempfile.mkstemp(prefix="biomni_file_upload_", suffix=ext)
             with os.fdopen(fd, 'wb') as f:
                 f.write(file_content)
 
@@ -985,20 +1035,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             client = _get_biomni_client()
             url = f"{client.base_url}/custom-data"
-            resp = requests.post(url, json={"filepath": temp_path}, timeout=10)
-
-            if resp.status_code == 200:
-                msg = f"Successfully added uploaded context file to Biomni."
-            else:
-                msg = f"Failed to add context data: {resp.text}"
+            requests.post(url, json={"filepath": temp_path})
 
         except Exception as e:
-            msg = f"Error processing file upload: {e}"
-            print(f"[callbacks] {msg}")
-            
-        state.chatbot_messages = list(state.chatbot_messages) + [
-            {"role": "assistant", "content": msg}
-        ]
+            print(f"[callbacks] Error processing file upload: {e}")
+
 
     def _build_markers() -> list[str]:
         """Build the markers list from active channels and their colors."""
@@ -1116,58 +1157,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print("[callbacks] Clearing chatbot messages")
         state.chatbot_messages = []
         state.chatbot_input = ""
-        
+
     def capture_screenshot():
         """Capture current VTK view as base64-encoded PNG."""
-        try:
-            import vtk
-            import base64
-            
-            streamer = _refs.get("streamer")
-            if not streamer or not hasattr(streamer, 'renderer'):
-                print("[callbacks] No renderer available for screenshot")
-                return None
-            
-            # Get render window
-            render_window = streamer.renderer.GetRenderWindow()
-            render_window.Render()
-            
-            # Create window to image filter
-            window_to_image = vtk.vtkWindowToImageFilter()
-            window_to_image.SetInput(render_window)
-            window_to_image.SetScale(1)
-            window_to_image.SetInputBufferTypeToRGB()
-            window_to_image.ReadFrontBufferOff()
-            window_to_image.Update()
-            
-            # Write to JPEG in memory
-            writer = vtk.vtkJPEGWriter()
-            writer.SetWriteToMemory(True)
-            writer.SetQuality(85)
-            writer.SetInputConnection(window_to_image.GetOutputPort())
-            writer.Write()
-
-            # Get the vtkUnsignedCharArray result
-            result = writer.GetResult()
-
-            if result and result.GetNumberOfTuples() > 0:
-                from vtk.util.numpy_support import vtk_to_numpy
-
-                jpeg_bytes = vtk_to_numpy(result).tobytes()
-
-                base64_image = base64.b64encode(jpeg_bytes).decode('utf-8')
-
-                print(f"[callbacks] Screenshot captured ({len(jpeg_bytes)} bytes)")
-                return base64_image
-            else:
-                print("[callbacks] Failed to capture screenshot - no data in result")
-                return None
-                
-        except Exception as e:
-            print(f"[callbacks] Screenshot capture failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        import base64
+        png_bytes = capture_screenshot_png_bytes(_refs.get("streamer"))
+        return base64.b64encode(png_bytes).decode("utf-8") if png_bytes else None
 
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""

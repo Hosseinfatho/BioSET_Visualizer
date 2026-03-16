@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from trame.ui.vuetify import VAppLayout
-from trame.widgets import client
+from trame.widgets import html, vuetify, client
 
+from bioset.bookmark import bookmark_form_panel
 from .callbacks import register_callbacks
+from .components import bookmark_column, nov_popup_panel
 from .components import left_drawer, right_drawer, viewer
 from .components.floating_chatbot import floating_chatbot_section
 from .scripts import register_scripts
@@ -12,16 +14,16 @@ from .state import init_state, register_state_change_handlers
 from .styles import register_styles
 
 
-def build_ui(server, render_window, streamer=None):
+def build_ui(server, render_window, streamer=None, nov_render_window=None):
     ctrl = server.controller
     state = server.state
-    
-    init_state(state)
 
+    init_state(state)
+    register_callbacks(ctrl, state, None, streamer)
+
+    view = None
     with VAppLayout(server) as layout:
         register_styles(client)
-
-        # UI components
         left_drawer(state, ctrl)
         right_drawer(state, ctrl)
 
@@ -29,10 +31,23 @@ def build_ui(server, render_window, streamer=None):
 
         # VTK RENDERER
         with layout.root:
-            view = viewer(ctrl, render_window)
+            # Container with fill-height so viewer gets height (avoids white screen)
+            with vuetify.VContainer(fluid=True, classes="pa-0 fill-height", style="position: relative; min-height: 0;"):
+                with html.Div(style="position: relative; width: 100%; height: 100%; min-height: 0;"):
+                    with html.Div(
+                            style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; min-width: 0; min-height: 0;"):
+                        view = viewer(ctrl, render_window)
+            # Bookmark: fixed overlay to the RIGHT of left drawer (not on top of settings)
+            with html.Div(
+                    v_show=("bookmark_open", False),
+                    class_="bookmark-panel-beside-drawer",
+                    style="position: fixed; left: 250px; top: 0; width: 250px; height: 50vh; z-index: 12; pointer-events: auto;",
+            ):
+                bookmark_column(state, ctrl)
+            ctrl.set_view(view)
+            bookmark_form_panel(state, ctrl)
+            nov_popup_panel(state, ctrl, nov_render_window)
             register_scripts(client)
 
-    register_callbacks(ctrl, state, view, streamer)
     register_state_change_handlers(state, ctrl)
-        
     return ctrl, view

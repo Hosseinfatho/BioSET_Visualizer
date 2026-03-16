@@ -36,12 +36,12 @@ def settings_section(state, ctrl):
 
         with vuetify.VExpandTransition():
             with html.Div(v_show=("settings_open", False)):
-                
+
                 # Camera / View Settings Header
                 with vuetify.VListItem(v_if="!drawer_mini", classes="mt-2 text-left pl-4"):
                     with vuetify.VListItemContent(classes="py-0"):
                         html.Span("Camera / View", classes="text-caption grey--text font-weight-bold letter-spacing-1")
-                
+
                 # Toggle Theme
                 with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
                     with vuetify.VListItemIcon():
@@ -104,12 +104,35 @@ def settings_section(state, ctrl):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Reset Camera")
 
-                # Biomni Settings Header
+                # NOV: press to show box and panel; Set/Reset are in the popup window
+                with vuetify.VListItem(class_="nav-item nav-item--nested", style="overflow: visible;"):
+                    with vuetify.VListItemIcon():
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Next Best View (popup)")
+                    with vuetify.VListItemContent(v_if="!drawer_mini"):
+                        html.Span("Optimal View", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;",
+                                  click=ctrl.nov_toggle)
+                # Bookmark (saved views / snapshots)
+                with vuetify.VListItem(
+                        class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                        link=True,
+                        ripple=True,
+                        click="bookmark_open = !bookmark_open",
+                ):
+                    with vuetify.VListItemIcon():
+                        with vuetify.VTooltip(right=True):
+                            with html.Template(v_slot_activator="{ on, attrs }"):
+                                vuetify.VIcon("mdi-bookmark", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                            html.Span("Bookmark")
+                    with vuetify.VListItemContent(v_if="!drawer_mini"):
+                        html.Span("Bookmark")
+
                 with vuetify.VListItem(v_if="!drawer_mini", classes="mt-4 text-left pl-4"):
                     with vuetify.VListItemContent(classes="py-0"):
-                        html.Span("Biomni / LLM", classes="text-caption grey--text font-weight-bold letter-spacing-1")
+                        html.Span("Biomni / LLM", classes="text-caption grey--text font-weight-bold")
 
-                # Model selection
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         vuetify.VSelect(
@@ -121,7 +144,6 @@ def settings_section(state, ctrl):
                             hide_details=True,
                         )
 
-                # Mode selection
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         vuetify.VSelect(
@@ -133,7 +155,6 @@ def settings_section(state, ctrl):
                             hide_details=True,
                         )
 
-                # Port mapping
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         vuetify.VTextField(
@@ -144,8 +165,7 @@ def settings_section(state, ctrl):
                             outlined=True,
                             hide_details=True,
                         )
-                
-                # Context Data Upload
+
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(v_if="!drawer_mini", classes="pb-3"):
                         vuetify.VFileInput(
@@ -153,7 +173,6 @@ def settings_section(state, ctrl):
                             dense=True,
                             outlined=True,
                             hide_details=True,
-                            prepend_icon="mdi-paperclip",
                             __events=["change"],
                             change=(ctrl.biomni_add_data, "[$event]"),
                         )
@@ -165,6 +184,5 @@ def settings_section(state, ctrl):
                             click=ctrl.chatbot_login,
                             block=True,
                             small=True,
-                            outlined=True,
                             loading=("chatbot_loading",),
                         )
