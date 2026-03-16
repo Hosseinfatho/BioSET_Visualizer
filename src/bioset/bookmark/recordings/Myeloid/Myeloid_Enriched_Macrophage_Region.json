@@ -3,7 +3,7 @@
   "title": "Myeloid-Enriched Macrophage Region",
   "category": "Myeloid",
   "created": "2026-03-15T14:21:07Z",
-  "updated": "2026-03-15T14:21:48Z",
+  "updated": "2026-03-16T02:11:54Z",
   "notes": "A microenvironment enriched with myeloid-lineage cells and macrophages, marked by elevated CD11b, CD11c, and CD206 expression.",
   "camera": {
     "position": [
@@ -14,7 +14,7 @@
     "focalPoint": [
       1379.567700123455,
       264.9219278654463,
-      16.803007803577138
+      26.803007803577138
     ],
     "viewUp": [
       0.011585454239743987,
@@ -83,7 +83,7 @@
         "focalPoint": [
           1379.567700123455,
           264.9219278654463,
-          16.803007803577138
+          26.803007803577138
         ],
         "viewUp": [
           0.011585454239743987,
@@ -145,10 +145,10 @@
       "optional_LOD": {
         "component": 1,
         "roi": {
-          "x0": 4535,
-          "x1": 5367,
-          "y0": 743,
-          "y1": 1192
+          "x0": 4536,
+          "x1": 5374,
+          "y0": 752,
+          "y1": 1205
         }
       }
     }
@@ -156,10 +156,10 @@
   "optional_LOD": {
     "component": 1,
     "roi": {
-      "x0": 4535,
-      "x1": 5367,
-      "y0": 743,
-      "y1": 1192
+      "x0": 4536,
+      "x1": 5374,
+      "y0": 752,
+      "y1": 1205
     }
   },
   "description": "A microenvironment enriched with myeloid-lineage cells and macrophages, marked by elevated CD11b, CD11c, and CD206 expression."

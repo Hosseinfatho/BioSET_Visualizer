@@ -3,7 +3,7 @@
   "title": "Macrophage starter",
   "category": "Myeloid",
   "created": "2026-03-15T14:14:59Z",
-  "updated": "2026-03-15T14:15:24Z",
+  "updated": "2026-03-16T02:09:29Z",
   "notes": "An early microenvironment where macrophages begin to accumulate and initiate immune activation.",
   "camera": {
     "position": [
@@ -14,7 +14,7 @@
     "focalPoint": [
       312.37258352668755,
       633.539815508656,
-      23.87500548265904
+      26.87500548265904
     ],
     "viewUp": [
       -1.733299131458797e-05,
@@ -83,7 +83,7 @@
         "focalPoint": [
           312.37258352668755,
           633.539815508656,
-          23.87500548265904
+          26.87500548265904
         ],
         "viewUp": [
           -1.733299131458797e-05,
@@ -145,10 +145,10 @@
       "optional_LOD": {
         "component": 1,
         "roi": {
-          "x0": 643,
-          "x1": 1593,
-          "y0": 2005,
-          "y1": 2520
+          "x0": 715,
+          "x1": 1521,
+          "y0": 2043,
+          "y1": 2483
         }
       }
     }
@@ -156,10 +156,10 @@
   "optional_LOD": {
     "component": 1,
     "roi": {
-      "x0": 643,
-      "x1": 1593,
-      "y0": 2005,
-      "y1": 2520
+      "x0": 715,
+      "x1": 1521,
+      "y0": 2043,
+      "y1": 2483
     }
   },
   "description": "An early microenvironment where macrophages begin to accumulate and initiate immune activation."

@@ -47,8 +47,6 @@ class LoadedData:
 
 class VolumeStreamer:
     DEBOUNCE_DELAY = 0.15
-    # Initial camera distance: 1.0 = VTK default. Use e.g. 0.7 to move camera a little closer, 0.5 for more zoom.
-    INITIAL_CAMERA_ZOOM = 0.7
 
     _executor: ThreadPoolExecutor = None
 
@@ -393,17 +391,10 @@ class VolumeStreamer:
             print(f"[stream] Resetting camera for first volume")
             self.renderer.ResetCamera()
             cam = self.renderer.GetActiveCamera()
-            pos = list(cam.GetPosition())
-            fp = list(cam.GetFocalPoint())
-            vup = list(cam.GetViewUp())
-            zoom = getattr(self.__class__, "INITIAL_CAMERA_ZOOM", 1.0)
-            if zoom != 1.0 and 0 < zoom <= 1.0:
-                pos = [fp[i] + (pos[i] - fp[i]) * zoom for i in range(3)]
-                cam.SetPosition(pos[0], pos[1], pos[2])
             self._initial_camera = {
-                "position": pos,
-                "focalPoint": fp,
-                "viewUp": vup,
+                "position": list(cam.GetPosition()),
+                "focalPoint": list(cam.GetFocalPoint()),
+                "viewUp": list(cam.GetViewUp()),
             }
         
         self.renderer.ResetCameraClippingRange()

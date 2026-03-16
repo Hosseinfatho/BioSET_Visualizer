@@ -3,13 +3,13 @@
   "title": "Dominant Macrophage Area",
   "category": "Myeloid",
   "created": "2026-03-15T14:16:53Z",
-  "updated": "2026-03-15T14:17:28Z",
+  "updated": "2026-03-16T02:07:15Z",
   "notes": "A microenvironment where macrophages are the predominant immune cell population shaping local immune activity.",
   "camera": {
     "position": [
-      610.1350201405246,
-      544.7458971718236,
-      181.22667914174954
+      611.1837539460972,
+      540.0254937806502,
+      181.14941481125837
     ],
     "focalPoint": [
       611.3724029135496,
@@ -17,9 +17,9 @@
       26.067234508092067
     ],
     "viewUp": [
-      -1.733299131458797e-05,
-      0.9999976379261156,
-      0.002173440074357192
+      0.0011014007688698877,
+      0.9994679784415066,
+      0.032596732756443404
     ]
   },
   "channels": [
@@ -76,9 +76,9 @@
     {
       "camera": {
         "position": [
-          610.1350201405246,
-          544.7458971718236,
-          181.22667914174954
+          611.1837539460972,
+          540.0254937806502,
+          181.14941481125837
         ],
         "focalPoint": [
           611.3724029135496,
@@ -86,9 +86,9 @@
           26.067234508092067
         ],
         "viewUp": [
-          -1.733299131458797e-05,
-          0.9999976379261156,
-          0.002173440074357192
+          0.0011014007688698877,
+          0.9994679784415066,
+          0.032596732756443404
         ]
       },
       "notes": "A microenvironment where macrophages are the predominant immune cell population shaping local immune activity.",
@@ -145,10 +145,10 @@
       "optional_LOD": {
         "component": 1,
         "roi": {
-          "x0": 1779,
-          "x1": 2593,
-          "y0": 1725,
-          "y1": 2169
+          "x0": 1834,
+          "x1": 2534,
+          "y0": 1761,
+          "y1": 2141
         }
       }
     }
@@ -156,10 +156,10 @@
   "optional_LOD": {
     "component": 1,
     "roi": {
-      "x0": 1779,
-      "x1": 2593,
-      "y0": 1725,
-      "y1": 2169
+      "x0": 1834,
+      "x1": 2534,
+      "y0": 1761,
+      "y1": 2141
     }
   },
   "description": "A microenvironment where macrophages are the predominant immune cell population shaping local immune activity."
