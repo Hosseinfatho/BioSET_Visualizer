@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from trame.widgets import vtk, vuetify, html
+from bioset.bookmark import bookmark_form_panel  # noqa: F401 - for ctrl ref in popup
 
 
 def viewer(ctrl, render_window):
@@ -95,6 +96,18 @@ def viewer(ctrl, render_window):
                     attrs={"id": "nov-rect-drag-end", "aria-hidden": "true", "tabindex": "-1"},
                     style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
                 )
+            # Flag popup: position absolute so it appears near the flag (same coord system as VTK render window)
+            with html.Div(
+                v_show=("bookmark_flag_popup", False),
+                class_="bookmark-flag-popup-near-flag",
+                style=(
+                    "'position: absolute; z-index: 400; left: ' + (bookmark_flag_popup_left || 0) + 'px; top: ' + (bookmark_flag_popup_top || 0) + 'px; transform: translateY(-100%); min-width: 200px; max-width: 320px; padding: 10px 12px; border-radius: 6px; background: rgba(0,0,0,0.9); color: #fff; font-size: 1rem; box-shadow: 0 2px 12px rgba(0,0,0,0.4); white-space: pre-wrap; word-break: break-word; line-height: 1.1; pointer-events: auto;'",
+                ),
+            ):
+                with html.Div(v_html=("bookmark_flag_popup_html", ""), style="color: #fff; font-size: 1rem; line-height: 1.2; margin: 0; padding: 0;"):
+                    pass
+                with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_close_flag_popup, style="position: absolute; top: 4px; right: 4px; color: #fff;"):
+                    vuetify.VIcon("mdi-close", x_small=True)
         
         with vuetify.VBtn(
             v_if="analysis_loaded && !right_drawer_open",
