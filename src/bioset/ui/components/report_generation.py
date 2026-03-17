@@ -50,6 +50,13 @@ def report_generation_section(state, ctrl):
                         hide_details=True,
                     )
 
+                    vuetify.VCheckbox(
+                        label="Bookmarks",
+                        v_model="export_bookmarks",
+                        dense=True,
+                        hide_details=True,
+                    )
+
                 with html.Div(classes="mb-2 mt-4"):
                     vuetify.VBtn(
                         "Generate Report",

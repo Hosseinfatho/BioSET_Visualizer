@@ -242,6 +242,7 @@ def init_state(state):
     state.setdefault("export_general", True)
     state.setdefault("export_analysis", True)
     state.setdefault("export_chat", True)
+    state.setdefault("export_bookmarks", True)
 
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""

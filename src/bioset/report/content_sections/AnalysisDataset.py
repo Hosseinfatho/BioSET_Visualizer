@@ -1,4 +1,5 @@
-from bioset.report.content_sections.PDFSection import PDFSection, SUBTITLE_FONT_SIZE, FONT_SIZE, TITLE_COLOR, COLOR
+from bioset.report.content_sections.PDFSection import PDFSection, SUBTITLE_FONT_SIZE, FONT_SIZE, TITLE_COLOR, COLOR, \
+    BACKGROUND_COLOR
 
 
 class AnalysisDatasetContent:
@@ -11,9 +12,6 @@ class AnalysisDataset(PDFSection):
     def __init__(self, dataset_information: AnalysisDatasetContent):
         super().__init__("Dataset Information")
         self.dataset_information = dataset_information
-
-    def get_content(self):
-        pass
 
     def append_pdf_bytes(self, pdf):
         pdf.set_font('Arial', 'B', SUBTITLE_FONT_SIZE)
@@ -53,7 +51,7 @@ class AnalysisDataset(PDFSection):
         total_table_height = sum(row_heights) + max(0, (len(row_heights) - 1) * 2) + (2 * padding)
 
         start_y = pdf.get_y()
-        pdf.set_fill_color(245, 245, 245)
+        pdf.set_fill_color(BACKGROUND_COLOR)
         pdf.rect(pdf.l_margin, start_y, effective_width, total_table_height, style='F', round_corners=True,
                  corner_radius=3)
 

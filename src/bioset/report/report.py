@@ -5,7 +5,38 @@ from fpdf import FPDF
 from bioset.report.content_sections.PDFSection import PDFSection, TITLE_FONT_SIZE, TITLE_COLOR
 
 
+def _replace_llm_symbols(txt):
+    if not isinstance(txt, str):
+        return txt
+
+    replacements = {
+        "\u2014": "-",
+        "\u2013": "-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2026": "...",
+    }
+    for char, replacement in replacements.items():
+        txt = txt.replace(char, replacement)
+
+    return txt
+
+
 class BioSETReport(FPDF):
+    def cell(self, text='', **kwargs):
+        text = _replace_llm_symbols(text)
+        return super().cell(text=text, **kwargs)
+
+    def multi_cell(self, text='', **kwargs):
+        text = _replace_llm_symbols(text)
+        return super().multi_cell(text=text, **kwargs)
+
+    def write(self, text='', **kwargs):
+        text = _replace_llm_symbols(text)
+        return super().write(text=text, **kwargs)
+
     def header(self):
         icon_w = 20
         self.image("src/bioset/ui/assets/icon.jpg", x=self.l_margin, y=self.t_margin, w=icon_w)
