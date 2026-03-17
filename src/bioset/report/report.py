@@ -25,17 +25,18 @@ def _replace_llm_symbols(txt):
 
 
 class BioSETReport(FPDF):
-    def cell(self, text='', **kwargs):
+    def cell(self, w=None, h=None, text='', border=0, ln=0, align='', fill=False, link='', **kwargs):
         text = _replace_llm_symbols(text)
-        return super().cell(text=text, **kwargs)
+        return super().cell(w=w, h=h, text=text, border=border, ln=ln, align=align, fill=fill, link=link, **kwargs)
 
-    def multi_cell(self, text='', **kwargs):
+    def multi_cell(self, w, h=None, text='', border=0, align='J', fill=False, split_only=False, link='', **kwargs):
         text = _replace_llm_symbols(text)
-        return super().multi_cell(text=text, **kwargs)
+        return super().multi_cell(w=w, h=h, text=text, border=border, align=align, fill=fill, split_only=split_only,
+                                  link=link, **kwargs)
 
-    def write(self, text='', **kwargs):
+    def write(self, h=None, text='', link='', **kwargs):
         text = _replace_llm_symbols(text)
-        return super().write(text=text, **kwargs)
+        return super().write(h=h, text=text, link=link, **kwargs)
 
     def header(self):
         icon_w = 20
