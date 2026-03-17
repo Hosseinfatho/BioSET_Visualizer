@@ -148,9 +148,35 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
 
     renderer = vtkRenderer()
     render_window = vtkRenderWindow()
+    # Layering:
+    # - layer 0: heatmap fill (behind the volume)
+    # - layer 1: main volume renderer (image)
+    # - layer 2: heatmap outline (in front of the volume)
+    render_window.SetNumberOfLayers(3)
+    try:
+        render_window.SetAlphaBitPlanes(1)
+    except Exception:
+        pass
+    renderer.SetLayer(1)
     render_window.AddRenderer(renderer)
     render_window.SetOffScreenRendering(1)
     render_window.SetShowWindow(False)
+
+    # Heatmap fill renderer (behind)
+    heatmap_fill_renderer = vtkRenderer()
+    heatmap_fill_renderer.SetLayer(0)
+    heatmap_fill_renderer.SetBackground(0.0, 0.0, 0.0)
+    heatmap_fill_renderer.SetBackgroundAlpha(0.0)
+    heatmap_fill_renderer.SetActiveCamera(renderer.GetActiveCamera())  # share camera
+    render_window.AddRenderer(heatmap_fill_renderer)
+
+    # Heatmap outline renderer (in front)
+    heatmap_outline_renderer = vtkRenderer()
+    heatmap_outline_renderer.SetLayer(2)
+    heatmap_outline_renderer.SetBackground(0.0, 0.0, 0.0)
+    heatmap_outline_renderer.SetBackgroundAlpha(0.0)
+    heatmap_outline_renderer.SetActiveCamera(renderer.GetActiveCamera())  # share camera
+    render_window.AddRenderer(heatmap_outline_renderer)
 
     interactor = vtkRenderWindowInteractor()
     interactor.SetRenderWindow(render_window)
@@ -165,7 +191,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     nov_renderer: Optional[vtkRenderer] = None
     nov_render_window: Optional[vtkRenderWindow] = None
 
-    heatmap = HeatmapRenderer(renderer)
+    heatmap = HeatmapRenderer(heatmap_fill_renderer, outline_renderer=heatmap_outline_renderer)
 
     # cube_actor = create_red_cube(center=(1000.0, 400.0, 25.0),size=50,opacity=0.5)  
     # cube_actor1 = create_red_cube(center=(900.0, 400.0, 0.0), size=50, opacity=1.0)  
