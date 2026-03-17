@@ -36,11 +36,8 @@ def settings_section(state, ctrl):
 
         with vuetify.VExpandTransition():
             with html.Div(v_show=("settings_open", False)):
-
-                # Camera / View Settings Header
-                with vuetify.VListItem(v_if="!drawer_mini", classes="mt-2 text-left pl-4"):
-                    with vuetify.VListItemContent(classes="py-0"):
-                        html.Span("Camera / View", classes="text-caption grey--text font-weight-bold letter-spacing-1")
+                with vuetify.VListItem(classes="mt-2 text-left ml-4"):
+                    html.Span("Camera / View", classes="text-caption grey--text font-weight-bold")
 
                 # Toggle Theme
                 with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
@@ -129,60 +126,54 @@ def settings_section(state, ctrl):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Bookmark")
 
-                with vuetify.VListItem(v_if="!drawer_mini", classes="mt-4 text-left pl-4"):
-                    with vuetify.VListItemContent(classes="py-0"):
-                        html.Span("Biomni / LLM", classes="text-caption grey--text font-weight-bold")
+                with vuetify.VListItem(classes="mt-4 text-left ml-4"):
+                    html.Span("Biomni / LLM", classes="text-caption grey--text font-weight-bold")
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        vuetify.VSelect(
-                            v_model=("biomni_model",),
-                            items=("biomni_available_models",),
-                            label="Model",
-                            dense=True,
-                            outlined=True,
-                            hide_details=True,
-                        )
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VSelect(
+                        v_model=("biomni_model",),
+                        items=("biomni_available_models",),
+                        label="Model",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                    )
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        vuetify.VSelect(
-                            v_model=("biomni_mode",),
-                            items=(["full", "db", "minimal"],),
-                            label="Mode",
-                            dense=True,
-                            outlined=True,
-                            hide_details=True,
-                        )
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VSelect(
+                        v_model=("biomni_mode",),
+                        items=(["full", "db", "minimal"],),
+                        label="Mode",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                    )
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        vuetify.VTextField(
-                            v_model=("biomni_port",),
-                            label="Port",
-                            type="number",
-                            dense=True,
-                            outlined=True,
-                            hide_details=True,
-                        )
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VTextField(
+                        v_model=("biomni_port",),
+                        label="Port",
+                        type="number",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                    )
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemContent(v_if="!drawer_mini", classes="pb-3"):
-                        vuetify.VFileInput(
-                            label="Add context data...",
-                            dense=True,
-                            outlined=True,
-                            hide_details=True,
-                            __events=["change"],
-                            change=(ctrl.biomni_add_data, "[$event]"),
-                        )
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VFileInput(
+                        label="Add context data",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                        __events=["change"],
+                        change=(ctrl.biomni_add_data, "[$event]"),
+                    )
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested pt-2 pb-2"):
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        vuetify.VBtn(
-                            "{{ chatbot_authenticated ? 'Update Settings' : 'Initialize Biomni' }}",
-                            click=ctrl.chatbot_login,
-                            block=True,
-                            small=True,
-                            loading=("chatbot_loading",),
-                        )
+                    vuetify.VBtn(
+                        "{{ chatbot_authenticated ? 'Update Settings' : 'Initialize Biomni' }}",
+                        click=ctrl.chatbot_login,
+                        block=True,
+                        small=True,
+                        loading=("chatbot_loading",),
+                    )

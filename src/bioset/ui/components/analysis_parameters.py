@@ -31,11 +31,10 @@ def analysis_parameters_section(state, ctrl):
                     classes="mt-1",
             ):
                 # Dilation Header
-                with vuetify.VListItem(v_if="!drawer_mini", classes="mt-2 text-left pl-4"):
-                    with vuetify.VListItemContent(classes="py-0"):
-                        html.Span("Dilation", classes="text-caption grey--text font-weight-bold letter-spacing-1")
+                with vuetify.VListItem(classes="mt-2 text-left ml-4"):
+                    html.Span("Dilation", classes="text-caption grey--text font-weight-bold")
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
+                with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(classes="pb-0"):
                         # Dilation slider 
                         with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-2 mt-2"):
@@ -71,27 +70,44 @@ def analysis_parameters_section(state, ctrl):
                                 vuetify.VIcon("mdi-plus", small=True)
 
                 # Heatmap Header
-                with vuetify.VListItem(v_if="!drawer_mini", classes="mt-4 text-left pl-4"):
-                    with vuetify.VListItemContent(classes="py-0 d-flex flex-row align-center"):
-                        html.Span("Heatmap", classes="text-caption grey--text font-weight-bold letter-spacing-1")
-                        vuetify.VSpacer()
-                        with vuetify.VBtn(
-                                text=True,
+                with vuetify.VListItem(classes="mt-4 text-left ml-4"):
+                    html.Span("Heatmap", classes="text-caption grey--text font-weight-bold")
+                    vuetify.VSpacer()
+                    with vuetify.VBtn(
+                            text=True,
+                            small=True,
+                            classes="ml-1 px-2 text-none",
+                            click="heatmap_visible = !heatmap_visible",
+                    ):
+                        with html.Div():
+                            html.Span("Toggle Visibility", classes="mr-2",
+                                      style="font-size: 11px; font-weight: bold;")
+                            vuetify.VIcon(
+                                v_text="heatmap_visible ? 'mdi-eye' : 'mdi-eye-off'",
                                 small=True,
-                                classes="ml-1 px-2 text-none",
-                                click="heatmap_visible = !heatmap_visible",
-                        ):
-                            with html.Div():
-                                html.Span("Toggle Visibility", classes="mr-2",
-                                          style="font-size: 11px; font-weight: bold;")
-                                vuetify.VIcon(
-                                    v_text="heatmap_visible ? 'mdi-eye' : 'mdi-eye-off'",
-                                    small=True,
-                                    style=("heatmap_visible ? 'color:white' : 'color:#555'",),
-                                )
+                                style=("heatmap_visible ? 'color:white' : 'color:#555'",),
+                            )
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
                     with vuetify.VListItemContent():
+                        # Outline only: show tile outlines (wireframe) with intensity per-tile
+                        with html.Div(classes="d-flex align-center justify-center mb-2"):
+                            html.Span(
+                                "Filled",
+                                style="color: grey; font-size: 11px; margin-right: 4px;",
+                            )
+                            vuetify.VSwitch(
+                                v_model=("heatmap_outline_only",),
+                                dense=True,
+                                hide_details=True,
+                                color="white",
+                                style="display: inline-flex; margin-top: 0;",
+                            )
+                            html.Span(
+                                "Outline",
+                                style="color: grey; font-size: 11px; margin-left: 4px;",
+                            )
+
                         # Auto/Manual resolution toggle
                         with html.Div(classes="d-flex align-center justify-center mb-2 mt-2"):
                             html.Span(
