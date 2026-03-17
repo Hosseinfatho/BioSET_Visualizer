@@ -1,5 +1,7 @@
 # Bookmark: saved views, snapshots, recordings per dataset.
 
+from .bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+from .bookmark_form import bookmark_form_panel
 from .snapshot_io import (
     load_snapshots,
     load_snapshot_by_name,
@@ -9,8 +11,6 @@ from .snapshot_io import (
     save_screenshot,
     screenshot_dir,
 )
-from .bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
-from .bookmark_form import bookmark_form_panel
 
 __all__ = [
     "load_snapshots",

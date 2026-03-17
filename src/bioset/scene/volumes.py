@@ -2,20 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence, Tuple
-import numpy as np
+from typing import Tuple
 
-from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
+import dask.array as da
+import numpy as np
+from ome_zarr.io import parse_url
+from vtkmodules.util.numpy_support import numpy_to_vtk
 from vtkmodules.vtkCommonColor import vtkNamedColors
+from vtkmodules.vtkCommonDataModel import vtkImageData
+from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
 from vtkmodules.vtkIOImage import vtkTIFFReader
 from vtkmodules.vtkImagingCore import vtkImageChangeInformation
 from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
-from vtkmodules.vtkRenderingVolume import vtkFixedPointVolumeRayCastMapper, vtkGPUVolumeRayCastMapper
-from vtkmodules.vtkCommonDataModel import vtkImageData
-from vtkmodules.util.numpy_support import numpy_to_vtk
-
-import dask.array as da
-from ome_zarr.io import parse_url
+from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
 
 # Default tint if none provided
 DEFAULT_TINT_RGB = (0.2, 0.8, 1.0)

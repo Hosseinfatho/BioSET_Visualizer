@@ -8,19 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from .snapshot_io import (
-    load_snapshot_by_name,
-    save_snapshot,
-    snapshot_names,
-    snapshot_categories,
-    load_snapshots_by_category,
-    delete_snapshot_by_name,
-    delete_snapshot_in_category,
-    save_screenshot,
-    thumbnail_path,
-    thumbnail_path_or_fallback,
-    save_thumbnail,
-)
+from bioset.scene.volumes import build_tf_with_range
 from .ov_snapshot_io import (
     ov_save_snapshot,
     ov_snapshot_names,
@@ -28,7 +16,17 @@ from .ov_snapshot_io import (
     ov_load_snapshot_by_name,
     ov_load_snapshots_by_category,
 )
-from bioset.scene.volumes import build_tf_with_range
+from .snapshot_io import (
+    load_snapshot_by_name,
+    save_snapshot,
+    snapshot_names,
+    snapshot_categories,
+    load_snapshots_by_category,
+    delete_snapshot_in_category,
+    save_screenshot,
+    thumbnail_path_or_fallback,
+    save_thumbnail,
+)
 
 
 def capture_screenshot_png_bytes(streamer):
@@ -262,7 +260,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         """Load unique categories for current dataset into dropdown."""
         dataset_id = _bookmark_dataset_id()
         state.bookmark_categories = snapshot_categories(dataset_id)
-        if not getattr(state, "bookmark_selected_category", None) or state.bookmark_selected_category not in state.bookmark_categories:
+        if not getattr(state, "bookmark_selected_category",
+                       None) or state.bookmark_selected_category not in state.bookmark_categories:
             state.bookmark_selected_category = (state.bookmark_categories or ["Uncategorized"])[0]
 
     def bookmark_refresh_list():
@@ -466,7 +465,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         """Load OV category list into dropdown."""
         dataset_id = _bookmark_dataset_id()
         state.ov_bookmark_categories = ov_snapshot_categories(dataset_id) or ["Uncategorized"]
-        if not getattr(state, "ov_bookmark_selected_category", None) or state.ov_bookmark_selected_category not in (state.ov_bookmark_categories or []):
+        if not getattr(state, "ov_bookmark_selected_category", None) or state.ov_bookmark_selected_category not in (
+                state.ov_bookmark_categories or []):
             state.ov_bookmark_selected_category = (state.ov_bookmark_categories or ["Uncategorized"])[0]
 
     def ov_bookmark_refresh_names():
@@ -619,7 +619,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                     nov_data = views[0].get("nov_view")
             if not nov_data:
                 continue
-            fp = nov_data.get("lens_center") or nov_data.get("box_center") or (nov_data.get("camera") or {}).get("focalPoint")
+            fp = nov_data.get("lens_center") or nov_data.get("box_center") or (nov_data.get("camera") or {}).get(
+                "focalPoint")
             if not fp or len(fp) < 3:
                 continue
             title = snap.get("title") or snap.get("id") or "Unnamed"
@@ -770,7 +771,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                 fp = cam.get("focalPoint")
                 if not fp or len(fp) < 3:
                     continue
-                view0 = {"camera": cam, "notes": snap.get("notes") or "", "channels": snap.get("channels") or [], "active_channels": snap.get("active_channels") or []}
+                view0 = {"camera": cam, "notes": snap.get("notes") or "", "channels": snap.get("channels") or [],
+                         "active_channels": snap.get("active_channels") or []}
             else:
                 view0 = views[0] if isinstance(views[0], dict) else {}
                 cam = view0.get("camera") or {}
@@ -1059,7 +1061,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                 w, h = rw.GetSize()
                 viewport = {"width": w, "height": h}
         bg = getattr(state, "bg_color", "#000000") or "#000000"
-        out = {"camera": camera, "optional_lod": optional_lod, "channels": channels_data, "active_channels": active, "viewport": viewport, "background": bg}
+        out = {"camera": camera, "optional_lod": optional_lod, "channels": channels_data, "active_channels": active,
+               "viewport": viewport, "background": bg}
         if use_nov and getattr(state, "nov_lens_center", None) and len(state.nov_lens_center) >= 3:
             out["nov_view"] = {
                 "camera": dict(camera),
@@ -1075,19 +1078,25 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         cap = _bookmark_capture_view()
         state.bookmark_capture_from_nov = False
-        form_name = (form_name if form_name is not None else getattr(state, "bookmark_form_name", None) or getattr(state, "bookmark_selected_name", None) or "")
+        form_name = (
+            form_name if form_name is not None else getattr(state, "bookmark_form_name", None) or getattr(state,
+                                                                                                          "bookmark_selected_name",
+                                                                                                          None) or "")
         if not isinstance(form_name, str):
             form_name = str(form_name or "")
         title = form_name.strip() or "Unnamed"
-        category = (form_category if form_category is not None else getattr(state, "bookmark_form_category", None) or "")
+        category = (
+            form_category if form_category is not None else getattr(state, "bookmark_form_category", None) or "")
         if not isinstance(category, str):
             category = str(category or "")
         category = category.strip() or "Uncategorized"
         comments = []
-        new_comment = form_new_comment if form_new_comment is not None else getattr(state, "bookmark_form_new_comment", "")
+        new_comment = form_new_comment if form_new_comment is not None else getattr(state, "bookmark_form_new_comment",
+                                                                                    "")
         if isinstance(new_comment, str) and new_comment.strip():
             comments.append({"date": now, "text": new_comment.strip()})
-        notes = form_description if (form_description is not None and isinstance(form_description, str)) else (getattr(state, "bookmark_form_description", "") or "")
+        notes = form_description if (form_description is not None and isinstance(form_description, str)) else (
+                    getattr(state, "bookmark_form_description", "") or "")
         view0 = {
             "camera": cap["camera"],
             "notes": notes,
@@ -1259,13 +1268,15 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             return
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         snap["updated"] = now
-        views = snap.get("views") or [{"camera": snap.get("camera"), "notes": snap.get("notes") or "", "comments": snap.get("comments") or []}]
+        views = snap.get("views") or [
+            {"camera": snap.get("camera"), "notes": snap.get("notes") or "", "comments": snap.get("comments") or []}]
         idx = max(0, min(getattr(state, "bookmark_current_view_index", 0), len(views) - 1))
         views[idx].setdefault("comments", []).append({"date": now, "text": new_comment})
         snap["views"] = views
         snap["comments"] = views[0].get("comments", [])
         save_snapshot(snap, dataset_id)
-        state.bookmark_display_snapshot = {**disp, "comments": views[idx].get("comments", []), "updated": now, "views": views}
+        state.bookmark_display_snapshot = {**disp, "comments": views[idx].get("comments", []), "updated": now,
+                                           "views": views}
         state.bookmark_edit_comment = ""
 
     def _capture_screenshot_png_bytes():

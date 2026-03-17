@@ -1,15 +1,14 @@
 # app.py
 from __future__ import annotations
 
-from pathlib import Path
-
-from trame.app import get_server
-from dotenv import load_dotenv
-
 import argparse
 import asyncio
-import sys
 import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+from trame.app import get_server
 
 load_dotenv()
 
@@ -134,6 +133,8 @@ def main():
         ctrl.setup_right_click_picker(scene.interactor)
     if scene.heatmap_lod is not None:
         ctrl.set_heatmap_lod(scene.heatmap_lod)
+
+    ctrl.get_available_llms()
 
     server.start()
 

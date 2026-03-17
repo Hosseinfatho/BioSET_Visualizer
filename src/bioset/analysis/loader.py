@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
 import gzip
 import json
+import sqlite3
 import tempfile
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 
@@ -184,7 +184,7 @@ class AnalysisLoader:
         cache_key = hierarchy_level
         if cache_key in self._total_tiles_cache:
             return self._total_tiles_cache[cache_key]
-        
+
         total = 0
         try:
             # Try channel_stats first (most reliable — every tile should appear)
@@ -384,7 +384,7 @@ class AnalysisLoader:
         
         if total_volume == 0:
             return []
-        
+
         try:
             cursor = self._conn.execute('''
                 SELECT 

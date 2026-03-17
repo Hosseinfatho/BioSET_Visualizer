@@ -1,25 +1,22 @@
 from __future__ import annotations
 
+import queue
 import threading
 import time
-import queue
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Callable
+
 import numpy as np
-
-import dask.array as da
-
-from vtkmodules.vtkCommonDataModel import vtkImageData
 from vtkmodules.util.numpy_support import numpy_to_vtk
+from vtkmodules.vtkCommonDataModel import vtkImageData
+from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
+from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
+from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
 
 from .lod import ROI, camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
 from .zarr_source import ZarrMultiscaleSource
 from ..scene.volumes import SpacingConfig, color_name_to_rgb, build_histogram_tf, build_tf_with_range
-
-from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
-from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
-from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
 
 
 @dataclass
@@ -91,8 +88,8 @@ class VolumeStreamer:
         self._initial_camera: Optional[dict] = None  # position, focalPoint, viewUp after first load
 
         self._active_channels: set[int] = set() 
-        self._channel_colors: Dict[int, Tuple[float, float, float]] = {} 
-        
+        self._channel_colors: Dict[int, Tuple[float, float, float]] = {}
+
         self._channel_data_range: Dict[int, Tuple[float, float]] = {}
         self._channel_histograms: Dict[int, list] = {}
 
@@ -433,12 +430,12 @@ class VolumeStreamer:
         self._render()
 
     def load_channel_at_lod(
-        self,
-        channel_id: int,
-        color_hex: str,
-        component: int,
-        roi_dict: dict,
-        reset_camera: bool = False,
+            self,
+            channel_id: int,
+            color_hex: str,
+            component: int,
+            roi_dict: dict,
+            reset_camera: bool = False,
     ) -> None:
         """Load one channel at exact LOD (component and roi). Used when restoring a bookmark snapshot."""
         roi = ROI(
@@ -694,10 +691,10 @@ class VolumeStreamer:
             return False
 
     def prepare_nov_scoring(
-        self,
-        bounds_world: Tuple[float, float, float, float, float, float],
-        component: int,
-        channel_ids: Optional[List[int]] = None,
+            self,
+            bounds_world: Tuple[float, float, float, float, float, float],
+            component: int,
+            channel_ids: Optional[List[int]] = None,
     ) -> None:
         """Load the 3D region given by bounds_world at component and cache for sample_nov_ray_channels / sample_nov_ray_channels_occlusion.
         World bounds = (xmin, xmax, ymin, ymax, zmin, zmax). Per-channel p10/p99 for normalization.
@@ -764,9 +761,9 @@ class VolumeStreamer:
 
     @staticmethod
     def _ray_aabb_tnear_tfar(
-        ray_origin: Tuple[float, float, float],
-        ray_dir: Tuple[float, float, float],
-        bounds: Tuple[float, float, float, float, float, float],
+            ray_origin: Tuple[float, float, float],
+            ray_dir: Tuple[float, float, float],
+            bounds: Tuple[float, float, float, float, float, float],
     ) -> Tuple[Optional[float], Optional[float]]:
         """Ray-AABB intersection. Returns (t_near, t_far) for ray P(t)=ray_origin+t*ray_dir, or (None, None) if no hit."""
         x0, x1, y0, y1, z0, z1 = bounds
@@ -794,11 +791,11 @@ class VolumeStreamer:
         return (tnear, tfar)
 
     def sample_nov_ray_channels(
-        self,
-        ray_origin: Tuple[float, float, float],
-        ray_dir: Tuple[float, float, float],
-        bounds: Tuple[float, float, float, float, float, float],
-        num_samples: int = 64,
+            self,
+            ray_origin: Tuple[float, float, float],
+            ray_dir: Tuple[float, float, float],
+            bounds: Tuple[float, float, float, float, float, float],
+            num_samples: int = 64,
     ) -> List[float]:
         """Integrate along ray inside bounds; return per-channel energy (normalized with p10/p99, bottom 10% set to 0).
         Returns list of length len(active_channels) in same order as prepare_nov_scoring cache."""
@@ -844,15 +841,15 @@ class VolumeStreamer:
         return energies
 
     def sample_nov_ray_channels_occlusion(
-        self,
-        ray_origin: Tuple[float, float, float],
-        ray_dir: Tuple[float, float, float],
-        bounds: Tuple[float, float, float, float, float, float],
-        channel_ids: Optional[List[int]] = None,
-        presence_thresh: float = 0.05,
-        num_samples: int = 64,
-        step_scale: float = 0.15,
-        eps: float = 1e-12,
+            self,
+            ray_origin: Tuple[float, float, float],
+            ray_dir: Tuple[float, float, float],
+            bounds: Tuple[float, float, float, float, float, float],
+            channel_ids: Optional[List[int]] = None,
+            presence_thresh: float = 0.05,
+            num_samples: int = 64,
+            step_scale: float = 0.15,
+            eps: float = 1e-12,
     ) -> List[float]:
         """Front-to-back ray march with occlusion; return per-object visibility Vis(o) for each channel (object).
         Normalized intensity below presence_thresh is treated as 0. T(r,i) = prod(1-alpha(r,j)) for j<i;
@@ -1046,7 +1043,7 @@ class VolumeStreamer:
         np_vol_zyx: np.ndarray,
         spacing: SpacingConfig,
         origin_xyz: Tuple[float, float, float],
-        for_nov_view: bool = False,
+            for_nov_view: bool = False,
     ) -> vtkImageData:
         """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only)."""
         np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)

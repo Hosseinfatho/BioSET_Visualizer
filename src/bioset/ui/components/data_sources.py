@@ -15,6 +15,7 @@ def data_sources_section(state, ctrl):
     with vuetify.VList(dense=True, nav=True):
         with vuetify.VListItem(
             class_=("data_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                classes="mb-0",
             link=True,
             ripple=True,
             click=toggle_data,
@@ -22,13 +23,16 @@ def data_sources_section(state, ctrl):
             with vuetify.VListItemIcon():
                 with vuetify.VTooltip(right=True, disabled=("!drawer_mini",)):
                     with html.Template(v_slot_activator="{ on, attrs }"):
-                        vuetify.VIcon("mdi-database-outline", style="font-size: 40px;", v_bind="attrs", v_on="on")
+                        vuetify.VIcon("mdi-database-outline", style="font-size: 30px;", v_bind="attrs", v_on="on")
                     html.Span("Data Sources")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Data Sources", classes="text-overline")
         
         with vuetify.VExpandTransition():
-            with html.Div(v_show=("data_open", False)):
+            with html.Div(
+                    v_show=("data_open", False),
+                    classes="mt-1",
+            ):
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemIcon(v_if="drawer_mini"):
                         with vuetify.VTooltip(right=True):
@@ -96,21 +100,22 @@ def data_sources_section(state, ctrl):
                     
                         
                 with html.Div(v_if="!drawer_mini && data_loaded"):
-                    vuetify.VDivider(classes="mb-4")
-                    vuetify.VFileInput(
-                        classes="nav-item nav-item--nested mt-4",
-                        label="Analysis results (.bioset)",
-                        accept=".bioset",
-                        chips=True,
-                        small_chips=True,
-                        prepend_icon="mdi-chart-box-outline",
-                        loading=("analysis_loading", False),
-                        disabled=("analysis_loading", False),
-                        dense=True,
-                        hide_details=True,
-                        __events=["change"],
-                        change=(ctrl.load_analysis_file, "[$event]"),
-                    )
+                    vuetify.VDivider()
+                    with vuetify.VListItem(class_="nav-item nav-item--nested"):
+                        vuetify.VFileInput(
+                            classes="nav-item nav-item--nested mt-4",
+                            label="Analysis results (.bioset)",
+                            accept=".bioset",
+                            chips=True,
+                            small_chips=True,
+                            prepend_icon="mdi-chart-box-outline",
+                            loading=("analysis_loading", False),
+                            disabled=("analysis_loading", False),
+                            dense=True,
+                            hide_details=True,
+                            __events=["change"],
+                            change=(ctrl.load_analysis_file, "[$event]"),
+                        )
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
                         with vuetify.VListItemContent():
                             # Show loaded status
@@ -119,7 +124,7 @@ def data_sources_section(state, ctrl):
                                 html.Span("{{ analysis_file_name }}",classes="text-truncate text-center", style="font-size: 10px; color: #9e9e9e;")
                             
                             with vuetify.VCard(
-                                class_="text-center mt-2",
+                                    classes="text-center pa-1",
                                 v_if="!analysis_loaded",
                             ):
                                 html.A(

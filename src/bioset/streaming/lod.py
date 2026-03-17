@@ -50,12 +50,12 @@ def choose_component(distance: float, rules, *, min_component: int, max_componen
 
 
 def scale_roi_to_component(
-    roi_dict: dict,
-    from_component: int,
-    to_component: int,
-    *,
-    x_dim: int | None = None,
-    y_dim: int | None = None,
+        roi_dict: dict,
+        from_component: int,
+        to_component: int,
+        *,
+        x_dim: int | None = None,
+        y_dim: int | None = None,
 ) -> dict:
     """
     Convert ROI from one LOD component to another (voxel coordinates).
@@ -108,7 +108,7 @@ def compute_visible_xy_roi_vox(
     x_dim: int,
     y_dim: int,
     margin_vox: int = 0,
-    display_samples: int = 2,
+        display_samples: int = 2,
 ) -> ROI:
     """
     Estimate visible XY region by casting rays from display points into the volume.

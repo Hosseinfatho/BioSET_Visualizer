@@ -2,40 +2,86 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
-    "id": { "type": "string" },
-    "url": { "type": "string" },
-    "created": { "type": "string" },
-    "updated": { "type": "string" },
-    "title": { "type": "string" },
+    "id": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "created": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
     "notes": {
       "type": "string",
       "description": "Free text, summary, or report body. Exportable."
     },
-    "tags": { "type": "array", "items": { "type": "string" } },
-    "bookmark": { "type": "boolean" },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "bookmark": {
+      "type": "boolean"
+    },
     "camera": {
       "type": "object",
       "properties": {
-        "position": { "type": "array", "items": { "type": "number" } },
-        "focalPoint": { "type": "array", "items": { "type": "number" } },
-        "viewUp": { "type": "array", "items": { "type": "number" } }
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "focalPoint": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "viewUp": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
       }
     },
-    "channels": { "type": "array" },
-    "active_channels": { "type": "array" },
-    "background": { "type": "string" },
+    "channels": {
+      "type": "array"
+    },
+    "active_channels": {
+      "type": "array"
+    },
+    "background": {
+      "type": "string"
+    },
     "viewport": {
       "type": "object",
       "properties": {
-        "width": { "type": "integer" },
-        "height": { "type": "integer" }
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        }
       }
     },
     "optional_LOD": {
       "type": "object",
       "properties": {
-        "component": { "type": "integer" },
-        "roi": { "type": "object" }
+        "component": {
+          "type": "integer"
+        },
+        "roi": {
+          "type": "object"
+        }
       }
     },
     "views": {
@@ -47,21 +93,62 @@
           "camera": {
             "type": "object",
             "properties": {
-              "position": { "type": "array", "items": { "type": "number" } },
-              "focalPoint": { "type": "array", "items": { "type": "number" } },
-              "viewUp": { "type": "array", "items": { "type": "number" } }
+              "position": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "focalPoint": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "viewUp": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
             }
           },
-          "notes": { "type": "string" },
-          "comments": { "type": "array" },
-          "channels": { "type": "array", "description": "Active channels: id, name, color, range (filter/transfer function)." },
-          "active_channels": { "type": "array" },
-          "background": { "type": "string" },
-          "viewport": { "type": "object", "properties": { "width": { "type": "integer" }, "height": { "type": "integer" } } }
+          "notes": {
+            "type": "string"
+          },
+          "comments": {
+            "type": "array"
+          },
+          "channels": {
+            "type": "array",
+            "description": "Active channels: id, name, color, range (filter/transfer function)."
+          },
+          "active_channels": {
+            "type": "array"
+          },
+          "background": {
+            "type": "string"
+          },
+          "viewport": {
+            "type": "object",
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              }
+            }
+          }
         }
       }
     },
-    "groups": { "type": "array", "items": { "type": "string" } },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "meta": {
       "type": "object",
       "description": "Optional: report items (e.g. report_items: [{ text, image }]), thumbnails, images. For summaries and exportable reports."

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from trame.widgets import vtk, vuetify, html
+
 from bioset.bookmark import bookmark_form_panel  # noqa: F401 - for ctrl ref in popup
 
 
@@ -53,10 +54,10 @@ def viewer(ctrl, render_window):
                 "nov_dragging = false"
             )
             with html.Div(
-                v_show=("nov_show_rect", False),
-                class_="nov-rect-overlay",
-                style=_overlay_style,
-                v_on={"mousemove": _mousemove, "mouseup": _mouseup},
+                    v_show=("nov_show_rect", False),
+                    class_="nov-rect-overlay",
+                    style=_overlay_style,
+                    v_on={"mousemove": _mousemove, "mouseup": _mouseup},
             ):
                 _lens_left = "(nov_dragging ? (nov_drag_start_rect_x + nov_drag_delta_x) : nov_rect_x) * 100"
                 _lens_bottom = "(nov_dragging ? (nov_drag_start_rect_y + nov_drag_delta_y) : nov_rect_y) * 100"
@@ -66,9 +67,9 @@ def viewer(ctrl, render_window):
                 )
                 _start_drag = "if(window.novStartDrag){ $event.preventDefault(); $event.stopPropagation(); window.novStartDrag($event); }"
                 with html.Div(
-                    class_="nov-rect-lens",
-                    style=_lens_style,
-                    mousedown=_start_drag,
+                        class_="nov-rect-lens",
+                        style=_lens_style,
+                        mousedown=_start_drag,
                 ):
                     html.Div(
                         class_="nov-rect-drag-handle",
@@ -77,8 +78,8 @@ def viewer(ctrl, render_window):
                     _btn = "cursor: pointer; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.95);"
                     _pm = "width: 24px; height: 24px; font-size: 0.95rem; font-weight: bold; " + _btn
                     with html.Div(
-                        class_="nov-rect-controls",
-                        style="position: absolute; top: 0; right: 0; transform: translateX(100%); margin-left: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; background: rgba(0,0,0,0.4); border-radius: 8px; padding: 5px; pointer-events: auto; z-index: 1;",
+                            class_="nov-rect-controls",
+                            style="position: absolute; top: 0; right: 0; transform: translateX(100%); margin-left: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; background: rgba(0,0,0,0.4); border-radius: 8px; padding: 5px; pointer-events: auto; z-index: 1;",
                     ):
                         with html.Div(style=_pm, click=ctrl.nov_rect_size_minus):
                             html.Span("−")
@@ -98,15 +99,17 @@ def viewer(ctrl, render_window):
                 )
             # Flag popup: position absolute so it appears near the flag (same coord system as VTK render window)
             with html.Div(
-                v_show=("bookmark_flag_popup", False),
-                class_="bookmark-flag-popup-near-flag",
-                style=(
-                    "'position: absolute; z-index: 400; left: ' + (bookmark_flag_popup_left || 0) + 'px; top: ' + (bookmark_flag_popup_top || 0) + 'px; transform: translateY(-100%); min-width: 200px; max-width: 320px; padding: 10px 12px; border-radius: 6px; background: rgba(0,0,0,0.9); color: #fff; font-size: 1rem; box-shadow: 0 2px 12px rgba(0,0,0,0.4); white-space: pre-wrap; word-break: break-word; line-height: 1.1; pointer-events: auto;'",
-                ),
+                    v_show=("bookmark_flag_popup", False),
+                    class_="bookmark-flag-popup-near-flag",
+                    style=(
+                            "'position: absolute; z-index: 400; left: ' + (bookmark_flag_popup_left || 0) + 'px; top: ' + (bookmark_flag_popup_top || 0) + 'px; transform: translateY(-100%); min-width: 200px; max-width: 320px; padding: 10px 12px; border-radius: 6px; background: rgba(0,0,0,0.9); color: #fff; font-size: 1rem; box-shadow: 0 2px 12px rgba(0,0,0,0.4); white-space: pre-wrap; word-break: break-word; line-height: 1.1; pointer-events: auto;'",
+                    ),
             ):
-                with html.Div(v_html=("bookmark_flag_popup_html", ""), style="color: #fff; font-size: 1rem; line-height: 1.2; margin: 0; padding: 0;"):
+                with html.Div(v_html=("bookmark_flag_popup_html", ""),
+                              style="color: #fff; font-size: 1rem; line-height: 1.2; margin: 0; padding: 0;"):
                     pass
-                with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_close_flag_popup, style="position: absolute; top: 4px; right: 4px; color: #fff;"):
+                with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_close_flag_popup,
+                                  style="position: absolute; top: 4px; right: 4px; color: #fff;"):
                     vuetify.VIcon("mdi-close", x_small=True)
         
         with vuetify.VBtn(

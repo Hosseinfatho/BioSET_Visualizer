@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+import os
+import tempfile
 
-from bioset.llm import BiomniLocalClient
-from .state import get_channel_color
-from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+import requests
+
 from bioset.NOV import register_nov_callbacks
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+from bioset.llm import BiomniLocalClient
+from bioset.scene.volumes import build_tf_with_range
+from .state import get_channel_color
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -26,7 +30,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "analysis_loader": None,
         "heatmap": None,
         "mesh_manager": None,
-        "heatmap_lod": None,
         "heatmap_lod": None,
         "interactor": None,
     }
@@ -134,7 +137,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 state.bookmark_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
             except Exception:
                 state.bookmark_dataset_id = "default"
-            
+
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
             
@@ -243,7 +246,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_sphere_xy = []
         if hasattr(ctrl, "nov_hide_lens"):
             ctrl.nov_hide_lens()
-    
+
         if _refs["view"]:
             _refs["view"].update()
         
@@ -974,19 +977,36 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def _get_biomni_client():
         """Get or create the local Biomni client."""
+        url = f"http://localhost:{state.biomni_port}"
+
         if _refs["biomni_client"] is None:
-            _refs["biomni_client"] = BiomniLocalClient()
+            _refs["biomni_client"] = BiomniLocalClient(base_url=url)
         return _refs["biomni_client"]
+
+    def get_available_llms():
+        try:
+            client = _get_biomni_client()
+            models = client.get_models()
+            if models:
+                state.biomni_available_models = models
+                if state.biomni_model not in models:
+                    state.biomni_model = models[0]
+        except Exception:
+            pass
 
     def chatbot_login():
         """Initialise the Biomni agent on the local server."""
-        print("[callbacks] Biomni init requested")
+        print(f"[callbacks] Biomni init requested with llm {state.biomni_model} and mode {state.biomni_mode}")
         state.chatbot_loading = True
 
         try:
             import os
             client = _get_biomni_client()
-            client.init(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            client.init(
+                llm=state.biomni_model,
+                mode=state.biomni_mode,
+                api_key=os.getenv("ANTHROPIC_API_KEY")
+            )
             state.chatbot_authenticated = True
             state.chatbot_messages = []
             print("[callbacks] Biomni initialised successfully")
@@ -998,6 +1018,29 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_messages = [{"role": "error", "content": error_msg}]
         finally:
             state.chatbot_loading = False
+
+    def biomni_add_data(file_info):
+        print(f"[callbacks] Received file upload for Biomni Add Data ({len(file_info)} bytes)")
+
+        try:
+            file_name = file_info.get("name", "upload")
+            file_content = file_info.get("content")
+
+            _, ext = os.path.splitext(file_name)
+
+            fd, temp_path = tempfile.mkstemp(prefix="biomni_file_upload_", suffix=ext)
+            with os.fdopen(fd, 'wb') as f:
+                f.write(file_content)
+
+            print(f"[callbacks] Wrote upload '{file_name}' to {temp_path}")
+
+            client = _get_biomni_client()
+            url = f"{client.base_url}/custom-data"
+            requests.post(url, json={"filepath": temp_path})
+
+        except Exception as e:
+            print(f"[callbacks] Error processing file upload: {e}")
+
 
     def _build_markers() -> list[str]:
         """Build the markers list from active channels and their colors."""
@@ -1459,9 +1502,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_bar_data = update_bar_data
     ctrl.update_bar_data_local = update_bar_data_local
     ctrl.chatbot_login = chatbot_login
+    ctrl.biomni_add_data = biomni_add_data
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_clear = chatbot_clear
+    ctrl.get_available_llms = get_available_llms
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
