@@ -66,13 +66,13 @@ def bookmark_column(state, ctrl):
                             v_for=("(item, idx) in bookmark_list_items",),
                             key=("item.name",),
                             class_="bookmark-list-item",
-                            style="display: flex; flex-direction: row; align-items: flex-start; padding: 4px 2px; margin: 0; border-radius: 0; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.2); gap: 0;",
-                            click=(ctrl.bookmark_thumbnail_single_click, "[item.name]"),
-                            dblclick=(ctrl.bookmark_thumbnail_double_click, "[item.name]"),
+                            style="display: flex; flex-direction: row; align-items: flex-start; padding: 4px 2px; margin: 0; border-radius: 0; border-bottom: 1px solid rgba(255,255,255,0.2); gap: 0;",
                     ):
                         # Thumbnail: 10% larger than 72px = 79px
                         with html.Div(class_="bookmark-thumb-wrap",
-                                      style="position: relative; width: 79px; height: 79px; flex-shrink: 0; border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.06); margin: 0;"):
+                                      click=(ctrl.bookmark_thumbnail_single_click, "[item.name]"),
+                                      dblclick=(ctrl.bookmark_thumbnail_double_click, "[item.name]"),
+                                      style="position: relative; width: 79px; height: 79px; flex-shrink: 0; border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.06); margin: 0; cursor: pointer;"):
                             html.Img(
                                 v_show=("item.thumbnail", True),
                                 v_bind_src=("item.thumbnail",),
@@ -90,9 +90,22 @@ def bookmark_column(state, ctrl):
                                 class_="bookmark-item-name",
                                 style="font-size: 0.9rem; font-weight: 600; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;",
                                 v_text=("item.name",),
+                                click=(ctrl.bookmark_thumbnail_single_click, "[item.name]"),
+                                dblclick=(ctrl.bookmark_thumbnail_double_click, "[item.name]"),
                             )
                             html.Div(
                                 class_="bookmark-item-desc",
                                 style="font-size: 0.8rem; color: #ffffff; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;",
                                 v_text=("item.description || '—'",),
+                                click=(ctrl.bookmark_thumbnail_single_click, "[item.name]"),
+                                dblclick=(ctrl.bookmark_thumbnail_double_click, "[item.name]"),
                             )
+                            # Last row after description: Delete button (does not trigger open)
+                            with html.Div(style="display: flex; justify-content: flex-end; margin-top: 6px;"):
+                                with vuetify.VBtn(
+                                        icon=True,
+                                        x_small=True,
+                                        color="error",
+                                        click=(ctrl.bookmark_delete_snapshot, "[item.name, item.category]"),
+                                ):
+                                    vuetify.VIcon("mdi-delete", small=True)

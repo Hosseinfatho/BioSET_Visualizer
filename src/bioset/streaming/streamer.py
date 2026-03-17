@@ -1315,8 +1315,27 @@ class VolumeStreamer:
         This runs on main thread.
         Returns the desired component (for heatmap LOD to consume).
         """
+        # Defensive: some zoom/scroll interactions can push the camera clipping range
+        # into an invalid state (everything clipped => black screen). Resetting here
+        # is cheap and keeps interaction stable.
+        try:
+            self.renderer.ResetCameraClippingRange()
+            self._render()
+        except Exception:
+            pass
+
         cam = self.renderer.GetActiveCamera()
         dist = camera_distance_to_focal(cam)
+        try:
+            import math
+            if dist is None or (isinstance(dist, (int, float)) and (not math.isfinite(dist) or dist <= 1e-6)):
+                # If distance becomes degenerate, recover by resetting camera.
+                self.renderer.ResetCamera()
+                self.renderer.ResetCameraClippingRange()
+                self._render()
+                dist = camera_distance_to_focal(self.renderer.GetActiveCamera())
+        except Exception:
+            pass
 
         desired_comp = choose_component(
             dist,

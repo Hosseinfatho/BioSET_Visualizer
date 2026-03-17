@@ -17,7 +17,13 @@ _BTN = dict(style="background: rgba(0,0,0,0.4); color: #fff;")
 
 
 def bookmark_form_panel(state, ctrl):
-    with html.Div(style="position: fixed; left: 260px; bottom: 16px; z-index: 200; max-width: 380px; color: #fff;"):
+    # Position next to left drawer (same offset as bookmark column: drawer width + 8px)
+    with html.Div(
+            style=(
+                "'position: fixed; left: ' + ((left_drawer_width_px || 350) + 8) + 'px; bottom: 16px; z-index: 200; max-width: 380px; color: #fff;'",
+                "position: fixed; left: 358px; bottom: 16px; z-index: 200; max-width: 380px; color: #fff;",
+            ),
+    ):
         with html.Div(v_show=("bookmark_form_dialog", False)):
             with html.Div(style=_FORM):
                 vuetify.VTextField(

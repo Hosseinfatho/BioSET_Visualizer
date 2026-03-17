@@ -160,6 +160,22 @@ def delete_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> boo
     return False
 
 
+def delete_thumbnail_in_category(category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> bool:
+    """Remove thumbnail PNG for a bookmark: recordings/<category>/<safe_title>.png.
+
+    Note: we intentionally do NOT delete any fallback thumbnail (e.g., <category>.png).
+    Returns True if the specific thumbnail file was deleted.
+    """
+    try:
+        path = thumbnail_path(category, title, dataset_id)
+        if path.exists():
+            path.unlink()
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -> None:
     """Save snapshot to recordings/<category>/<name>.json. Empty category → Uncategorized folder."""
     rec = _recordings_dir(dataset_id)

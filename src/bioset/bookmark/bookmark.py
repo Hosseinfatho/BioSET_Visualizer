@@ -24,6 +24,7 @@ from .snapshot_io import (
     load_snapshots_by_category,
     delete_snapshot_in_category,
     save_screenshot,
+    delete_thumbnail_in_category,
     thumbnail_path_or_fallback,
     save_thumbnail,
 )
@@ -273,7 +274,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         items = []
         for s in snapshots:
             title = (s.get("title") or s.get("id") or "").strip() or "Unnamed"
-            cat = (s.get("category") or s.get("_folder") or "").strip() or "Uncategorized"
+            # Prefer folder name (actual path) so delete works even if JSON category differs from folder-safe name
+            cat = (s.get("_folder") or s.get("category") or "").strip() or "Uncategorized"
             # Description in front of thumbnail: use "description" from the related JSON file only
             desc = (s.get("description") or "").strip()
             if not isinstance(desc, str):
@@ -1253,6 +1255,57 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         state.bookmark_edit_category = (snap.get("category") or "").strip() or ""
         state.bookmark_edit_comment = ""
 
+    def bookmark_delete_snapshot(name=None, category=None):
+        """Delete a bookmark snapshot JSON and its specific thumbnail, then refresh list."""
+        title = (name or "").strip() if isinstance(name, str) else str(name or "").strip()
+        if not title:
+            return
+        dataset_id = _bookmark_dataset_id()
+        cat = (category or "").strip() if isinstance(category, str) else str(category or "").strip()
+        if not cat:
+            cat = getattr(state, "bookmark_selected_category", None) or "Uncategorized"
+        cat = (cat or "").strip() or "Uncategorized"
+        deleted_json = False
+        try:
+            deleted_json = delete_snapshot_in_category(title, dataset_id, cat)
+        except Exception:
+            deleted_json = False
+        try:
+            delete_thumbnail_in_category(cat, title, dataset_id)
+        except Exception:
+            pass
+
+        # If not found in that category (e.g., mismatch between folder and JSON category), try by loading.
+        if not deleted_json:
+            try:
+                snap = load_snapshot_by_name(title, dataset_id)
+                if snap:
+                    snap_cat = (snap.get("category") or snap.get("_folder") or cat).strip() or cat
+                    try:
+                        delete_snapshot_in_category(title, dataset_id, snap_cat)
+                    except Exception:
+                        pass
+                    try:
+                        delete_thumbnail_in_category(snap_cat, title, dataset_id)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # UI state cleanup
+        disp = getattr(state, "bookmark_display_snapshot", None)
+        if disp and (disp.get("title") or "").strip() == title:
+            state.bookmark_display_snapshot = None
+            state.bookmark_form_minimized = False
+        if getattr(state, "bookmark_flag_popup", None) and (getattr(state, "bookmark_flag_popup", {}) or {}).get("name") == title:
+            bookmark_close_flag_popup()
+
+        bookmark_refresh_names()
+        bookmark_refresh_categories()
+        bookmark_refresh_list()
+        if _refs.get("view"):
+            _refs["view"].update()
+
     def bookmark_comment():
         """Append current comment to the current view and save."""
         disp = getattr(state, "bookmark_display_snapshot", None)
@@ -1330,6 +1383,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     ctrl.bookmark_export_screenshot_save = bookmark_export_screenshot_save
     ctrl.bookmark_comment = bookmark_comment
     ctrl.bookmark_update_snapshot = bookmark_update_snapshot
+    ctrl.bookmark_delete_snapshot = bookmark_delete_snapshot
     # OV-specific controls (Optimal View-only bookmarks)
     ctrl.ov_bookmark_refresh_categories = ov_bookmark_refresh_categories
     ctrl.ov_bookmark_refresh_names = ov_bookmark_refresh_names
