@@ -1,13 +1,15 @@
 # vtk_scene.py
 from __future__ import annotations
 
+import math
 import sys
 from dataclasses import dataclass
 from typing import Optional
 
-import math
-
 from vtkmodules.vtkCommonColor import vtkNamedColors
+from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
+from vtkmodules.vtkFiltersSources import vtkArrowSource
+from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa
 from vtkmodules.vtkRenderingCore import (
     vtkRenderer,
     vtkRenderWindow,
@@ -15,9 +17,7 @@ from vtkmodules.vtkRenderingCore import (
     vtkActor,
     vtkPolyDataMapper,
 )
-from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa
-from vtkmodules.vtkFiltersSources import vtkArrowSource
-from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
+
 try:
     from vtkmodules.vtkCommonTransforms import vtkTransform
 except ImportError:
@@ -27,13 +27,11 @@ import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
 import vtkmodules.vtkRenderingVolumeOpenGL2  # noqa: F401
 
 from ..config import VolumeConfig
-from .volumes import SpacingConfig, make_volume_from_tiff, make_volume_from_zarr_s3, color_name_to_rgb
+from .volumes import SpacingConfig, make_volume_from_tiff, color_name_to_rgb
 from ..streaming import VolumeStreamer
 from ..streaming.heatmap_lod import HeatmapLOD
-from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
 from .meshes import MeshManager
-
 
 # Axis length (smaller = smaller arrows) and camera distance (larger = more margin, no clipping when rotating).
 NOV_AXIS_LENGTH = 0.5
@@ -99,9 +97,9 @@ def _create_nov_axis_renderer(nov_renderer, nov_render_window, streamer):
     # Labels at end of each arrow (X, Y, Z).
     label_dist = NOV_AXIS_LENGTH * 1.15
     for actor in (
-        _make_axis_label("X", label_dist, 0, 0, 1.0, 0.0, 0.0),
-        _make_axis_label("Y", 0, label_dist, 0, 0.0, 1.0, 0.0),
-        _make_axis_label("Z", 0, 0, label_dist, 0.0, 0.0, 1.0),
+            _make_axis_label("X", label_dist, 0, 0, 1.0, 0.0, 0.0),
+            _make_axis_label("Y", 0, label_dist, 0, 0.0, 1.0, 0.0),
+            _make_axis_label("Z", 0, 0, label_dist, 0.0, 0.0, 1.0),
     ):
         if actor is not None:
             axis_renderer.AddActor(actor)
@@ -122,7 +120,8 @@ def _create_nov_axis_renderer(nov_renderer, nov_render_window, streamer):
         dz = pos[2] - fp[2]
         n = math.sqrt(dx * dx + dy * dy + dz * dz)
         if n >= 1e-12:
-            axis_cam.SetPosition(dx / n * NOV_AXIS_CAMERA_DIST, dy / n * NOV_AXIS_CAMERA_DIST, dz / n * NOV_AXIS_CAMERA_DIST)
+            axis_cam.SetPosition(dx / n * NOV_AXIS_CAMERA_DIST, dy / n * NOV_AXIS_CAMERA_DIST,
+                                 dz / n * NOV_AXIS_CAMERA_DIST)
         axis_cam.SetFocalPoint(0.0, 0.0, 0.0)
         axis_cam.SetViewUp(vup[0], vup[1], vup[2])
         axis_cam.SetViewAngle(main_cam.GetViewAngle())
@@ -223,7 +222,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             nov_renderer = None
             nov_render_window = None
             err = f"{type(e).__name__}: {e}"
-            print(f"[bioset] Could not connect to zarr URL (SSL/network?). App will start without data. Error: {err}", file=sys.stderr)
+            print(f"[bioset] Could not connect to zarr URL (SSL/network?). App will start without data. Error: {err}",
+                  file=sys.stderr)
 
     else:
         spacing = SpacingConfig(

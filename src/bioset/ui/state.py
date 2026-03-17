@@ -44,7 +44,7 @@ def init_state(state):
     state.setdefault("settings_open", False)
     state.setdefault("channels_open", True)
     state.setdefault("report_generation_open", False)
-    
+
     # Settings
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)
@@ -63,7 +63,7 @@ def init_state(state):
     state.setdefault("bookmark_display_snapshot", None)
     state.setdefault("bookmark_current_view_index", 0)
     state.setdefault("bookmark_form_minimized", False)
-    state.setdefault("bookmark_dataset_id", "default")   # per-dataset folder under recordings
+    state.setdefault("bookmark_dataset_id", "default")  # per-dataset folder under recordings
     state.setdefault("bookmark_edit_title", "")
     state.setdefault("bookmark_edit_category", "")
     state.setdefault("bookmark_edit_description", "")
@@ -77,9 +77,11 @@ def init_state(state):
     state.setdefault("bookmark_flags_data", [])
     state.setdefault("bookmark_flag_popup", None)  # { name, category, channels_active, description } or null
     state.setdefault("bookmark_flag_popup_html", "")  # single HTML string for popup body (no extra layout)
-    state.setdefault("bookmark_flag_popup_screen", "")   # "x,y" for positioning popup
+    state.setdefault("bookmark_flag_popup_screen", "")  # "x,y" for positioning popup
     state.setdefault("bookmark_flag_popup_left", 0)
     state.setdefault("bookmark_flag_popup_top", 0)
+    state.setdefault("bookmark_list_items",
+                     [])  # list of { name, category, description, thumbnail } for selected category
 
     # OV bookmark (Optimal View-only bookmarks inside NOV popup)
     state.setdefault("ov_bookmark_categories", ["Uncategorized"])
@@ -155,6 +157,7 @@ def init_state(state):
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
+    state.setdefault("heatmap_outline_only", False)  # If True, show only tile outlines (wireframe); intensity per-tile
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
@@ -177,8 +180,8 @@ def init_state(state):
     state.setdefault("nov_show_rect", False)  # show 2D rectangle overlay on main view
     state.setdefault("nov_rect_x", 0.35)  # 0-1 left
     state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
-    state.setdefault("nov_rect_w", 0.2)   # 20% of view
-    state.setdefault("nov_rect_h", 0.2)   # 20% of view
+    state.setdefault("nov_rect_w", 0.2)  # 20% of view
+    state.setdefault("nov_rect_h", 0.2)  # 20% of view
     # Lens drag (Trame-only: client sets these via v_on; server commits on nov_dragging -> false)
     state.setdefault("nov_dragging", False)
     state.setdefault("nov_drag_start_rect_x", 0.35)
@@ -211,8 +214,10 @@ def init_state(state):
     state.setdefault("nov_popup_open", False)  # True after "Set"; "Reset" only clears results inside, does not close
     state.setdefault("nov_selected_channels", [])  # Channel ids selected in NOV popup for top-10 entropy views
     state.setdefault("nov_has_results", False)  # True after Set computed candidates; drives single Set vs Reset button
-    state.setdefault("nov_active_channel_items", [])  # [{id, name, color}] for active channels only (same as main scene)
-    state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
+    state.setdefault("nov_active_channel_items",
+                     [])  # [{id, name, color}] for active channels only (same as main scene)
+    state.setdefault("nov_clicked_channel_id",
+                     None)  # set by client when ticking a channel checkbox; server reads to toggle
     state.setdefault("nov_scale_bar_label", "")  # e.g. "10 µm" for scale bar in NOV popup
     state.setdefault("nov_scale_bar_width_px", 0)  # pixel width of scale bar (updates with zoom)
     state.setdefault("nov_popup_width_px", 900)  # resizable NOV popup width (1.5x: 600→900)
@@ -369,6 +374,11 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
 
+    @state.change("heatmap_outline_only")
+    def on_heatmap_outline_only_change(heatmap_outline_only, **kwargs):
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):
         print(f"[state] Dilation changed: {current_dilation}")
@@ -469,9 +479,16 @@ def register_state_change_handlers(state, ctrl):
         if bookmark_open:
             if hasattr(ctrl, "bookmark_refresh_categories"):
                 ctrl.bookmark_refresh_categories()
+            if hasattr(ctrl, "bookmark_refresh_list"):
+                ctrl.bookmark_refresh_list()
         else:
             if getattr(state, "bookmark_flags_visible", False) and hasattr(ctrl, "bookmark_hide_flags"):
                 ctrl.bookmark_hide_flags()
+
+    @state.change("bookmark_selected_category")
+    def on_bookmark_selected_category_change(bookmark_selected_category, **kwargs):
+        if hasattr(ctrl, "bookmark_refresh_list"):
+            ctrl.bookmark_refresh_list()
 
     @state.change("nov_panel_visible")
     def on_nov_panel_visible_change(nov_panel_visible, **kwargs):

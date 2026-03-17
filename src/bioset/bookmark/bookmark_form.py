@@ -50,24 +50,20 @@ def bookmark_form_panel(state, ctrl):
                     vuetify.VBtn(
                         "Save",
                         x_small=True,
-                        click=(ctrl.bookmark_save_snapshot, "[bookmark_form_category, bookmark_form_name, bookmark_form_description, bookmark_form_new_comment]"),
+                        click=(ctrl.bookmark_save_snapshot,
+                               "[bookmark_form_category, bookmark_form_name, bookmark_form_description, bookmark_form_new_comment]"),
                         **_BTN,
                     )
-        # Flag popup: when user clicks a bookmark flag, show small popup (top-right of flag)
-        with html.Div(
-            v_show=("bookmark_flag_popup", False),
-            style=("'position: fixed; z-index: 400; left: ' + (bookmark_flag_popup_left || 0) + 'px; top: ' + (bookmark_flag_popup_top || 0) + 'px; transform: translateY(-100%); min-width: 200px; max-width: 320px; padding: 10px 12px; border-radius: 6px; background: rgba(0,0,0,0.9); color: #fff; font-size: 1rem; box-shadow: 0 2px 12px rgba(0,0,0,0.4); white-space: pre-wrap; word-break: break-word; line-height: 1.1; pointer-events: auto;'",),
-        ):
-            with html.Div(v_html=("bookmark_flag_popup_html", ""), style="color: #fff; font-size: 1rem; line-height: 1.2; margin: 0; padding: 0;"):
-                pass
-            with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_close_flag_popup, style="position: absolute; top: 4px; right: 4px; color: #fff;"):
-                vuetify.VIcon("mdi-close", x_small=True)
+        # Flag popup is rendered inside the viewer (position absolute near the flag)
         with html.Div(v_show=("bookmark_display_snapshot && !bookmark_form_dialog && !bookmark_form_minimized", False)):
             with html.Div(style=_FORM + " margin-top: 8px; max-width: 100%;"):
-                with html.Div(style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;"):
+                with html.Div(
+                        style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;"):
                     with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_view_prev, **_BTN):
                         vuetify.VIcon("mdi-chevron-left", x_small=True)
-                    html.Span("View {{ (bookmark_current_view_index || 0) + 1 }} of {{ (bookmark_display_snapshot && bookmark_display_snapshot.views && bookmark_display_snapshot.views.length) ? bookmark_display_snapshot.views.length : 1 }}", style="color: #fff; font-size: 0.75rem;")
+                    html.Span(
+                        "View {{ (bookmark_current_view_index || 0) + 1 }} of {{ (bookmark_display_snapshot && bookmark_display_snapshot.views && bookmark_display_snapshot.views.length) ? bookmark_display_snapshot.views.length : 1 }}",
+                        style="color: #fff; font-size: 0.75rem;")
                     with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_view_next, **_BTN):
                         vuetify.VIcon("mdi-chevron-right", x_small=True)
                     vuetify.VBtn("Add view", text=True, x_small=True, click=ctrl.bookmark_add_view, **_BTN)
@@ -108,8 +104,11 @@ def bookmark_form_panel(state, ctrl):
                     **_FIELD,
                 )
         with html.Div(v_show=("bookmark_display_snapshot && !bookmark_form_dialog && bookmark_form_minimized", False)):
-            with html.Div(style=_FORM + " margin-top: 8px; padding: 8px 12px; display: flex; align-items: center; gap: 8px;"):
-                html.Span("View {{ (bookmark_current_view_index || 0) + 1 }} of {{ (bookmark_display_snapshot && bookmark_display_snapshot.views && bookmark_display_snapshot.views.length) ? bookmark_display_snapshot.views.length : 1 }}", style="color: #fff; font-size: 0.75rem;")
+            with html.Div(
+                    style=_FORM + " margin-top: 8px; padding: 8px 12px; display: flex; align-items: center; gap: 8px;"):
+                html.Span(
+                    "View {{ (bookmark_current_view_index || 0) + 1 }} of {{ (bookmark_display_snapshot && bookmark_display_snapshot.views && bookmark_display_snapshot.views.length) ? bookmark_display_snapshot.views.length : 1 }}",
+                    style="color: #fff; font-size: 0.75rem;")
                 with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_apply_current_view, **_BTN):
                     vuetify.VIcon("mdi-eye", x_small=True)
                 with vuetify.VBtn(icon=True, x_small=True, click=ctrl.bookmark_open_export_screenshot, **_BTN):

@@ -61,6 +61,18 @@ class BiomniLocalClient:
         print("[biomni] Server initialised successfully")
         return True
 
+    def get_models(self) -> list[str]:
+        """Call GET /models to get available model options based on server config."""
+        try:
+            resp = requests.get(f"{self.base_url}/models", timeout=5)
+            data = _check_response(resp)
+            models = data.get("models", [])
+            print(f"[biomni] Following models are available: {models}")
+            return models
+        except Exception as e:
+            print(f"[biomni] Failed to fetch models: {e}")
+            return []
+
     def label(
         self,
         markers: list[str],

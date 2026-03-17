@@ -198,6 +198,31 @@ def snapshot_categories(dataset_id: str = DEFAULT_DATASET) -> List[str]:
     return sorted(filtered) if filtered else ["Uncategorized"]
 
 
+def thumbnail_path(category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> Path:
+    """Path to thumbnail image for a bookmark: recordings/<category>/<safe_title>.png (same base name as JSON)."""
+    rec = _recordings_dir(dataset_id)
+    folder = rec / _safe_folder_name(category)
+    base = _safe_filename((title or "").strip() or "unnamed").replace(".json", "").strip(".")
+    return folder / (base + ".png")
+
+
+def thumbnail_path_or_fallback(category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> Optional[Path]:
+    """Return path to thumbnail: first recordings/<category>/<title>.png; if missing, use <category>.png in that folder."""
+    path = thumbnail_path(category, title, dataset_id)
+    if path.exists():
+        return path
+    fallback = path.parent / (_safe_folder_name(category) + ".png")
+    return fallback if fallback.exists() else None
+
+
+def save_thumbnail(png_bytes: bytes, category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> Path:
+    """Save thumbnail PNG to recordings/<category>/<safe_title>.png. Returns path."""
+    path = thumbnail_path(category, title, dataset_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png_bytes)
+    return path
+
+
 def load_snapshots_by_category(dataset_id: str, category: str) -> List[Dict[str, Any]]:
     """Return snapshots for the selected category. If snapshot has _folder (from subfolder), match only by folder; else match by JSON category."""
     all_snapshots = load_snapshots(dataset_id)

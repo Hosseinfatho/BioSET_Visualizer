@@ -5,12 +5,11 @@ import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 from .lod import choose_heatmap_level
-
 
 TILE_SIZES = {0: 128, 1: 256, 2: 512, 3: 1024}
 
@@ -261,8 +260,8 @@ class HeatmapLOD:
             )
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(getattr(state, 'heatmap_color', '#FFFFFF'))
-
-            heatmap_renderer.update_tiles(result.tiles, spacing=spacing, color=color)
+            outline_only = getattr(state, 'heatmap_outline_only', False)
+            heatmap_renderer.update_tiles(result.tiles, spacing=spacing, color=color, outline_only=outline_only)
             print(f"[heatmap_lod] Applied level {result.level}: {len(result.tiles)} tiles")
             applied = True
 

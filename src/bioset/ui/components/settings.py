@@ -21,6 +21,7 @@ def settings_section(state, ctrl):
     with vuetify.VList(dense=True, nav=True):
         with vuetify.VListItem(
             class_=("settings_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                classes="mb-0",
             link=True,
             ripple=True,
             click=toggle_settings,
@@ -35,6 +36,9 @@ def settings_section(state, ctrl):
 
         with vuetify.VExpandTransition():
             with html.Div(v_show=("settings_open", False)):
+                with vuetify.VListItem(classes="mt-2 text-left ml-4"):
+                    html.Span("Camera / View", classes="text-caption grey--text font-weight-bold")
+
                 # Toggle Theme
                 with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
                     with vuetify.VListItemIcon():
@@ -170,13 +174,14 @@ def settings_section(state, ctrl):
                                 vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
                             html.Span("Next Best View (popup)")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Optimal View", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;", click=ctrl.nov_toggle)
+                        html.Span("Optimal View", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;",
+                                  click=ctrl.nov_toggle)
                 # Bookmark (saved views / snapshots)
                 with vuetify.VListItem(
-                    class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
-                    link=True,
-                    ripple=True,
-                    click="bookmark_open = !bookmark_open",
+                        class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
+                        link=True,
+                        ripple=True,
+                        click="bookmark_open = !bookmark_open",
                 ):
                     with vuetify.VListItemIcon():
                         with vuetify.VTooltip(right=True):
@@ -185,41 +190,55 @@ def settings_section(state, ctrl):
                             html.Span("Bookmark")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Bookmark")
-                with vuetify.VExpandTransition():
-                    with html.Div(v_show=("bookmark_open", False)):
-                        with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; flex-direction: column; gap: 6px;"):
-                                vuetify.VSelect(
-                                    v_model=("bookmark_selected_category", "Uncategorized"),
-                                    items=("bookmark_categories", []),
-                                    dense=True,
-                                    hide_details=True,
-                                    placeholder="Category",
-                                    label="Category",
-                                    style="min-width: 0;",
-                                )
-                                with html.Div(style="display: flex; gap: 6px; flex-wrap: wrap;"):
-                                    with vuetify.VBtn(
-                                        v_show=("!bookmark_flags_visible", True),
-                                        x_small=True,
-                                        color="primary",
-                                        click=ctrl.bookmark_show_category_flags,
-                                        style="flex: 1 1 0; min-width: 0;",
-                                    ):
-                                        html.Span("Show")
-                                    with vuetify.VBtn(
-                                        v_show=("bookmark_flags_visible", False),
-                                        x_small=True,
-                                        color="primary",
-                                        outlined=True,
-                                        click=ctrl.bookmark_hide_flags,
-                                        style="flex: 1 1 0; min-width: 0;",
-                                    ):
-                                        html.Span("Hide")
-                                    with vuetify.VBtn(
-                                        x_small=True,
-                                        color="secondary",
-                                        click=ctrl.bookmark_open_new_form,
-                                        style="flex: 1 1 0; min-width: 0;",
-                                    ):
-                                        html.Span("New")
+
+                with vuetify.VListItem(classes="mt-4 text-left ml-4"):
+                    html.Span("Biomni / LLM", classes="text-caption grey--text font-weight-bold")
+
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VSelect(
+                        v_model=("biomni_model",),
+                        items=("biomni_available_models",),
+                        label="Model",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                    )
+
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VSelect(
+                        v_model=("biomni_mode",),
+                        items=(["full", "db", "minimal"],),
+                        label="Mode",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                    )
+
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VTextField(
+                        v_model=("biomni_port",),
+                        label="Port",
+                        type="number",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                    )
+
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
+                    vuetify.VFileInput(
+                        label="Add context data",
+                        dense=True,
+                        outlined=True,
+                        hide_details=True,
+                        __events=["change"],
+                        change=(ctrl.biomni_add_data, "[$event]"),
+                    )
+
+                with vuetify.VListItem(class_="nav-item nav-item--nested pt-2 pb-2"):
+                    vuetify.VBtn(
+                        "{{ chatbot_authenticated ? 'Update Settings' : 'Initialize Biomni' }}",
+                        click=ctrl.chatbot_login,
+                        block=True,
+                        small=True,
+                        loading=("chatbot_loading",),
+                    )

@@ -6,7 +6,6 @@ _SCRIPTS_DIR = Path(__file__).parent
 def _read_js(filename: str) -> str:
     return (_SCRIPTS_DIR / filename).read_text()
 
-
 # Lens drag: update position on every mousemove so the lens follows the cursor 1:1 (smooth).
 NOV_DRAG_SCRIPT = r"""
 (function() {
@@ -108,4 +107,3 @@ def register_scripts(client):
     client.Script(_read_js("bar.js"))
     client.Script(_read_js("mousemove.js"))
     client.Script(_read_js("histogram.js"))
-    client.Script(_read_js("download.js"))

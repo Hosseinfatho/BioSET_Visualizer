@@ -3,13 +3,36 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+import tempfile
+
+import requests
+import os
 
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+import datetime
+import hashlib
+import os
+import tempfile
+
+import requests
+
+from bioset.NOV import register_nov_callbacks
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+from bioset.NOV import register_nov_callbacks
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
+from bioset.scene.volumes import build_tf_with_range
+from bioset.report import generate_report_bytes
+from bioset.scene.volumes import build_tf_with_range
 from bioset.report import generate_report_bytes
 from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+from bioset.NOV import register_nov_callbacks
+from ..report.content_sections.AnalysisDataset import AnalysisDatasetContent, AnalysisDataset
+from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
+from ..report.content_sections.General import GeneralContent, General
 from ..report.content_sections.AnalysisDataset import AnalysisDatasetContent, AnalysisDataset
 from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
 from ..report.content_sections.General import GeneralContent, General
@@ -32,7 +55,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "analysis_loader": None,
         "heatmap": None,
         "mesh_manager": None,
-        "heatmap_lod": None,
         "heatmap_lod": None,
         "interactor": None,
     }
@@ -140,7 +162,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 state.bookmark_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
             except Exception:
                 state.bookmark_dataset_id = "default"
-
+            
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
             
@@ -211,6 +233,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         state.right_drawer_open = False
 
+        # Close bookmark UI (column, forms, popups) when data is cleared
+        # Hide the bookmark side panel
+        state.bookmark_open = False
+        # Close any open bookmark display / details panel
+        state.bookmark_display_snapshot = None
+        state.bookmark_form_minimized = False
+        # Close new-bookmark form (bottom-left)
+        state.bookmark_form_dialog = False
+        # Close flag popups and hide bookmark flags
+        state.bookmark_flag_popup = None
+        state.bookmark_flag_popup_html = ""
+        state.bookmark_flag_popup_screen = ""
+        state.bookmark_flag_popup_left = 0
+        state.bookmark_flag_popup_top = 0
+        state.bookmark_flags_visible = False
+        state.bookmark_flags_data = []
+        # Close export-screenshot dialog if open
+        state.bookmark_export_screenshot_dialog = False
+        state.bookmark_export_screenshot_name = ""
+        state.bookmark_export_screenshot_caption = ""
+
         # Reset NOV and hide 2D rect overlay
         state.nov_show_rect = False
         state.nov_drawing_box = False
@@ -228,7 +271,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_sphere_xy = []
         if hasattr(ctrl, "nov_hide_lens"):
             ctrl.nov_hide_lens()
-
+    
         if _refs["view"]:
             _refs["view"].update()
         
@@ -450,7 +493,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.channel_histograms = {
                 str(ch_id): streamer._channel_histograms[ch_id] for ch_id in new_active if ch_id in streamer._channel_histograms
             }
-
+            
         if to_activate and not currently_active:
             heatmap_lod = _refs.get("heatmap_lod")
             if heatmap_lod:
@@ -623,7 +666,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            heatmap.update_tiles(tiles, spacing=spacing, color=color)
+            outline_only = getattr(state, "heatmap_outline_only", False)
+            heatmap.update_tiles(tiles, spacing=spacing, color=color, outline_only=outline_only)
             state.heatmap_tile_count = len(tiles)
         
         if _refs["view"]:
@@ -958,19 +1002,36 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def _get_biomni_client():
         """Get or create the local Biomni client."""
+        url = f"http://localhost:{state.biomni_port}"
+
         if _refs["biomni_client"] is None:
-            _refs["biomni_client"] = BiomniLocalClient()
+            _refs["biomni_client"] = BiomniLocalClient(base_url=url)
         return _refs["biomni_client"]
+
+    def get_available_llms():
+        try:
+            client = _get_biomni_client()
+            models = client.get_models()
+            if models:
+                state.biomni_available_models = models
+                if state.biomni_model not in models:
+                    state.biomni_model = models[0]
+        except Exception:
+            pass
 
     def chatbot_login():
         """Initialise the Biomni agent on the local server."""
-        print("[callbacks] Biomni init requested")
+        print(f"[callbacks] Biomni init requested with llm {state.biomni_model} and mode {state.biomni_mode}")
         state.chatbot_loading = True
 
         try:
             import os
             client = _get_biomni_client()
-            client.init(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            client.init(
+                llm=state.biomni_model,
+                mode=state.biomni_mode,
+                api_key=os.getenv("ANTHROPIC_API_KEY")
+            )
             state.chatbot_authenticated = True
             state.chatbot_messages = []
             print("[callbacks] Biomni initialised successfully")
@@ -982,6 +1043,29 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_messages = [{"role": "error", "content": error_msg}]
         finally:
             state.chatbot_loading = False
+
+    def biomni_add_data(file_info):
+        print(f"[callbacks] Received file upload for Biomni Add Data ({len(file_info)} bytes)")
+
+        try:
+            file_name = file_info.get("name", "upload")
+            file_content = file_info.get("content")
+
+            _, ext = os.path.splitext(file_name)
+
+            fd, temp_path = tempfile.mkstemp(prefix="biomni_file_upload_", suffix=ext)
+            with os.fdopen(fd, 'wb') as f:
+                f.write(file_content)
+
+            print(f"[callbacks] Wrote upload '{file_name}' to {temp_path}")
+
+            client = _get_biomni_client()
+            url = f"{client.base_url}/custom-data"
+            requests.post(url, json={"filepath": temp_path})
+
+        except Exception as e:
+            print(f"[callbacks] Error processing file upload: {e}")
+
 
     def _build_markers() -> list[str]:
         """Build the markers list from active channels and their colors."""
@@ -1482,9 +1566,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_bar_data = update_bar_data
     ctrl.update_bar_data_local = update_bar_data_local
     ctrl.chatbot_login = chatbot_login
+    ctrl.biomni_add_data = biomni_add_data
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_clear = chatbot_clear
+    ctrl.get_available_llms = get_available_llms
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod

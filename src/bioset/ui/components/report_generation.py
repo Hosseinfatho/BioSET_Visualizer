@@ -50,11 +50,11 @@ def report_generation_section(state, ctrl):
                         hide_details=True,
                     )
 
-                with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-2 mt-4"):
+                with html.Div(classes="mb-2 mt-4"):
                     vuetify.VBtn(
                         "Generate Report",
                         block=True,
                         small=True,
-                        classes="ml-1 px-2 text-none",
+                        classes="ml-1 px-2",
                         click=ctrl.generate_pdf_report,
                     )
