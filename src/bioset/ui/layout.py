@@ -40,7 +40,12 @@ def build_ui(server, render_window, streamer=None, nov_render_window=None):
             with html.Div(
                     v_show=("bookmark_open", False),
                     class_="bookmark-panel-beside-drawer",
-                    style="position: fixed; left: 250px; top: 0; width: 250px; height: 50vh; z-index: 12; pointer-events: auto;",
+                    style=(
+                        # Match left drawer widths (normal: 350px, mini: 100px) + small gap
+                        "'position: fixed; left: ' + ((drawer_mini ? 100 : 350) + 8) + 'px; top: 0; "
+                        "width: 250px; height: 50vh; z-index: 12; pointer-events: auto;'",
+                        "position: fixed; left: 358px; top: 0; width: 250px; height: 50vh; z-index: 12; pointer-events: auto;",
+                    ),
             ):
                 bookmark_column(state, ctrl)
             ctrl.set_view(view)
