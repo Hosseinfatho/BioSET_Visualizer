@@ -47,6 +47,15 @@ def right_drawer(state, ctrl):
                 with vuetify.VBtn(icon=True, small=True, click="upset_expanded = true"):
                     vuetify.VIcon("mdi-arrow-expand-all", small=True)
 
+                # UpSet Explain button
+                with vuetify.VBtn(
+                    icon=True,
+                    small=True,
+                    click=ctrl.chatbot_explain_upset,
+                    disabled=("!chatbot_authenticated",),
+                ):
+                    vuetify.VIcon("mdi-message-text-outline", small=True)
+
             # Pagination Controls (Offset based)
             with html.Div(classes="d-flex justify-center mb-2 align-center"):
                 with vuetify.VBtn(
@@ -246,6 +255,15 @@ def right_drawer(state, ctrl):
                 # Bar Expand button
                 with vuetify.VBtn(icon=True, small=True, click="bar_expanded = true"):
                     vuetify.VIcon("mdi-arrow-expand-all", small=True)
+
+                # Bar Explain button
+                with vuetify.VBtn(
+                    icon=True,
+                    small=True,
+                    click=ctrl.chatbot_explain_bar,
+                    disabled=("!chatbot_authenticated",),
+                ):
+                    vuetify.VIcon("mdi-message-text-outline", small=True)
 
             # Pagination Controls (Offset based) - Bar Chart
             with html.Div(classes="d-flex justify-center mb-2 align-center"):
