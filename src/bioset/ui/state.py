@@ -38,6 +38,8 @@ def init_state(state):
     # Left drawer
     state.setdefault("drawer", True)
     state.setdefault("drawer_mini", False)
+    # Actual drawer width measured on client (used for overlays positioned next to drawer)
+    state.setdefault("left_drawer_width_px", 350)
     
     # Section toggles
     state.setdefault("data_open", True)
