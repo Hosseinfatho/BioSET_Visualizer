@@ -48,7 +48,7 @@ def init_state(state):
     # Settings
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)
-    
+
     # Bookmark (saved views / snapshots: name, open, new form)
     state.setdefault("bookmark_open", False)
     state.setdefault("bookmark_snapshot_names", [])
@@ -63,7 +63,7 @@ def init_state(state):
     state.setdefault("bookmark_display_snapshot", None)
     state.setdefault("bookmark_current_view_index", 0)
     state.setdefault("bookmark_form_minimized", False)
-    state.setdefault("bookmark_dataset_id", "default")   # per-dataset folder under recordings
+    state.setdefault("bookmark_dataset_id", "default")  # per-dataset folder under recordings
     state.setdefault("bookmark_edit_title", "")
     state.setdefault("bookmark_edit_category", "")
     state.setdefault("bookmark_edit_description", "")
@@ -77,10 +77,11 @@ def init_state(state):
     state.setdefault("bookmark_flags_data", [])
     state.setdefault("bookmark_flag_popup", None)  # { name, category, channels_active, description } or null
     state.setdefault("bookmark_flag_popup_html", "")  # single HTML string for popup body (no extra layout)
-    state.setdefault("bookmark_flag_popup_screen", "")   # "x,y" for positioning popup
+    state.setdefault("bookmark_flag_popup_screen", "")  # "x,y" for positioning popup
     state.setdefault("bookmark_flag_popup_left", 0)
     state.setdefault("bookmark_flag_popup_top", 0)
-    state.setdefault("bookmark_list_items", [])  # list of { name, category, description, thumbnail } for selected category
+    state.setdefault("bookmark_list_items",
+                     [])  # list of { name, category, description, thumbnail } for selected category
 
     # OV bookmark (Optimal View-only bookmarks inside NOV popup)
     state.setdefault("ov_bookmark_categories", ["Uncategorized"])
@@ -174,13 +175,13 @@ def init_state(state):
     state.setdefault("bar_filtered_channels", []) # Channels shown in filter list
     state.setdefault("bar_filter_dialog", False)
     state.setdefault("bar_expanded", False)
-    
+
     # NOV (Next Best View) — 2D rectangle overlay (resize/pan); depth = 2× diagonal of rect in world
     state.setdefault("nov_show_rect", False)  # show 2D rectangle overlay on main view
     state.setdefault("nov_rect_x", 0.35)  # 0-1 left
     state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
-    state.setdefault("nov_rect_w", 0.2)   # 20% of view
-    state.setdefault("nov_rect_h", 0.2)   # 20% of view
+    state.setdefault("nov_rect_w", 0.2)  # 20% of view
+    state.setdefault("nov_rect_h", 0.2)  # 20% of view
     # Lens drag (Trame-only: client sets these via v_on; server commits on nov_dragging -> false)
     state.setdefault("nov_dragging", False)
     state.setdefault("nov_drag_start_rect_x", 0.35)
@@ -213,8 +214,10 @@ def init_state(state):
     state.setdefault("nov_popup_open", False)  # True after "Set"; "Reset" only clears results inside, does not close
     state.setdefault("nov_selected_channels", [])  # Channel ids selected in NOV popup for top-10 entropy views
     state.setdefault("nov_has_results", False)  # True after Set computed candidates; drives single Set vs Reset button
-    state.setdefault("nov_active_channel_items", [])  # [{id, name, color}] for active channels only (same as main scene)
-    state.setdefault("nov_clicked_channel_id", None)  # set by client when ticking a channel checkbox; server reads to toggle
+    state.setdefault("nov_active_channel_items",
+                     [])  # [{id, name, color}] for active channels only (same as main scene)
+    state.setdefault("nov_clicked_channel_id",
+                     None)  # set by client when ticking a channel checkbox; server reads to toggle
     state.setdefault("nov_scale_bar_label", "")  # e.g. "10 µm" for scale bar in NOV popup
     state.setdefault("nov_scale_bar_width_px", 0)  # pixel width of scale bar (updates with zoom)
     state.setdefault("nov_popup_width_px", 900)  # resizable NOV popup width (1.5x: 600→900)

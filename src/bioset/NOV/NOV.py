@@ -14,6 +14,7 @@ try:
     from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkSphereSource
     from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper, vtkPropPicker
     from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
+
     _VTK_BOX_AVAILABLE = True
 except Exception:
     vtkCubeSource = vtkSphereSource = vtkActor = vtkPolyDataMapper = vtkPropPicker = vtkInteractorStyleTrackballCamera = None
@@ -24,14 +25,19 @@ def _make_nov_no_right_style():
     """Interactor style that ignores right-button so right-click+drag is used only for NOV corner resize."""
     if vtkInteractorStyleTrackballCamera is None:
         return None
+
     class _NoRightStyle(vtkInteractorStyleTrackballCamera):
         def OnRightButtonDown(self):
             pass
+
         def OnRightButtonMove(self):
             pass
+
         def OnRightButtonUp(self):
             pass
+
     return _NoRightStyle()
+
 
 # --- Constants ---
 # Step for sampling directions on the sphere (internal; 30° spacing). Score all, sort, take top 10.
@@ -96,7 +102,8 @@ def nov_popup_initial_size(length: float, width: float, depth: float, comp: Opti
 
 
 # Corner order: 0=(-,-,-), 1=(+,-,-), 2=(-,+,-), 3=(+,+,-), 4=(-,-,+), 5=(+,-,+), 6=(-,+,+), 7=(+,+,+). Opposite of i is 7-i.
-def nov_lens_corners(center: Tuple[float, float, float], length: float, width: float, depth: float) -> List[Tuple[float, float, float]]:
+def nov_lens_corners(center: Tuple[float, float, float], length: float, width: float, depth: float) -> List[
+    Tuple[float, float, float]]:
     """Return 8 corner positions (x,y,z) of the lens."""
     cx, cy, cz = center[0], center[1], center[2]
     hL, hW, hD = length / 2.0, width / 2.0, depth / 2.0
@@ -107,21 +114,27 @@ def nov_lens_corners(center: Tuple[float, float, float], length: float, width: f
         (cx - hL, cy + hW, cz + hD), (cx + hL, cy + hW, cz + hD),
     ]
 
+
 PIN_RADIUS_FRACTION = 0.05  # pin radius = this fraction of min(L,W,D); small spheres at corners
+
 
 # --- Math helpers ---
 def _rad(d: float) -> float:
     return d * math.pi / 180.0
 
+
 def _norm3(v: Tuple[float, float, float]) -> Tuple[float, float, float]:
-    n = math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
-    return (v[0]/n, v[1]/n, v[2]/n) if n >= 1e-12 else (0.0, 0.0, 0.0)
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    return (v[0] / n, v[1] / n, v[2] / n) if n >= 1e-12 else (0.0, 0.0, 0.0)
+
 
 def _cross(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> Tuple[float, float, float]:
-    return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
 
 def _dot(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
 
 def _hull2(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     if len(points) <= 2:
@@ -129,8 +142,10 @@ def _hull2(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     pts = sorted(set(points))
     if len(pts) <= 2:
         return pts
+
     def cross_o(a, b, c):
-        return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
     lower = []
     for p in pts:
         while len(lower) >= 2 and cross_o(lower[-2], lower[-1], p) <= 0:
@@ -142,6 +157,7 @@ def _hull2(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
             upper.pop()
         upper.append(p)
     return lower[:-1] + upper[:-1]
+
 
 def _in_poly(q: Tuple[float, float], poly: List[Tuple[float, float]]) -> bool:
     n, x, y = len(poly), q[0], q[1]
@@ -155,19 +171,24 @@ def _in_poly(q: Tuple[float, float], poly: List[Tuple[float, float]]) -> bool:
         j = i
     return inside
 
+
 def _aabb_corners(b: Tuple[float, float, float, float, float, float]) -> List[Tuple[float, float, float]]:
     x0, x1, y0, y1, z0, z1 = b
-    return [(x0,y0,z0),(x1,y0,z0),(x0,y1,z0),(x1,y1,z0),(x0,y0,z1),(x1,y0,z1),(x0,y1,z1),(x1,y1,z1)]
+    return [(x0, y0, z0), (x1, y0, z0), (x0, y1, z0), (x1, y1, z0), (x0, y0, z1), (x1, y0, z1), (x0, y1, z1),
+            (x1, y1, z1)]
+
 
 # --- ROI bounds (center + radius for camera scoring) ---
-def aabb_from_center_radius(center: Tuple[float, float, float], radius: float) -> Tuple[float, float, float, float, float, float]:
+def aabb_from_center_radius(center: Tuple[float, float, float], radius: float) -> Tuple[
+    float, float, float, float, float, float]:
     """AABB from center and radius (xmin,xmax, ymin,ymax, zmin,zmax)."""
     cx, cy, cz = center
     return (cx - radius, cx + radius, cy - radius, cy + radius, cz - radius, cz + radius)
 
+
 def bounds_intersect(
-    vol: Tuple[float, float, float, float, float, float],
-    lens: Tuple[float, float, float, float, float, float],
+        vol: Tuple[float, float, float, float, float, float],
+        lens: Tuple[float, float, float, float, float, float],
 ) -> Tuple[float, float, float, float, float, float]:
     """Intersect two AABBs; return degenerate (0,0,0,0,0,0) if no overlap."""
     x0 = max(vol[0], lens[0])
@@ -180,6 +201,7 @@ def bounds_intersect(
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     return (x0, x1, y0, y1, z0, z1)
 
+
 # --- Camera candidates (positions on radius around center) ---
 def _camera_pos_sphere(center: Tuple[float, float, float], radius: float, t: float, p: float) -> List[float]:
     """Position on sphere at radius around center (internal spherical coords t, p in degrees)."""
@@ -189,6 +211,7 @@ def _camera_pos_sphere(center: Tuple[float, float, float], radius: float, t: flo
     dz = -radius * math.sin(th) * math.cos(ph)
     return [center[0] + dx, center[1] + dy, center[2] + dz]
 
+
 def _view_up_sphere(t: float, p: float) -> List[float]:
     th, ph = _rad(t), _rad(p)
     nx = math.sin(th) * math.sin(ph)
@@ -197,10 +220,11 @@ def _view_up_sphere(t: float, p: float) -> List[float]:
     ux, uy, uz = 0.0, 1.0, 0.0
     if abs(ny) > 0.99:
         ux, uy, uz = 0.0, 0.0, 1.0
-    dot = ux*nx + uy*ny + uz*nz
-    vx, vy, vz = ux - dot*nx, uy - dot*ny, uz - dot*nz
-    n = math.sqrt(vx*vx + vy*vy + vz*vz)
-    return [vx/n, vy/n, vz/n] if n >= 1e-9 else [0.0, 0.0, 1.0]
+    dot = ux * nx + uy * ny + uz * nz
+    vx, vy, vz = ux - dot * nx, uy - dot * ny, uz - dot * nz
+    n = math.sqrt(vx * vx + vy * vy + vz * vz)
+    return [vx / n, vy / n, vz / n] if n >= 1e-9 else [0.0, 0.0, 1.0]
+
 
 # --- View / visibility ---
 # Per-object visibility along one ray (occlusion-aware): (ray_origin, ray_dir, bounds) -> List[float] Vis(o)
@@ -215,15 +239,15 @@ SampleVisibilityFn = Callable[
 
 
 def compute_visibility_per_object(
-    camera_pos: Tuple[float, float, float],
-    center: Tuple[float, float, float],
-    view_up: Tuple[float, float, float],
-    view_radius: float,
-    bounds_world: Tuple[float, float, float, float, float, float],
-    num_objects: int,
-    sample_visibility_fn: SampleVisibilityFn,
-    *,
-    mesh_size: int = NOV_MESH_SIZE,
+        camera_pos: Tuple[float, float, float],
+        center: Tuple[float, float, float],
+        view_up: Tuple[float, float, float],
+        view_radius: float,
+        bounds_world: Tuple[float, float, float, float, float, float],
+        num_objects: int,
+        sample_visibility_fn: SampleVisibilityFn,
+        *,
+        mesh_size: int = NOV_MESH_SIZE,
 ) -> List[float]:
     """Sum per-object visibility over all rays in the view plane.
     Returns list of length num_objects: Vis(o,v) for each object."""
@@ -234,7 +258,8 @@ def compute_visibility_per_object(
     u_axis = _norm3(_cross(normal, up))
     v_axis = _norm3(_cross(normal, u_axis))
     corners = _aabb_corners(bounds_world)
-    uv = [(_dot((c[0] - center[0], c[1] - center[1], c[2] - center[2]), u_axis), _dot((c[0] - center[0], c[1] - center[1], c[2] - center[2]), v_axis)) for c in corners]
+    uv = [(_dot((c[0] - center[0], c[1] - center[1], c[2] - center[2]), u_axis),
+           _dot((c[0] - center[0], c[1] - center[1], c[2] - center[2]), v_axis)) for c in corners]
     hull = _hull2(uv)
     if len(hull) < 3:
         return [0.0] * num_objects
@@ -281,19 +306,19 @@ def _sample_directions_on_sphere() -> List[Tuple[float, float]]:
 
 
 def compute_top10_views_by_entropy(
-    center: Tuple[float, float, float],
-    view_radius: float,
-    volume_bounds: Tuple[float, float, float, float, float, float],
-    channel_ids: List[int],
-    *,
-    camera_distance: Optional[float] = None,
-    sample_visibility_fn: Optional[SampleVisibilityFn] = None,
-    presence_thresh: float = 0.05,
-    mesh_size: int = NOV_MESH_SIZE,
-    top_k: int = 10,
-    entropy_weight: float = 1.0,
-    min_intensity_weight: float = 0.3,
-    eps: float = 1e-12,
+        center: Tuple[float, float, float],
+        view_radius: float,
+        volume_bounds: Tuple[float, float, float, float, float, float],
+        channel_ids: List[int],
+        *,
+        camera_distance: Optional[float] = None,
+        sample_visibility_fn: Optional[SampleVisibilityFn] = None,
+        presence_thresh: float = 0.05,
+        mesh_size: int = NOV_MESH_SIZE,
+        top_k: int = 10,
+        entropy_weight: float = 1.0,
+        min_intensity_weight: float = 0.3,
+        eps: float = 1e-12,
 ) -> List[dict]:
     """Compute top-k views by maximum entropy H(O|v) and minimum max_o p(o|v) (avoid single-channel dominance).
     Views are sorted descending by score. Each view is at least MIN_TOP10_ANGULAR_SEPARATION_DEG (30°) from the others.
@@ -304,7 +329,8 @@ def compute_top10_views_by_entropy(
     roi_bounds = bounds_intersect(volume_bounds, aabb_from_center_radius(center, view_radius))
     if roi_bounds[1] <= roi_bounds[0] or roi_bounds[3] <= roi_bounds[2] or roi_bounds[5] <= roi_bounds[4]:
         return []
-    cam_dist = camera_distance if camera_distance is not None and camera_distance >= 1e-6 else CAMERA_DISTANCE_DIAMETER_MULT * (2.0 * view_radius)
+    cam_dist = camera_distance if camera_distance is not None and camera_distance >= 1e-6 else CAMERA_DISTANCE_DIAMETER_MULT * (
+                2.0 * view_radius)
     directions = _sample_directions_on_sphere()
     scored: List[Tuple[float, float, float, List[float], int]] = []  # (score, entropy, max_p, vis, idx)
     for idx, (t, p) in enumerate(directions):
@@ -335,8 +361,8 @@ def compute_top10_views_by_entropy(
             break
         t, p = directions[idx]
         if all(
-            _angular_distance_deg(t, p, td, pd) >= MIN_TOP10_ANGULAR_SEPARATION_DEG
-            for (td, pd) in selected_dirs
+                _angular_distance_deg(t, p, td, pd) >= MIN_TOP10_ANGULAR_SEPARATION_DEG
+                for (td, pd) in selected_dirs
         ):
             selected_dirs.append((t, p))
             pos = _camera_pos_sphere(center, cam_dist, t, p)
@@ -353,11 +379,11 @@ def compute_top10_views_by_entropy(
 
 # --- SVG: sphere mini-map from camera positions ---
 def sphere_xy_from_camera_positions(
-    center: Tuple[float, float, float],
-    positions: List[List[float]],
-    r_svg: float = 22,
-    cx: float = 28,
-    cy: float = 28,
+        center: Tuple[float, float, float],
+        positions: List[List[float]],
+        r_svg: float = 22,
+        cx: float = 28,
+        cy: float = 28,
 ) -> List[Tuple[float, float]]:
     """Compute SVG (x,y) for each camera position. Direction from center to position, projected to circle (XZ plane)."""
     result = []
@@ -396,6 +422,7 @@ def build_nov_sphere_svg(sphere_xy: list, current_index: int) -> str:
         parts.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
     parts.append("</svg>")
     return "".join(parts)
+
 
 # --- Callbacks (lens) ---
 def register_nov_callbacks(ctrl, state, _refs):
@@ -503,7 +530,8 @@ def register_nov_callbacks(ctrl, state, _refs):
         D = 2.0 * math.sqrt(L * L + W * W)
         _, b = _volume_center_bounds(streamer)
         comp, _ = get_lod(streamer)
-        min_side = max(nov_min_lens_side_for_comp(comp), min(b[1] - b[0], b[3] - b[2], b[5] - b[4]) * 0.02) if comp is not None else 1.0
+        min_side = max(nov_min_lens_side_for_comp(comp),
+                       min(b[1] - b[0], b[3] - b[2], b[5] - b[4]) * 0.02) if comp is not None else 1.0
         side_3d = max(L, W, min_side)
         L = W = side_3d
         D = max(D, min_side)
@@ -514,8 +542,8 @@ def register_nov_callbacks(ctrl, state, _refs):
             streamer.set_nov_lens_clip((center[0], center[1], center[2]), L, W, D)
         return (center, L, W, D)
 
-    MIN_LENS_SIZE = 0.05   # minimum lens size (5% of view)
-    MAX_LENS_SIZE = 0.9    # maximum lens size (90% of view)
+    MIN_LENS_SIZE = 0.05  # minimum lens size (5% of view)
+    MAX_LENS_SIZE = 0.9  # maximum lens size (90% of view)
 
     def nov_rect_size_step(delta: float):
         """Increase or decrease rect size by step (delta). Keeps position (bottom-left) fixed. Min 5%, max 90% of view."""
@@ -811,7 +839,8 @@ def register_nov_callbacks(ctrl, state, _refs):
     def update_nov_scale_bar():
         """Compute scale bar (µm per pixel) from NOV camera and set state for UI. Uses voxel spacing (0.14, 0.14, 0.28) µm."""
         streamer = _refs.get("streamer")
-        if not streamer or not getattr(streamer, "nov_renderer", None) or not getattr(streamer, "nov_render_window", None):
+        if not streamer or not getattr(streamer, "nov_renderer", None) or not getattr(streamer, "nov_render_window",
+                                                                                      None):
             return
         ren = streamer.nov_renderer
         rw = streamer.nov_render_window
@@ -870,7 +899,8 @@ def register_nov_callbacks(ctrl, state, _refs):
             dy = min(max((1.0 - y) * (h - 1) if 0 <= y <= 1 else h - 1 - y, 0), h - 1)
         return dx, dy
 
-    def ray_plane_intersection(renderer, x: float, y: float, plane_origin: Tuple[float, float, float], plane_normal: Tuple[float, float, float]):
+    def ray_plane_intersection(renderer, x: float, y: float, plane_origin: Tuple[float, float, float],
+                               plane_normal: Tuple[float, float, float]):
         """Intersect ray from camera through (x,y) with plane; return world point or None."""
         dx, dy = display_to_display_coords(renderer, x, y)
         if dx is None:
@@ -905,7 +935,8 @@ def register_nov_callbacks(ctrl, state, _refs):
         if comp is None and s and getattr(s, "renderer", None):
             cam = s.renderer.GetActiveCamera()
             r = camera_distance_to_focal(cam)
-            comp = choose_component(r, s.cfg.distance_rules, min_component=s.cfg.min_component, max_component=s.cfg.max_component)
+            comp = choose_component(r, s.cfg.distance_rules, min_component=s.cfg.min_component,
+                                    max_component=s.cfg.max_component)
         return comp, active
 
     def nov_initial_rect_from_radius_and_comp(s):
@@ -1002,6 +1033,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         except Exception:
             pass
         presence_thresh = 0.05
+
         def sample_vis(ray_origin, ray_dir, bounds):
             if getattr(streamer, "sample_nov_ray_channels_occlusion", None):
                 return streamer.sample_nov_ray_channels_occlusion(
@@ -1010,6 +1042,7 @@ def register_nov_callbacks(ctrl, state, _refs):
                     presence_thresh=presence_thresh,
                 )
             return [0.0] * len(active_list)
+
         candidates = compute_top10_views_by_entropy(
             (center[0], center[1], center[2]),
             circum_r,
@@ -1122,6 +1155,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         except Exception:
             pass
         presence_thresh = 0.05
+
         def sample_vis(ray_origin, ray_dir, bounds):
             if getattr(streamer, "sample_nov_ray_channels_occlusion", None):
                 return streamer.sample_nov_ray_channels_occlusion(
@@ -1130,6 +1164,7 @@ def register_nov_callbacks(ctrl, state, _refs):
                     presence_thresh=presence_thresh,
                 )
             return [0.0] * len(selected)
+
         candidates = compute_top10_views_by_entropy(
             (center[0], center[1], center[2]),
             circum_r,
@@ -1222,6 +1257,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         except Exception:
             pass
         presence_thresh = 0.05
+
         def sample_vis(ray_origin, ray_dir, bounds):
             if getattr(streamer, "sample_nov_ray_channels_occlusion", None):
                 return streamer.sample_nov_ray_channels_occlusion(
@@ -1230,6 +1266,7 @@ def register_nov_callbacks(ctrl, state, _refs):
                     presence_thresh=presence_thresh,
                 )
             return [0.0] * len(selected)
+
         candidates = compute_top10_views_by_entropy(
             (center[0], center[1], center[2]),
             circum_r,
@@ -1266,6 +1303,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             _refs["nov_view"].update()
         if _refs.get("view"):
             _refs["view"].update()
+
         def _delayed_nov_resize():
             # Re-center camera after popup has been laid out/resized so content stays in middle
             if candidates:
@@ -1278,6 +1316,7 @@ def register_nov_callbacks(ctrl, state, _refs):
                     _refs["nov_view"].update()
                 except Exception:
                     pass
+
         threading.Timer(0.35, _delayed_nov_resize).start()
 
     def nov_reset():

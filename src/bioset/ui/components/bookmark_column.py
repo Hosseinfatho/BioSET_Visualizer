@@ -9,14 +9,15 @@ from trame.widgets import html, vuetify
 def bookmark_column(state, ctrl):
     """Overlay column (250px wide, same style as left drawer) shown when bookmark_open. Rendered inside overlay wrapper in layout."""
     with html.Div(
-        class_="bookmark-overlay-column",
-        style="width: 100%; height: 100%; background: rgba(18, 18, 18, 0.6); display: flex; flex-direction: column; overflow: hidden;",
+            class_="bookmark-overlay-column",
+            style="width: 100%; height: 100%; background: rgba(18, 18, 18, 0.6); display: flex; flex-direction: column; overflow: hidden;",
     ):
         with html.Div(style="display: flex; flex-direction: column; height: 100%; overflow: hidden;"):
             # Header
             with vuetify.VListItem(dense=True, style="flex: 0 0 auto;"):
                 with vuetify.VListItemContent():
-                    vuetify.VListItemTitle("Bookmarks", class_="bookmark-column-header", style="font-size: 1rem; font-weight: 600; color: #ffffff;")
+                    vuetify.VListItemTitle("Bookmarks", class_="bookmark-column-header",
+                                           style="font-size: 1rem; font-weight: 600; color: #ffffff;")
             vuetify.VDivider()
             # Top: Category dropdown, Show, New
             with html.Div(style="padding: 10px 8px; flex: 0 0 auto; border-bottom: 1px solid rgba(255,255,255,0.1);"):
@@ -32,45 +33,46 @@ def bookmark_column(state, ctrl):
                 )
                 with html.Div(style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;"):
                     with vuetify.VBtn(
-                        v_show=("!bookmark_flags_visible", True),
-                        x_small=True,
-                        color="primary",
-                        click=ctrl.bookmark_show_category_flags,
-                        style="flex: 1 1 0; min-width: 0;",
+                            v_show=("!bookmark_flags_visible", True),
+                            x_small=True,
+                            color="primary",
+                            click=ctrl.bookmark_show_category_flags,
+                            style="flex: 1 1 0; min-width: 0;",
                     ):
                         html.Span("Show")
                     with vuetify.VBtn(
-                        v_show=("bookmark_flags_visible", False),
-                        x_small=True,
-                        color="primary",
-                        outlined=True,
-                        click=ctrl.bookmark_hide_flags,
-                        style="flex: 1 1 0; min-width: 0;",
+                            v_show=("bookmark_flags_visible", False),
+                            x_small=True,
+                            color="primary",
+                            outlined=True,
+                            click=ctrl.bookmark_hide_flags,
+                            style="flex: 1 1 0; min-width: 0;",
                     ):
                         html.Span("Hide")
                     with vuetify.VBtn(
-                        x_small=True,
-                        color="secondary",
-                        click=ctrl.bookmark_open_new_form,
-                        style="flex: 1 1 0; min-width: 0;",
+                            x_small=True,
+                            color="secondary",
+                            click=ctrl.bookmark_open_new_form,
+                            style="flex: 1 1 0; min-width: 0;",
                     ):
                         html.Span("New")
             # List of bookmarks: thumbnail 10% larger (79px), very small gap left/top/bottom
             with html.Div(
-                class_="bookmark-list-scroll",
-                style="flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 3px 2px 3px 3px;",
+                    class_="bookmark-list-scroll",
+                    style="flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 3px 2px 3px 3px;",
             ):
                 with vuetify.VList(dense=True, style="background: transparent;"):
                     with vuetify.VListItem(
-                        v_for=("(item, idx) in bookmark_list_items",),
-                        key=("item.name",),
-                        class_="bookmark-list-item",
-                        style="display: flex; flex-direction: row; align-items: flex-start; padding: 4px 2px; margin: 0; border-radius: 0; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.2); gap: 0;",
-                        click=(ctrl.bookmark_thumbnail_single_click, "[item.name]"),
-                        dblclick=(ctrl.bookmark_thumbnail_double_click, "[item.name]"),
+                            v_for=("(item, idx) in bookmark_list_items",),
+                            key=("item.name",),
+                            class_="bookmark-list-item",
+                            style="display: flex; flex-direction: row; align-items: flex-start; padding: 4px 2px; margin: 0; border-radius: 0; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.2); gap: 0;",
+                            click=(ctrl.bookmark_thumbnail_single_click, "[item.name]"),
+                            dblclick=(ctrl.bookmark_thumbnail_double_click, "[item.name]"),
                     ):
                         # Thumbnail: 10% larger than 72px = 79px
-                        with html.Div(class_="bookmark-thumb-wrap", style="position: relative; width: 79px; height: 79px; flex-shrink: 0; border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.06); margin: 0;"):
+                        with html.Div(class_="bookmark-thumb-wrap",
+                                      style="position: relative; width: 79px; height: 79px; flex-shrink: 0; border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.06); margin: 0;"):
                             html.Img(
                                 v_show=("item.thumbnail", True),
                                 v_bind_src=("item.thumbnail",),
@@ -82,7 +84,8 @@ def bookmark_column(state, ctrl):
                                 style="font-size: 30px; color: rgba(255,255,255,0.5); position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);",
                             )
                         # In front of thumbnail: Name (line 1), Description (next line) — white, one size larger font
-                        with html.Div(class_="bookmark-item-text", style="flex: 1; min-width: 0; padding-left: 8px; margin: 0;"):
+                        with html.Div(class_="bookmark-item-text",
+                                      style="flex: 1; min-width: 0; padding-left: 8px; margin: 0;"):
                             html.Div(
                                 class_="bookmark-item-name",
                                 style="font-size: 0.9rem; font-weight: 600; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;",
