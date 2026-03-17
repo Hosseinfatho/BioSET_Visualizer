@@ -2,7 +2,7 @@
 Label rendering with zoom-based heuristic type selection.
 
 Adapted from cycif_mesh_labelling/new/labeling.py for BioSET:
-- Imports from .settings and .label_regions instead of settings/regions
+- Imports from .settings and .regions instead of settings/regions
 - label_lookup_fn passed as parameter instead of imported from labels.py
 - Module-level locator/dilation caches work the same way (keyed by marker_name)
 """
@@ -12,7 +12,8 @@ from __future__ import annotations
 import numpy as np
 import vtk
 from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtk
-from vtkmodules.vtkFiltersCore import vtkPolyDataNormals
+from vtkmodules.vtkFiltersCore import vtkPolyDataNormals, vtkTriangleFilter
+from vtkmodules.vtkFiltersModeling import vtkLinearExtrusionFilter
 from vtkmodules.vtkFiltersSources import vtkSphereSource, vtkLineSource
 from vtkmodules.vtkRenderingCore import vtkActor, vtkFollower, vtkPolyDataMapper
 
@@ -27,6 +28,21 @@ from .regions import Region
 def _norm(v):
     n = np.linalg.norm(v)
     return v / n if n > 1e-9 else v
+
+
+def _style_label_actor(actor, color):
+    """Apply consistent prominent styling to any label actor.
+
+    Fully ambient (unaffected by scene lighting), clean and readable
+    at any angle.
+    """
+    prop = actor.GetProperty()
+    prop.SetColor(*color)
+    prop.SetAmbient(1.0)
+    prop.SetDiffuse(0.0)
+    prop.SetSpecular(0.0)
+    prop.LightingOff()
+    prop.EdgeVisibilityOff()
 
 
 def _ray_cast(locator, start, end):
@@ -59,7 +75,19 @@ def _ensure_channel_locator(channel):
 
 
 def _snap_to_surface(region, channels, cam_pos, cam_fwd):
-    """Ray-cast from camera through region centroid. Returns (hit_point, normal) or (None, None)."""
+    """Find the visible surface point for this region.
+
+    Strategy:
+      1. Ray from camera through centroid → first hit on this channel's mesh.
+      2. If that misses, try a local normal projection from above the centroid.
+
+    No AABB ownership check — for 3D tissue volumes, the camera hits the
+    top surface (high Z) while region cell centroids are in the interior
+    (low Z). The channel's cell locator already constrains hits to the
+    correct channel mesh.
+
+    Returns (hit_point, normal) or (None, None).
+    """
     centroid = region.centroid
     target_channel = region.channels[0] if region.is_composite else region.channel
     ch = next((c for c in channels if c["marker_name"] == target_channel), None)
@@ -72,33 +100,72 @@ def _snap_to_surface(region, channels, cam_pos, cam_fwd):
     if np.dot(centroid - cam_pos, cam_fwd) <= 0:
         return None, None
 
+    def _extract_normal(cell_id, hit_point):
+        normal = normals_arr[cell_id].copy()
+        nl = np.linalg.norm(normal)
+        if nl > 1e-9:
+            normal /= nl
+        if np.dot(normal, cam_pos - hit_point) < 0:
+            normal = -normal
+        return normal
+
+    # --- Attempt 1: ray from camera through centroid ---
     direction = centroid - cam_pos
     dist = np.linalg.norm(direction)
-    if dist < 1e-9:
-        return None, None
-    ray_end = cam_pos + (direction / dist) * dist * 2.0
+    if dist > 1e-9:
+        ray_end = cam_pos + (direction / dist) * dist * 2.0
+        cell_id, hit_point = _ray_cast(locator, cam_pos, ray_end)
+        if cell_id is not None:
+            return hit_point, _extract_normal(cell_id, hit_point)
 
-    cell_id, hit_point = _ray_cast(locator, cam_pos, ray_end)
-    if cell_id is None:
-        return None, None
-
-    # Region ownership check
+    # --- Attempt 2: local normal projection ---
+    n = region.normal
     b = region.bounds
     diag = np.sqrt((b[1]-b[0])**2 + (b[3]-b[2])**2 + (b[5]-b[4])**2)
-    pad = max(diag * 0.1, 0.2)
-    if not (b[0] - pad <= hit_point[0] <= b[1] + pad and
-            b[2] - pad <= hit_point[1] <= b[3] + pad and
-            b[4] - pad <= hit_point[2] <= b[5] + pad):
-        return None, None
+    offset = max(diag * 0.5, 5.0)
+    ray_start = centroid + n * offset
+    ray_end = centroid - n * offset
+    cell_id, hit_point = _ray_cast(locator, ray_start, ray_end)
+    if cell_id is not None:
+        normal = _extract_normal(cell_id, hit_point)
+        if np.dot(normal, cam_pos - hit_point) > 0:
+            return hit_point, normal
 
-    normal = normals_arr[cell_id].copy()
-    nl = np.linalg.norm(normal)
-    if nl > 1e-9:
-        normal /= nl
-    if np.dot(normal, cam_pos - hit_point) < 0:
-        normal = -normal
+    return None, None
 
-    return hit_point, normal
+
+def _is_occluded(hit_point, region, channels, cam_pos):
+    """Check if hit_point is occluded by any OTHER channel's mesh.
+
+    Casts a ray from camera toward hit_point on each other channel.
+    If any other channel's surface is hit significantly closer → region is hidden.
+    
+    For composite regions, skips ALL participating channels (not just the first)
+    since co-loc sites are by definition where those channels overlap.
+    """
+    # Build set of channels to skip — all channels this region belongs to
+    skip_channels = set(region.channels) if region.is_composite else {region.channel}
+    dist_to_hit = np.linalg.norm(hit_point - cam_pos)
+
+    # Tolerance must be generous — in dense tissue, channels at the same
+    # surface can differ by sub-unit distances due to mesh geometry differences.
+    tolerance = max(dist_to_hit * 0.02, 1.0)  # 2% of distance or 1 unit minimum
+
+    for ch in channels:
+        if ch["marker_name"] in skip_channels:
+            continue
+        other_loc = _ensure_channel_locator(ch)
+        direction = hit_point - cam_pos
+        dl = np.linalg.norm(direction)
+        if dl < 1e-9:
+            continue
+        ray_end = cam_pos + (direction / dl) * dl * 1.01
+        _, other_hit = _ray_cast(other_loc, cam_pos, ray_end)
+        if other_hit is not None:
+            other_dist = np.linalg.norm(other_hit - cam_pos)
+            if other_dist < dist_to_hit - tolerance:
+                return True
+    return False
 
 
 # ==========================================================================
@@ -109,14 +176,48 @@ _text_cache = {}
 
 
 def get_text_mesh(text):
-    """Return (polydata, bounds) for a label string. Cached."""
+    """Return (polydata, 2D_bounds) for a label string. Cached.
+
+    The text is extruded along Z to give it 3D thickness.
+    2D bounds are the original XY extent (before extrusion).
+    The Z dimension encodes depth — used as normal-offset during
+    surface deformation.
+    """
     if text not in _text_cache:
         vt = vtk.vtkVectorText()
         vt.SetText(text)
         vt.Update()
+
+        # Store 2D bounds before extrusion (XY extent of flat text)
+        flat_bounds = vt.GetOutput().GetBounds()
+
+        depth = config.get("TEXT_EXTRUSION_DEPTH", 0.15)
+
+        extrude = vtkLinearExtrusionFilter()
+        extrude.SetInputConnection(vt.GetOutputPort())
+        extrude.SetExtrusionTypeToVectorExtrusion()
+        extrude.SetVector(0, 0, 1)
+        extrude.SetScaleFactor(depth)
+        extrude.Update()
+
+        tri = vtkTriangleFilter()
+        tri.SetInputConnection(extrude.GetOutputPort())
+        tri.Update()
+
+        nf = vtkPolyDataNormals()
+        nf.SetInputConnection(tri.GetOutputPort())
+        nf.ComputePointNormalsOn()
+        nf.ComputeCellNormalsOn()
+        nf.ConsistencyOn()
+        nf.AutoOrientNormalsOn()
+        nf.SplittingOn()
+        nf.SetFeatureAngle(60.0)
+        nf.Update()
+
         pd = vtk.vtkPolyData()
-        pd.DeepCopy(vt.GetOutput())
-        _text_cache[text] = (pd, pd.GetBounds())
+        pd.DeepCopy(nf.GetOutput())
+
+        _text_cache[text] = (pd, flat_bounds)
     return _text_cache[text]
 
 
@@ -135,9 +236,11 @@ def preprocess_channel(channel):
 
     mesh = channel["mesh"]
     amount = config["DILATION_AMOUNT"]
-    smooth = config.get("SMOOTH_ITERATIONS", 50)
+    smooth = config.get("SMOOTH_ITERATIONS", 100)
 
     print(f"[label_placement] Dilating {marker} (amount={amount}, smooth={smooth})...")
+    print(f"[label_placement]   Original mesh: {mesh.GetNumberOfPoints()} pts, "
+          f"bounds={mesh.GetBounds()}")
 
     nf = vtkPolyDataNormals()
     nf.SetInputData(mesh)
@@ -184,7 +287,8 @@ def preprocess_channel(channel):
     loc.SetDataSet(dilated)
     loc.BuildLocator()
 
-    print(f"[label_placement] Dilated {marker}: {dilated.GetNumberOfPoints()} pts")
+    print(f"[label_placement] Dilated {marker}: {dilated.GetNumberOfPoints()} pts, "
+          f"bounds={dilated.GetBounds()}")
 
     result = (dilated, cell_normals, loc)
     _dilated_cache[marker] = result
@@ -192,26 +296,51 @@ def preprocess_channel(channel):
 
 
 def clear_channel_caches(marker_name=None):
-    """Clear cached locators and dilated meshes. Call when meshes are reloaded."""
+    """Clear cached locators, dilated meshes, and text meshes. Call when meshes are reloaded."""
     if marker_name is None:
         _channel_locators.clear()
         _dilated_cache.clear()
+        _text_cache.clear()
     else:
         _channel_locators.pop(marker_name, None)
         _dilated_cache.pop(marker_name, None)
 
 
 # ==========================================================================
+# Viewport culling
+# ==========================================================================
+
+def _is_in_viewport(renderer, point):
+    """Check if a 3D point projects to within the render window viewport."""
+    rw = renderer.GetRenderWindow()
+    if rw is None:
+        return True
+    size = rw.GetSize()
+    if size[0] < 2 or size[1] < 2:
+        return True  # window not ready yet
+    renderer.SetWorldPoint(point[0], point[1], point[2], 1.0)
+    renderer.WorldToDisplay()
+    dx, dy, dz = renderer.GetDisplayPoint()
+    if dz < 0 or dz > 1:
+        return False
+    margin = 50
+    return (-margin <= dx <= size[0] + margin and
+            -margin <= dy <= size[1] + margin)
+
+
+# ==========================================================================
 # Visibility culling
 # ==========================================================================
 
-def get_visible_regions(regions, cam_pos, cam_fwd, max_labels):
-    """Return front-facing regions sorted by distance, capped at max_labels."""
+def get_visible_regions(regions, cam_pos, cam_fwd, max_labels, renderer=None):
+    """Return front-facing regions in viewport, sorted by distance, capped at max_labels."""
     visible = []
     for r in regions:
         if r.label_text is None:
             continue
         if np.dot(r.centroid - cam_pos, cam_fwd) <= 0:
+            continue
+        if renderer is not None and not _is_in_viewport(renderer, r.centroid):
             continue
         dist = np.linalg.norm(r.centroid - cam_pos)
         visible.append((dist, r))
@@ -249,12 +378,12 @@ def render_billboard(region, anchor_pos, anchor_normal, camera, renderer):
     f = vtkFollower()
     m = vtkPolyDataMapper()
     m.SetInputData(text_pd)
+    m.ScalarVisibilityOff()
     f.SetMapper(m)
     f.SetCamera(camera)
     f.SetScale(s, s, s)
     f.SetPosition(pos.tolist())
-    f.GetProperty().SetColor(r, g, b)
-    f.GetProperty().LightingOff()
+    _style_label_actor(f, (r, g, b))
     f.SetPickable(False)
     renderer.AddActor(f)
     return [f]
@@ -312,12 +441,12 @@ def render_flagpole(region, anchor_pos, anchor_normal, camera, renderer):
     f = vtkFollower()
     tm = vtkPolyDataMapper()
     tm.SetInputData(text_pd)
+    tm.ScalarVisibilityOff()
     f.SetMapper(tm)
     f.SetCamera(camera)
     f.SetScale(s, s, s)
     f.SetPosition(top.tolist())
-    f.GetProperty().SetColor(*config["FLAGPOLE_COLOR"])
-    f.GetProperty().LightingOff()
+    _style_label_actor(f, config["FLAGPOLE_COLOR"])
     f.SetPickable(False)
     renderer.AddActor(f)
     actors.append(f)
@@ -330,12 +459,78 @@ def render_flagpole(region, anchor_pos, anchor_normal, camera, renderer):
 # ==========================================================================
 
 def _walk(start, start_n, tangent, locator, normals, n_steps, step, cam_pos):
+    """Walk along the dilated surface, recording camera-facing samples.
+
+    When the walk hits a back-facing cell or falls off the mesh,
+    extrapolates straight in the last tangent direction for extra arc
+    length so labels don't need to shrink.
+    """
     cos_thresh = config.get("WALK_NORMAL_COS_THRESHOLD", 0.5)
+    max_extrapolate = config.get("WALK_EXTRAPOLATE_STEPS", 10)
     positions, norms, tangs = [start.copy()], [start_n.copy()], [tangent.copy()]
     pos, normal, tang = start.copy(), start_n.copy(), tangent.copy()
     skips = 0
+    steps_used = 0
 
     for _ in range(n_steps):
+        steps_used += 1
+        cand = pos + tang * step
+        rs = cand + normal * step * 2.0
+        re = cand - normal * step * 2.0
+        cid, hp = _ray_cast(locator, rs, re)
+
+        if cid is None:
+            break  # fell off mesh → extrapolate below
+
+        nn = normals[cid].copy()
+        nl = np.linalg.norm(nn)
+        if nl > 1e-9:
+            nn /= nl
+
+        if np.dot(nn, cam_pos - hp) < 0:
+            break  # back-facing → extrapolate below
+
+        if np.dot(normal, nn) < cos_thresh:
+            skips += 1
+            if skips >= 3:
+                break
+            pos = hp
+            continue
+        skips = 0
+        pos, normal = hp, nn
+        tang = tang - np.dot(tang, normal) * normal
+        tl = np.linalg.norm(tang)
+        if tl < 1e-6:
+            break
+        tang /= tl
+        positions.append(pos.copy())
+        norms.append(normal.copy())
+        tangs.append(tang.copy())
+
+    # Extrapolate straight in the last tangent direction
+    n_extra = min(max_extrapolate, n_steps - steps_used)
+    for _ in range(n_extra):
+        pos = pos + tang * step
+        positions.append(pos.copy())
+        norms.append(normal.copy())
+        tangs.append(tang.copy())
+
+    return positions, norms, tangs
+
+
+def _quick_probe(start, start_n, tangent, locator, normals, step, cam_pos, max_steps=8):
+    """Fast walk to estimate available arc length in one direction.
+    Includes extrapolation estimate when walk hits back-facing/miss."""
+    cos_thresh = config.get("WALK_NORMAL_COS_THRESHOLD", 0.5)
+    max_extrapolate = config.get("WALK_EXTRAPOLATE_STEPS", 10)
+    pos, normal = start.copy(), start_n.copy()
+    tang = tangent.copy()
+    arc = 0.0
+    skips = 0
+    steps_used = 0
+
+    for _ in range(max_steps):
+        steps_used += 1
         cand = pos + tang * step
         rs = cand + normal * step * 2.0
         re = cand - normal * step * 2.0
@@ -355,19 +550,31 @@ def _walk(start, start_n, tangent, locator, normals, n_steps, step, cam_pos):
             pos = hp
             continue
         skips = 0
+        arc += np.linalg.norm(hp - pos)
         pos, normal = hp, nn
         tang = tang - np.dot(tang, normal) * normal
         tl = np.linalg.norm(tang)
         if tl < 1e-6:
             break
         tang /= tl
-        positions.append(pos.copy())
-        norms.append(normal.copy())
-        tangs.append(tang.copy())
-    return positions, norms, tangs
+
+    # Add extrapolation arc estimate
+    n_extra = min(max_extrapolate, max_steps - steps_used)
+    arc += n_extra * step
+
+    return arc
 
 
-def _deform_text(text_pd, bounds, positions, normals, tangents, height):
+def _deform_text(text_pd, bounds, positions, normals, tangents, height, cam_up):
+    """Deform extruded 3D vtkVectorText onto a surface polyline.
+
+    Coordinate mapping:
+      X → along the polyline arc (text width)
+      Y → bitangent direction (letter height, parallel-transported from cam_up)
+      Z → surface normal direction (extrusion depth → pops text out)
+
+    Uses parallel transport for the bitangent to prevent twist.
+    """
     nf = len(positions)
     if nf < 2:
         return None
@@ -379,13 +586,46 @@ def _deform_text(text_pd, bounds, positions, normals, tangents, height):
         return None
     arc_n = [a / total for a in arc]
 
-    bts = []
-    for i in range(nf):
-        bt = np.cross(normals[i], tangents[i])
+    # Parallel transport bitangent from cam_up
+    t0 = tangents[0] if isinstance(tangents[0], np.ndarray) else np.array(tangents[0])
+    bt = cam_up - np.dot(cam_up, t0) * t0
+    btl = np.linalg.norm(bt)
+    if btl < 1e-9:
+        bt = np.cross(normals[0], t0)
         btl = np.linalg.norm(bt)
-        bts.append(bt / btl if btl > 1e-9 else bt)
+        if btl > 1e-9:
+            bt = bt / btl
+            if np.dot(bt, cam_up) < 0:
+                bt = -bt
+        else:
+            bt = cam_up.copy()
+    else:
+        bt = bt / btl
 
-    pa, ba = np.array(positions), np.array(bts)
+    bts = [bt.copy()]
+    for i in range(1, nf):
+        t_i = tangents[i] if isinstance(tangents[i], np.ndarray) else np.array(tangents[i])
+        bt = bt - np.dot(bt, t_i) * t_i
+        btl = np.linalg.norm(bt)
+        if btl > 1e-9:
+            bt = bt / btl
+        else:
+            bt = cam_up - np.dot(cam_up, t_i) * t_i
+            btl = np.linalg.norm(bt)
+            bt = bt / btl if btl > 1e-9 else bts[-1].copy()
+        bts.append(bt.copy())
+
+    # Compute local outward normal at each sample: cross(tangent, bitangent)
+    local_normals = []
+    for i in range(nf):
+        t_i = tangents[i] if isinstance(tangents[i], np.ndarray) else np.array(tangents[i])
+        ln = np.cross(t_i, bts[i])
+        lnl = np.linalg.norm(ln)
+        local_normals.append(ln / lnl if lnl > 1e-9 else np.array(normals[i]))
+
+    pa = np.array(positions)
+    ba = np.array(bts)
+    na = np.array(local_normals)
     xmin, xmax, ymin, ymax = bounds[0], bounds[1], bounds[2], bounds[3]
     tw, th = xmax - xmin, ymax - ymin
     if tw < 1e-9 or th < 1e-9:
@@ -399,6 +639,8 @@ def _deform_text(text_pd, bounds, positions, normals, tangents, height):
     for i, pt in enumerate(pts):
         u = np.clip((pt[0] - xmin) / tw, 0.0, 1.0)
         v = (pt[1] - ymin) / th - 0.5
+        w = pt[2]  # extrusion depth (0 = base face, depth = top face)
+
         seg = 0
         for j in range(1, nf):
             if arc_n[j] >= u:
@@ -409,8 +651,9 @@ def _deform_text(text_pd, bounds, positions, normals, tangents, height):
         sl = arc_n[seg + 1] - arc_n[seg]
         fr = np.clip((u - arc_n[seg]) / sl if sl > 1e-9 else 0.0, 0.0, 1.0)
         p = (1 - fr) * pa[seg] + fr * pa[seg + 1]
-        bt = _norm((1 - fr) * ba[seg] + fr * ba[seg + 1])
-        new[i] = p + bt * (v * height)
+        bt_interp = _norm((1 - fr) * ba[seg] + fr * ba[seg + 1])
+        n_interp = _norm((1 - fr) * na[seg] + fr * na[seg + 1])
+        new[i] = p + bt_interp * (v * height) + n_interp * (w * height)
 
     vp = vtk.vtkPoints()
     vp.SetData(numpy_to_vtk(new, deep=True))
@@ -419,22 +662,54 @@ def _deform_text(text_pd, bounds, positions, normals, tangents, height):
 
 
 def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, cam_fwd, renderer):
-    """Surface-conforming label using dilated proxy mesh walk."""
+    """Surface-conforming label using probe-then-commit direction selection."""
     _, dil_normals, dil_locator = preprocess_channel(channel)
     text_pd, text_bounds = get_text_mesh(region.label_text)
 
     dilation = config["DILATION_AMOUNT"]
-    height = config["SURFACE_LABEL_HEIGHT"]
     r, g, b = config["SURFACE_LABEL_COLOR"]
 
+    # Size label by region extent
+    bnds = region.bounds
+    region_diag = np.sqrt((bnds[1]-bnds[0])**2 + (bnds[3]-bnds[2])**2 + (bnds[5]-bnds[4])**2)
+    height = np.clip(
+        region_diag * config.get("SURFACE_HEIGHT_FACTOR", 0.12),
+        config.get("SURFACE_MIN_HEIGHT", 0.6),
+        config.get("SURFACE_MAX_HEIGHT", 3.0),
+    )
+
     tw, th = text_bounds[1] - text_bounds[0], text_bounds[3] - text_bounds[2]
-    text_width = height * (tw / th if th > 1e-9 else 4.0)
+    text_aspect = tw / th if th > 1e-9 else 4.0
+    text_width = height * text_aspect
+
+    # === DIAGNOSTIC: trace every step ===
+    _dbg = f"[SURFACE_DBG] '{region.label_text[:30]}' ch={channel['marker_name']}"
+    print(f"{_dbg} region_diag={region_diag:.2f} height={height:.3f} text_width={text_width:.2f}")
+    print(f"{_dbg} anchor={anchor_pos} normal={anchor_normal}")
+    print(f"{_dbg} dilation={dilation}")
 
     # Project anchor onto dilated surface
     proj_s = anchor_pos + anchor_normal * dilation * 3.0
     proj_e = anchor_pos - anchor_normal * dilation
     dc, dh = _ray_cast(dil_locator, proj_s, proj_e)
     if dc is None:
+        print(f"{_dbg} FAIL: dilated projection ray missed. "
+              f"proj_s={proj_s}, proj_e={proj_e}, ray_len={np.linalg.norm(proj_s-proj_e):.3f}")
+        # Try wider ray
+        proj_s2 = anchor_pos + anchor_normal * dilation * 10.0
+        proj_e2 = anchor_pos - anchor_normal * dilation * 5.0
+        dc2, dh2 = _ray_cast(dil_locator, proj_s2, proj_e2)
+        if dc2 is not None:
+            print(f"{_dbg}   ... wider ray HIT at dist={np.linalg.norm(dh2-anchor_pos):.3f}")
+        else:
+            # Check if dilated mesh even has cells near anchor
+            closest = [0.0]*3
+            cid_ref = vtk.mutable(0)
+            sub = vtk.mutable(0)
+            d2 = vtk.mutable(0.0)
+            dil_locator.FindClosestPoint(anchor_pos.tolist(), closest, cid_ref, sub, d2)
+            print(f"{_dbg}   ... closest dilated point dist={np.sqrt(float(d2.get())):.3f} "
+                  f"at {closest}")
         return render_flagpole(region, anchor_pos, anchor_normal,
                                renderer.GetActiveCamera(), renderer)
 
@@ -442,18 +717,56 @@ def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, 
     if np.dot(dn, cam_pos - dh) < 0:
         dn = -dn
 
-    cam_right = _norm(np.cross(cam_fwd, cam_up))
-    tang = cam_right - np.dot(cam_right, dn) * dn
-    tl = np.linalg.norm(tang)
-    if tl < 1e-6:
-        tang = cam_up - np.dot(cam_up, dn) * dn
-    tang = _norm(tang)
-
     step = config["WALK_STEP"]
     steps = config["WALK_STEPS"]
+    n_probes = config.get("SURFACE_PROBE_DIRECTIONS", 6)
+    probe_steps = config.get("SURFACE_PROBE_STEPS", 8)
 
-    pf, nf_fwd, tf = _walk(dh, dn, tang, dil_locator, dil_normals, steps, step, cam_pos)
-    pb, nb_bwd, tb = _walk(dh, dn, -tang, dil_locator, dil_normals, steps, step, cam_pos)
+    print(f"{_dbg} dilated hit OK at {dh}, walk_step={step}, walk_steps={steps}")
+
+    # --- Probe directions ---
+    if hasattr(region, 'principal_axis') and region.principal_axis is not None:
+        paxis = region.principal_axis.copy()
+        base_tang = paxis - np.dot(paxis, dn) * dn
+        tl = np.linalg.norm(base_tang)
+        if tl < 1e-6:
+            cam_right = _norm(np.cross(cam_fwd, cam_up))
+            base_tang = cam_right - np.dot(cam_right, dn) * dn
+            tl = np.linalg.norm(base_tang)
+        if tl < 1e-6:
+            base_tang = cam_up - np.dot(cam_up, dn) * dn
+    else:
+        cam_right = _norm(np.cross(cam_fwd, cam_up))
+        base_tang = cam_right - np.dot(cam_right, dn) * dn
+        tl = np.linalg.norm(base_tang)
+        if tl < 1e-6:
+            base_tang = cam_up - np.dot(cam_up, dn) * dn
+    base_tang = _norm(base_tang)
+
+    best_arc = -1.0
+    best_tang = base_tang
+
+    for i in range(n_probes):
+        angle = np.pi * i / n_probes
+        cos_a, sin_a = np.cos(angle), np.sin(angle)
+        tang = (base_tang * cos_a +
+                np.cross(dn, base_tang) * sin_a +
+                dn * np.dot(dn, base_tang) * (1 - cos_a))
+        tang = _norm(tang)
+        arc_fwd = _quick_probe(dh, dn, tang, dil_locator, dil_normals,
+                                step, cam_pos, probe_steps)
+        arc_bwd = _quick_probe(dh, dn, -tang, dil_locator, dil_normals,
+                                step, cam_pos, probe_steps)
+        total = arc_fwd + arc_bwd
+        if total > best_arc:
+            best_arc = total
+            best_tang = tang.copy()
+
+    print(f"{_dbg} best_arc={best_arc:.2f} (need text_width={text_width:.2f})")
+
+    # --- Full walk ---
+    pf, nf_fwd, tf = _walk(dh, dn, best_tang, dil_locator, dil_normals, steps, step, cam_pos)
+    pb, nb_bwd, tb = _walk(dh, dn, -best_tang, dil_locator, dil_normals, steps, step, cam_pos)
     tb = [-t for t in tb]
 
     if len(pb) > 1:
@@ -463,23 +776,30 @@ def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, 
     else:
         ap, an, at = pf, nf_fwd, tf
 
+    print(f"{_dbg} walk: fwd={len(pf)} bwd={len(pb)} total={len(ap)} samples")
+
     if len(ap) < 2:
+        print(f"{_dbg} FAIL: walk too short ({len(ap)} samples)")
         return render_flagpole(region, anchor_pos, anchor_normal,
                                renderer.GetActiveCamera(), renderer)
+
+    # Orient left-to-right
+    cam_right = _norm(np.cross(cam_fwd, cam_up))
+    chord_dir = np.array(ap[-1]) - np.array(ap[0])
+    if np.dot(chord_dir, cam_right) < 0:
+        ap = ap[::-1]
+        an = an[::-1]
+        at = [-t for t in at[::-1]]
 
     chord = np.linalg.norm(np.array(ap[-1]) - np.array(ap[0]))
     arc_total = sum(np.linalg.norm(np.array(ap[i]) - np.array(ap[i - 1]))
                     for i in range(1, len(ap)))
-    if arc_total > 1e-9 and chord / arc_total < config["LOOP_THRESHOLD"]:
-        return render_flagpole(region, anchor_pos, anchor_normal,
-                               renderer.GetActiveCamera(), renderer)
 
-    # If the walk is too short relative to the text width, the deformation maps
-    # the full text onto a tiny arc — every letter gets scrunched. Fall back to
-    # flagpole instead. (Catches early termination from curvature rejection,
-    # front-face culling, or hitting the region edge.)
-    min_fraction = config.get("SURFACE_MIN_WALK_FRACTION", 0.6)
-    if arc_total < text_width * min_fraction:
+    ratio = arc_total / chord if chord > 1e-9 else 0.0
+    print(f"{_dbg} arc_total={arc_total:.2f} chord={chord:.2f} ratio={ratio:.2f}")
+
+    if chord < 1e-9 or ratio > config["LOOP_THRESHOLD"]:
+        print(f"{_dbg} FAIL: loop detected (arc/chord={ratio:.2f} > {config['LOOP_THRESHOLD']})")
         return render_flagpole(region, anchor_pos, anchor_normal,
                                renderer.GetActiveCamera(), renderer)
 
@@ -496,20 +816,28 @@ def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, 
             at = [at[i] for i in keep]
 
     if len(ap) < 2:
+        print(f"{_dbg} FAIL: trimmed to < 2 samples")
         return render_flagpole(region, anchor_pos, anchor_normal,
                                renderer.GetActiveCamera(), renderer)
 
-    deformed = _deform_text(text_pd, text_bounds, ap, an, at, height)
+    deformed = _deform_text(text_pd, text_bounds, ap, an, at, height, cam_up)
     if deformed is None:
+        print(f"{_dbg} FAIL: _deform_text returned None")
         return render_flagpole(region, anchor_pos, anchor_normal,
                                renderer.GetActiveCamera(), renderer)
+
+    # Check deformed geometry bounds
+    db = deformed.GetBounds()
+    deformed_diag = np.sqrt((db[1]-db[0])**2 + (db[3]-db[2])**2 + (db[5]-db[4])**2)
+    print(f"{_dbg} SUCCESS: deformed {deformed.GetNumberOfPoints()} pts, "
+          f"bounds_diag={deformed_diag:.3f}, bounds=({db[0]:.1f},{db[1]:.1f},{db[2]:.1f},{db[3]:.1f},{db[4]:.1f},{db[5]:.1f})")
 
     mapper = vtkPolyDataMapper()
     mapper.SetInputData(deformed)
+    mapper.ScalarVisibilityOff()
     actor = vtkActor()
     actor.SetMapper(mapper)
-    actor.GetProperty().SetColor(r, g, b)
-    actor.GetProperty().LightingOff()
+    _style_label_actor(actor, (r, g, b))
     actor.SetPickable(False)
     renderer.AddActor(actor)
     return [actor]
@@ -614,11 +942,13 @@ def _screen_offset_to_world(renderer, anchor_pos, dx_px, dy_px):
 # ==========================================================================
 
 def place_all_labels(single_regions, composite_regions, channels, renderer,
-                     label_lookup_fn=None):
-    """Place labels with nudge-based overlap resolution.
+                     interactions=None, label_lookup_fn=None):
+    """Place labels with strict priority ordering.
 
-    Surface labels first (fixed geometry). Flagpoles/billboards nudged
-    if overlapping. label_lookup_fn used for composite sub-marker labels.
+    Priority 1: Co-localization labels (surface/flagpole/billboard by zoom)
+                + their individual marker flagpoles always alongside.
+    Priority 2: Interaction labels (flagpole/billboard by gap size).
+    Priority 3: Remaining single-channel regions (not in any co-loc).
     """
     camera = renderer.GetActiveCamera()
     cam_pos = np.array(camera.GetPosition(), dtype=np.float64)
@@ -627,38 +957,45 @@ def place_all_labels(single_regions, composite_regions, channels, renderer,
     cam_fwd = _norm(cam_focal - cam_pos)
     cam_dist = np.linalg.norm(cam_pos - cam_focal)
 
+    print(f"[LABEL_DBG] cam_dist={cam_dist:.1f} "
+          f"MID_THRESHOLD={config['MID_THRESHOLD']} "
+          f"FAR_THRESHOLD={config['FAR_THRESHOLD']} "
+          f"→ {'SURFACE' if cam_dist <= config['MID_THRESHOLD'] else 'FLAGPOLE' if cam_dist <= config['FAR_THRESHOLD'] else 'BILLBOARD'}")
+
     max_labels = config["MAX_VISIBLE_LABELS"]
-    all_regions = single_regions + composite_regions
-    visible = get_visible_regions(all_regions, cam_pos, cam_fwd, max_labels)
 
     ch_by_name = {ch["marker_name"]: ch for ch in channels}
 
     actors = []
     placed_rects = []
-    counts = {"SURFACE": 0, "FLAGPOLE": 0, "BILLBOARD": 0, "nudged": 0, "rejected": 0}
+    counts = {"SURFACE": 0, "FLAGPOLE": 0, "BILLBOARD": 0,
+              "coloc": 0, "ix": 0, "nudged": 0, "rejected": 0}
 
-    # Pass 1: surface labels (fixed geometry, hard reject if overlap)
-    surface_regions = []
-    other_regions = []
-    for region in visible:
-        if pick_label_type(region, cam_dist) == "SURFACE":
-            surface_regions.append(region)
-        else:
-            other_regions.append((region, pick_label_type(region, cam_dist)))
+    # ================================================================
+    # PASS 1: Co-localization labels (highest priority)
+    # ================================================================
 
-    for region in surface_regions:
+    visible_composites = get_visible_regions(composite_regions, cam_pos, cam_fwd,
+                                              max_labels, renderer)
+
+    for region in visible_composites:
         anchor_pos, anchor_normal = _snap_to_surface(region, channels, cam_pos, cam_fwd)
         if anchor_pos is None:
             counts["rejected"] += 1
             continue
-
-        rect = _estimate_screen_rect(renderer, anchor_pos, region.label_text, "SURFACE")
-        if _any_overlap(rect, placed_rects):
+        if _is_occluded(anchor_pos, region, channels, cam_pos):
             counts["rejected"] += 1
             continue
-        placed_rects.append(rect)
 
-        if region.is_composite:
+        label_type = pick_label_type(region, cam_dist)
+
+        # --- Main co-loc label ---
+        if label_type == "SURFACE":
+            rect = _estimate_screen_rect(renderer, anchor_pos, region.label_text, "SURFACE")
+            if _any_overlap(rect, placed_rects):
+                counts["rejected"] += 1
+                continue
+            placed_rects.append(rect)
             primary_ch = ch_by_name.get(region.channels[0])
             if primary_ch:
                 actors.extend(render_surface(region, anchor_pos, anchor_normal,
@@ -667,38 +1004,98 @@ def place_all_labels(single_regions, composite_regions, channels, renderer,
                 actors.extend(render_flagpole(region, anchor_pos, anchor_normal,
                                               camera, renderer))
             counts["SURFACE"] += 1
-
-            # Fanned-out sub-flagpoles for individual markers
-            cam_right = _norm(np.cross(cam_fwd, cam_up))
-            n_markers = len(region.channels)
-            fan_spacing = config.get("FLAGPOLE_FAN_SPACING", 2.0)
-
-            for idx, marker in enumerate(region.channels):
-                marker_text = label_lookup_fn(marker) if label_lookup_fn else None
-                if marker_text is None:
-                    continue
-                lateral_offset = (idx - (n_markers - 1) / 2.0) * fan_spacing
-                offset_pos = anchor_pos + cam_right * lateral_offset
-
-                sub_label_pos = _compute_label_position("FLAGPOLE", offset_pos, anchor_normal, cam_pos)
-                sub_rect = _estimate_screen_rect(renderer, sub_label_pos, marker_text, "FLAGPOLE")
-
-                if _any_overlap(sub_rect, placed_rects):
-                    nudged_rect, (dx, dy) = _try_nudge(sub_rect, placed_rects)
-                    if nudged_rect is None:
-                        counts["rejected"] += 1
-                        continue
-                    sub_rect = nudged_rect
-                    offset_pos = offset_pos + _screen_offset_to_world(renderer, offset_pos, dx, dy)
-                    counts["nudged"] += 1
-
-                placed_rects.append(sub_rect)
-                sub = Region(channel=marker, label_text=marker_text,
-                             centroid=offset_pos, bounds=region.bounds,
-                             normal=anchor_normal, n_cells=0)
-                actors.extend(render_flagpole(sub, offset_pos, anchor_normal, camera, renderer))
-                counts["FLAGPOLE"] += 1
         else:
+            label_pos = _compute_label_position(label_type, anchor_pos, anchor_normal, cam_pos)
+            rect = _estimate_screen_rect(renderer, label_pos, region.label_text, label_type)
+            if _any_overlap(rect, placed_rects):
+                nudged_rect, (dx, dy) = _try_nudge(rect, placed_rects)
+                if nudged_rect is None:
+                    counts["rejected"] += 1
+                    continue
+                rect = nudged_rect
+                anchor_pos = anchor_pos + _screen_offset_to_world(renderer, anchor_pos, dx, dy)
+                counts["nudged"] += 1
+            placed_rects.append(rect)
+            if label_type == "BILLBOARD":
+                actors.extend(render_billboard(region, anchor_pos, anchor_normal,
+                                               camera, renderer))
+                counts["BILLBOARD"] += 1
+            else:
+                actors.extend(render_flagpole(region, anchor_pos, anchor_normal,
+                                               camera, renderer))
+                counts["FLAGPOLE"] += 1
+
+        counts["coloc"] += 1
+
+        # --- Individual marker flagpoles alongside the co-loc label ---
+        # Always placed regardless of zoom level.
+        cam_right = _norm(np.cross(cam_fwd, cam_up))
+        n_markers = len(region.channels)
+        fan_spacing = config.get("FLAGPOLE_FAN_SPACING", 2.0)
+
+        for idx, marker in enumerate(region.channels):
+            marker_text = label_lookup_fn(marker) if label_lookup_fn else None
+            if marker_text is None:
+                continue
+            lateral_offset = (idx - (n_markers - 1) / 2.0) * fan_spacing
+            offset_pos = anchor_pos + cam_right * lateral_offset
+
+            sub_label_pos = _compute_label_position("FLAGPOLE", offset_pos, anchor_normal, cam_pos)
+            sub_rect = _estimate_screen_rect(renderer, sub_label_pos, marker_text, "FLAGPOLE")
+
+            if _any_overlap(sub_rect, placed_rects):
+                nudged_rect, (dx, dy) = _try_nudge(sub_rect, placed_rects)
+                if nudged_rect is None:
+                    counts["rejected"] += 1
+                    continue
+                sub_rect = nudged_rect
+                offset_pos = offset_pos + _screen_offset_to_world(renderer, offset_pos, dx, dy)
+                counts["nudged"] += 1
+
+            placed_rects.append(sub_rect)
+            sub = Region(channel=marker, label_text=marker_text,
+                         centroid=offset_pos, bounds=region.bounds,
+                         normal=anchor_normal, n_cells=0)
+            actors.extend(render_flagpole(sub, offset_pos, anchor_normal, camera, renderer))
+            counts["FLAGPOLE"] += 1
+
+    # ================================================================
+    # PASS 2: Interaction labels
+    # ================================================================
+
+    if interactions:
+        ix_actors = place_interaction_labels(interactions, placed_rects, renderer)
+        actors.extend(ix_actors)
+        counts["ix"] = len(ix_actors)
+
+    # ================================================================
+    # PASS 3: Single-channel regions (skip those in co-locs)
+    # ================================================================
+
+    non_coloc_singles = [r for r in single_regions if not r.has_coloc]
+    visible_singles = get_visible_regions(non_coloc_singles, cam_pos, cam_fwd,
+                                           max_labels, renderer)
+
+    for region in visible_singles:
+        label_type = pick_label_type(region, cam_dist)
+        anchor_pos, anchor_normal = _snap_to_surface(region, channels, cam_pos, cam_fwd)
+
+        if anchor_pos is None or _is_occluded(anchor_pos, region, channels, cam_pos):
+            # No valid surface point — force flagpole/billboard, never surface.
+            # The fabricated centroid anchor is in empty space; render_surface
+            # would fail the dilated projection ray and fall back to flagpole anyway.
+            to_cam = _norm(cam_pos - region.centroid)
+            anchor_pos = region.centroid + to_cam * 2.0
+            anchor_normal = to_cam
+            if label_type == "SURFACE":
+                label_type = "FLAGPOLE"
+
+        if label_type == "SURFACE":
+            rect = _estimate_screen_rect(renderer, anchor_pos, region.label_text, "SURFACE")
+            if _any_overlap(rect, placed_rects):
+                counts["rejected"] += 1
+                continue
+            placed_rects.append(rect)
             ch = ch_by_name.get(region.channel)
             if ch:
                 actors.extend(render_surface(region, anchor_pos, anchor_normal,
@@ -707,40 +1104,33 @@ def place_all_labels(single_regions, composite_regions, channels, renderer,
                 actors.extend(render_flagpole(region, anchor_pos, anchor_normal,
                                               camera, renderer))
             counts["SURFACE"] += 1
-
-    # Pass 2: flagpoles and billboards with nudging
-    for region, label_type in other_regions:
-        anchor_pos, anchor_normal = _snap_to_surface(region, channels, cam_pos, cam_fwd)
-        if anchor_pos is None:
-            to_cam = _norm(cam_pos - region.centroid)
-            anchor_pos = region.centroid + to_cam * 2.0
-            anchor_normal = to_cam
-
-        label_pos = _compute_label_position(label_type, anchor_pos, anchor_normal, cam_pos)
-        rect = _estimate_screen_rect(renderer, label_pos, region.label_text, label_type)
-
-        if _any_overlap(rect, placed_rects):
-            nudged_rect, (dx, dy) = _try_nudge(rect, placed_rects)
-            if nudged_rect is None:
-                counts["rejected"] += 1
-                continue
-            rect = nudged_rect
-            world_offset = _screen_offset_to_world(renderer, anchor_pos, dx, dy)
-            anchor_pos = anchor_pos + world_offset
+        else:
             label_pos = _compute_label_position(label_type, anchor_pos, anchor_normal, cam_pos)
-            counts["nudged"] += 1
+            rect = _estimate_screen_rect(renderer, label_pos, region.label_text, label_type)
 
-        placed_rects.append(rect)
+            if _any_overlap(rect, placed_rects):
+                nudged_rect, (dx, dy) = _try_nudge(rect, placed_rects)
+                if nudged_rect is None:
+                    counts["rejected"] += 1
+                    continue
+                rect = nudged_rect
+                world_offset = _screen_offset_to_world(renderer, anchor_pos, dx, dy)
+                anchor_pos = anchor_pos + world_offset
+                counts["nudged"] += 1
 
-        if label_type == "BILLBOARD":
-            actors.extend(render_billboard(region, anchor_pos, anchor_normal, camera, renderer))
-            counts["BILLBOARD"] += 1
-        elif label_type == "FLAGPOLE":
-            actors.extend(render_flagpole(region, anchor_pos, anchor_normal, camera, renderer))
-            counts["FLAGPOLE"] += 1
+            placed_rects.append(rect)
+            if label_type == "BILLBOARD":
+                actors.extend(render_billboard(region, anchor_pos, anchor_normal,
+                                               camera, renderer))
+                counts["BILLBOARD"] += 1
+            else:
+                actors.extend(render_flagpole(region, anchor_pos, anchor_normal,
+                                               camera, renderer))
+                counts["FLAGPOLE"] += 1
 
-    print(f"[label_placement] dist={cam_dist:.1f} visible={len(visible)}/{len(all_regions)} "
+    print(f"[label_placement] dist={cam_dist:.1f} "
           f"S={counts['SURFACE']} F={counts['FLAGPOLE']} B={counts['BILLBOARD']} "
+          f"coloc={counts['coloc']} ix={counts['ix']} "
           f"nudged={counts['nudged']} rejected={counts['rejected']}")
 
     return actors, placed_rects
@@ -763,12 +1153,12 @@ def render_interaction_billboard(interaction, camera, renderer):
     f = vtkFollower()
     m = vtkPolyDataMapper()
     m.SetInputData(text_pd)
+    m.ScalarVisibilityOff()
     f.SetMapper(m)
     f.SetCamera(camera)
     f.SetScale(scale, scale, scale)
     f.SetPosition(pos.tolist())
-    f.GetProperty().SetColor(r, g, b)
-    f.GetProperty().LightingOff()
+    _style_label_actor(f, (r, g, b))
     f.SetPickable(False)
     renderer.AddActor(f)
     return [f]
@@ -822,12 +1212,12 @@ def render_interaction_flagpole(interaction, camera, renderer):
     f = vtkFollower()
     tm = vtkPolyDataMapper()
     tm.SetInputData(text_pd)
+    tm.ScalarVisibilityOff()
     f.SetMapper(tm)
     f.SetCamera(camera)
     f.SetScale(scale, scale, scale)
     f.SetPosition(top.tolist())
-    f.GetProperty().SetColor(r, g, b)
-    f.GetProperty().LightingOff()
+    _style_label_actor(f, (r, g, b))
     f.SetPickable(False)
     renderer.AddActor(f)
     actors.append(f)
@@ -835,34 +1225,109 @@ def render_interaction_flagpole(interaction, camera, renderer):
     return actors
 
 
+def _cluster_interactions(interactions, cluster_radius):
+    """Group interactions by key, then greedy radius-based spatial clustering.
+
+    Returns list of dicts representing one clustered interaction site:
+        {label_text, centroid, median_gap, normal, n_members, key}
+    """
+    from collections import defaultdict
+
+    by_key = defaultdict(list)
+    for ix in interactions:
+        if ix.label_text is not None:
+            by_key[ix.key].append(ix)
+
+    clustered = []
+
+    for key, members in by_key.items():
+        assigned = [False] * len(members)
+
+        for i in range(len(members)):
+            if assigned[i]:
+                continue
+
+            cluster = [members[i]]
+            assigned[i] = True
+
+            changed = True
+            while changed:
+                changed = False
+                for j in range(len(members)):
+                    if assigned[j]:
+                        continue
+                    for cm in cluster:
+                        if np.linalg.norm(members[j].midpoint - cm.midpoint) < cluster_radius:
+                            cluster.append(members[j])
+                            assigned[j] = True
+                            changed = True
+                            break
+
+            all_points = []
+            for ix in cluster:
+                all_points.append(ix.closest_a)
+                all_points.append(ix.closest_b)
+            all_points = np.array(all_points)
+            centroid = all_points.mean(axis=0)
+
+            gaps = sorted(ix.gap for ix in cluster)
+            median_gap = gaps[len(gaps) // 2]
+
+            avg_n = np.mean([ix.normal for ix in cluster], axis=0)
+            nl = np.linalg.norm(avg_n)
+            normal = avg_n / nl if nl > 1e-9 else np.array([0.0, 0.0, 1.0])
+
+            clustered.append({
+                "label_text": cluster[0].label_text,
+                "centroid": centroid,
+                "median_gap": median_gap,
+                "normal": normal,
+                "n_members": len(cluster),
+                "key": key,
+            })
+
+    return clustered
+
+
 def place_interaction_labels(interactions, placed_rects, renderer):
-    """Place interaction labels (pass 3). Nudges to avoid existing labels."""
+    """Place interaction labels with spatial clustering and nudging."""
+    from .interactions import Interaction as _Interaction
+
     camera = renderer.GetActiveCamera()
     cam_pos = np.array(camera.GetPosition(), dtype=np.float64)
     cam_focal = np.array(camera.GetFocalPoint(), dtype=np.float64)
     cam_fwd = _norm(cam_focal - cam_pos)
+
     min_gap = config.get("INTERACTION_BILLBOARD_MIN_GAP", 2.0)
+    max_labels = config.get("MAX_INTERACTION_LABELS", 8)
+    cluster_radius = config.get("INTERACTION_CLUSTER_RADIUS", 6.0)
+
+    clusters = _cluster_interactions(interactions, cluster_radius)
+    clusters.sort(key=lambda c: -c["n_members"])
+    clusters = clusters[:max_labels]
 
     actors = []
     n_billboard = n_flagpole = n_nudged = n_rejected = 0
 
-    for ix in interactions:
-        if ix.label_text is None:
+    for cl in clusters:
+        centroid = cl["centroid"]
+
+        if np.dot(centroid - cam_pos, cam_fwd) <= 0:
             continue
-        if np.dot(ix.midpoint - cam_pos, cam_fwd) <= 0:
+        if not _is_in_viewport(renderer, centroid):
             continue
 
-        if ix.gap >= min_gap:
+        if cl["median_gap"] >= min_gap:
             label_type = "BILLBOARD"
-            to_cam = _norm(cam_pos - ix.midpoint)
-            label_pos = ix.midpoint + to_cam * config.get("INTERACTION_BILLBOARD_OFFSET", 2.0)
+            to_cam = _norm(cam_pos - centroid)
+            label_pos = centroid + to_cam * config.get("INTERACTION_BILLBOARD_OFFSET", 2.0)
         else:
             label_type = "FLAGPOLE"
-            to_cam = _norm(cam_pos - ix.midpoint)
-            pole_dir = _norm(ix.normal + to_cam)
-            label_pos = ix.midpoint + pole_dir * config.get("INTERACTION_FLAGPOLE_HEIGHT", 3.0)
+            to_cam = _norm(cam_pos - centroid)
+            pole_dir = _norm(cl["normal"] + to_cam)
+            label_pos = centroid + pole_dir * config.get("INTERACTION_FLAGPOLE_HEIGHT", 3.0)
 
-        rect = _estimate_screen_rect(renderer, label_pos, ix.label_text, label_type)
+        rect = _estimate_screen_rect(renderer, label_pos, cl["label_text"], label_type)
 
         if _any_overlap(rect, placed_rects):
             nudged_rect, (dx, dy) = _try_nudge(rect, placed_rects)
@@ -874,14 +1339,26 @@ def place_interaction_labels(interactions, placed_rects, renderer):
 
         placed_rects.append(rect)
 
-        if ix.gap >= min_gap:
-            actors.extend(render_interaction_billboard(ix, camera, renderer))
+        merged_ix = _Interaction(
+            midpoint=centroid,
+            gap=cl["median_gap"],
+            axis=np.array([0.0, 0.0, 1.0]),
+            normal=cl["normal"],
+            key=cl["key"],
+            label_text=cl["label_text"],
+            closest_a=centroid,
+            closest_b=centroid,
+        )
+
+        if cl["median_gap"] >= min_gap:
+            actors.extend(render_interaction_billboard(merged_ix, camera, renderer))
             n_billboard += 1
         else:
-            actors.extend(render_interaction_flagpole(ix, camera, renderer))
+            actors.extend(render_interaction_flagpole(merged_ix, camera, renderer))
             n_flagpole += 1
 
-    print(f"[label_placement] interactions: billboard={n_billboard} flagpole={n_flagpole} "
+    print(f"[label_placement] interactions: {len(interactions)} raw -> {len(clusters)} clusters, "
+          f"billboard={n_billboard} flagpole={n_flagpole} "
           f"nudged={n_nudged} rejected={n_rejected}")
     return actors
 
@@ -902,8 +1379,8 @@ def render_cluster_label(cluster, camera, renderer):
     text_pd, _ = get_text_mesh(cluster.label_text)
     cam_pos = np.array(camera.GetPosition(), dtype=np.float64)
 
-    base_scale = config.get("CLUSTER_LABEL_BASE_SCALE", 0.5)
-    extent_factor = config.get("CLUSTER_EXTENT_SCALE_FACTOR", 20.0)
+    base_scale = config.get("CLUSTER_LABEL_BASE_SCALE", 1.0)
+    extent_factor = config.get("CLUSTER_EXTENT_SCALE_FACTOR", 50.0)
     offset = config.get("CLUSTER_LABEL_OFFSET", 5.0)
     r, g, b = config.get("CLUSTER_LABEL_COLOR", (1.0, 1.0, 0.8))
 
@@ -914,12 +1391,12 @@ def render_cluster_label(cluster, camera, renderer):
     f = vtkFollower()
     m = vtkPolyDataMapper()
     m.SetInputData(text_pd)
+    m.ScalarVisibilityOff()
     f.SetMapper(m)
     f.SetCamera(camera)
     f.SetScale(scale, scale, scale)
     f.SetPosition(pos.tolist())
-    f.GetProperty().SetColor(r, g, b)
-    f.GetProperty().LightingOff()
+    _style_label_actor(f, (r, g, b))
     f.SetPickable(False)
     renderer.AddActor(f)
     return [f]
@@ -948,10 +1425,9 @@ def place_labels_hierarchical(hierarchy, single_regions, composite_regions,
     # None → individual region labels (close zoom)
     if clusters is None:
         actors, placed_rects = place_all_labels(single_regions, composite_regions,
-                                                 channels, renderer, label_lookup_fn)
-        if interactions:
-            ix_actors = place_interaction_labels(interactions, placed_rects, renderer)
-            actors.extend(ix_actors)
+                                                 channels, renderer,
+                                                 interactions=interactions,
+                                                 label_lookup_fn=label_lookup_fn)
         return actors
 
     # Cluster or overview
@@ -964,6 +1440,8 @@ def place_labels_hierarchical(hierarchy, single_regions, composite_regions,
             continue
         if np.dot(cl.centroid - cam_pos, cam_fwd) <= 0:
             continue
+        if not _is_in_viewport(renderer, cl.centroid):
+            continue
         d = np.linalg.norm(cl.centroid - cam_pos)
         visible.append((d, cl))
     visible.sort(key=lambda x: x[0])
@@ -974,12 +1452,14 @@ def place_labels_hierarchical(hierarchy, single_regions, composite_regions,
     n_placed = n_nudged = n_rejected = 0
 
     for cl in visible:
+        cam_up_cl = _norm(np.array(camera.GetViewUp(), dtype=np.float64))
+        cam_right_cl = _norm(np.cross(cam_fwd, cam_up_cl))
         to_camera = _norm(cam_pos - cl.centroid)
         cluster_offset = config.get("CLUSTER_LABEL_OFFSET", 5.0)
         label_pos = cl.centroid + to_camera * cluster_offset
 
         cx, cy = _world_to_screen(renderer, label_pos)
-        offset_pt = label_pos + np.array([cl.extent / 2, 0, 0])
+        offset_pt = label_pos + cam_right_cl * (cl.extent / 2)
         ox, oy = _world_to_screen(renderer, offset_pt)
         half_w = max(abs(ox - cx), 30.0) + padding
         half_h = max(half_w * 0.3, 15.0) + padding

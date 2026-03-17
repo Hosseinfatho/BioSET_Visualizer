@@ -1290,14 +1290,20 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 if view:
                     view.update()
 
+    def refresh_labels():
+        """Force label recompute and redraw for the current camera position."""
+        label_mgr = _refs.get("label_manager")
+        if label_mgr and label_mgr.update():
+            v = _refs.get("view")
+            if v:
+                v.update()
+
     def setup_label_interaction_observer(interactor):
         """Register EndInteractionEvent observer to refresh labels on camera move."""
         def _on_end_interaction(obj, event):
-            label_mgr = _refs.get("label_manager")
-            if label_mgr and label_mgr.update():
-                view = _refs.get("view")
-                if view:
-                    view.update()
+            if state.anchor_labels:
+                return  # labels are pinned — skip recompute
+            refresh_labels()
 
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
         print("[callbacks] Label EndInteractionEvent observer registered")
@@ -1805,6 +1811,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.trigger("on_hover")(on_hover)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer
+    ctrl.refresh_labels = refresh_labels
     ctrl.check_label_setup = check_label_setup
     ctrl.setup_label_interaction_observer = setup_label_interaction_observer
 

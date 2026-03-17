@@ -188,7 +188,10 @@ class LabelSceneManager:
             )
             from .hierarchy import RegionHierarchy
             from .interactions import detect_interactions
-            from .placement import preprocess_channel
+            from .placement import preprocess_channel, clear_channel_caches
+            from .settings import label_config as config
+
+            clear_channel_caches()  # invalidate stale locators/dilation from previous runs
 
             # ----------------------------------------------------------
             # Step 1: Extract geometry for each channel
@@ -222,7 +225,7 @@ class LabelSceneManager:
             # Step 2: Co-localization detection between channel pairs
             # ----------------------------------------------------------
             overlap_data = {}
-            if len(channels) > 1:
+            if config.get("DETECT_COLOC", True) and len(channels) > 1:
                 from itertools import combinations as _combs
                 for ch_a, ch_b in _combs(channels, 2):
                     ma, mb = ch_a["marker_name"], ch_b["marker_name"]
@@ -250,9 +253,11 @@ class LabelSceneManager:
             # ----------------------------------------------------------
             # Step 5: Interaction detection
             # ----------------------------------------------------------
-            interactions = detect_interactions(
-                single_regions, composite_regions, self._label_lookup_fn
-            )
+            interactions = []
+            if config.get("DETECT_INTERACTIONS", True):
+                interactions = detect_interactions(
+                    single_regions, composite_regions, self._label_lookup_fn
+                )
 
             # ----------------------------------------------------------
             # Step 6: Preprocess dilated meshes for SURFACE labels

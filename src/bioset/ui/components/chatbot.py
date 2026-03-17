@@ -174,3 +174,12 @@ def chatbot_section(state, ctrl):
                                 color="grey",
                                 classes="flex-grow-1",
                             )
+                        # Anchor toggle — freezes label positions while rotating
+                        with html.Div(classes="d-flex align-center mt-1"):
+                            vuetify.VSwitch(
+                                v_model=("anchor_labels",),
+                                label="Anchor labels",
+                                hide_details=True,
+                                dense=True,
+                                classes="mt-0",
+                            )

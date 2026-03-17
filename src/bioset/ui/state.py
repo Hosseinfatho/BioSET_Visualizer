@@ -253,6 +253,9 @@ def init_state(state):
     state.setdefault("export_chat", True)
     state.setdefault("export_bookmarks", True)
 
+    # Label anchor state
+    state.setdefault("anchor_labels", False)  # When True, labels stay pinned on camera move
+
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""
     return DEFAULT_CHANNEL_COLORS[index % len(DEFAULT_CHANNEL_COLORS)]
@@ -510,6 +513,12 @@ def register_state_change_handlers(state, ctrl):
         """When OV category changes, refresh names list."""
         if hasattr(ctrl, "ov_bookmark_refresh_names"):
             ctrl.ov_bookmark_refresh_names()
+
+    @state.change("anchor_labels")
+    def on_anchor_labels_change(anchor_labels, **kwargs):
+        # When un-anchoring, immediately recompute labels for current camera
+        if not anchor_labels and hasattr(ctrl, 'refresh_labels'):
+            ctrl.refresh_labels()
 
     @state.change("analysis_channels")
     def on_analysis_channels_change(analysis_channels, **kwargs):

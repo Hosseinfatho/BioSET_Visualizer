@@ -28,7 +28,7 @@ class Region:
     _next_id = 0
 
     def __init__(self, channel, label_text, centroid, bounds, normal,
-                 n_cells, channels=None):
+                 n_cells, channels=None, principal_axis=None):
         self.id = Region._next_id
         Region._next_id += 1
 
@@ -39,6 +39,11 @@ class Region:
         self.bounds = bounds
         self.normal = np.asarray(normal, dtype=np.float64)
         self.n_cells = n_cells
+
+        if principal_axis is not None:
+            self.principal_axis = np.asarray(principal_axis, dtype=np.float64)
+        else:
+            self.principal_axis = None
 
         self.is_composite = len(self.channels) > 1
         self.has_coloc = False
@@ -184,6 +189,7 @@ def build_regions(channels, overlap_data, label_lookup_fn):
                 bounds=info["bounds"],
                 normal=normal,
                 n_cells=info["n_cells"],
+                principal_axis=info.get("principal_axis"),
             )
             single_regions.append(r)
             region_map[(marker, rid)] = r
@@ -261,6 +267,7 @@ def _split_regions(mesh, rids):
                 "n_cells": n_cells,
                 "bounds": _bounds(pts),
                 "cell_indices": cell_indices,
+                "principal_axis": _principal_axis(centroids),
             }
             continue
 
@@ -281,6 +288,7 @@ def _split_regions(mesh, rids):
                 "n_cells": len(sub_cells),
                 "bounds": _bounds(pts),
                 "cell_indices": sub_cells,
+                "principal_axis": _principal_axis(sub_centroids),
             }
 
     arr = numpy_to_vtk(new_rids, deep=True)
@@ -299,6 +307,20 @@ def _cell_centroids(mesh, cell_indices):
         pts = [points[cell.GetPointId(i)] for i in range(cell.GetNumberOfPoints())]
         centroids.append(np.mean(pts, axis=0))
     return np.array(centroids)
+
+
+def _principal_axis(centroids):
+    """Compute the first principal axis (direction of maximum variance) of a point set."""
+    if len(centroids) < 3:
+        return np.array([1.0, 0.0, 0.0])
+    centered = centroids - np.mean(centroids, axis=0)
+    try:
+        _, _, vh = np.linalg.svd(centered, full_matrices=False)
+        axis = vh[0]
+        n = np.linalg.norm(axis)
+        return axis / n if n > 1e-9 else np.array([1.0, 0.0, 0.0])
+    except Exception:
+        return np.array([1.0, 0.0, 0.0])
 
 
 def _pca_split(cell_indices, centroids, min_cells, max_depth, depth=0):
