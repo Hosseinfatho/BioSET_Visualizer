@@ -53,7 +53,10 @@ def init_state(state):
     state.setdefault("bookmark_open", False)
     state.setdefault("bookmark_snapshot_names", [])
     state.setdefault("bookmark_selected_name", "Name")
+    state.setdefault("bookmark_categories", [])
+    state.setdefault("bookmark_selected_category", "Uncategorized")
     state.setdefault("bookmark_form_dialog", False)
+    state.setdefault("bookmark_form_category", "Uncategorized")
     state.setdefault("bookmark_form_name", "")
     state.setdefault("bookmark_form_description", "")
     state.setdefault("bookmark_form_new_comment", "")
@@ -62,16 +65,30 @@ def init_state(state):
     state.setdefault("bookmark_form_minimized", False)
     state.setdefault("bookmark_dataset_id", "default")   # per-dataset folder under recordings
     state.setdefault("bookmark_edit_title", "")
+    state.setdefault("bookmark_edit_category", "")
     state.setdefault("bookmark_edit_description", "")
     state.setdefault("bookmark_edit_comment", "")
     state.setdefault("bookmark_export_screenshot_dialog", False)
     state.setdefault("bookmark_export_screenshot_name", "")
     state.setdefault("bookmark_export_screenshot_caption", "")
     state.setdefault("bookmark_capture_from_nov", False)  # True when saving from NOV popup
+    # Bookmark flags overlay (Show category): visible, list of flags, popup for one flag
+    state.setdefault("bookmark_flags_visible", False)
+    state.setdefault("bookmark_flags_data", [])
+    state.setdefault("bookmark_flag_popup", None)  # { name, category, channels_active, description } or null
+    state.setdefault("bookmark_flag_popup_html", "")  # single HTML string for popup body (no extra layout)
+    state.setdefault("bookmark_flag_popup_screen", "")   # "x,y" for positioning popup
+    state.setdefault("bookmark_flag_popup_left", 0)
+    state.setdefault("bookmark_flag_popup_top", 0)
+    state.setdefault("bookmark_list_items", [])  # list of { name, category, description, thumbnail } for selected category
 
     # OV bookmark (Optimal View-only bookmarks inside NOV popup)
+    state.setdefault("ov_bookmark_categories", ["Uncategorized"])
+    state.setdefault("ov_bookmark_selected_category", "Uncategorized")
     state.setdefault("ov_bookmark_snapshot_names", [])
     state.setdefault("ov_bookmark_selected_name", "")
+    state.setdefault("ov_bookmark_flags_visible", False)
+    state.setdefault("ov_bookmark_flags_data", [])
 
     # Right drawer
     state.setdefault("right_drawer_open", False)
@@ -139,6 +156,7 @@ def init_state(state):
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
+    state.setdefault("heatmap_outline_only", False)  # If True, show only tile outlines (wireframe); intensity per-tile
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
@@ -161,8 +179,8 @@ def init_state(state):
     state.setdefault("nov_show_rect", False)  # show 2D rectangle overlay on main view
     state.setdefault("nov_rect_x", 0.35)  # 0-1 left
     state.setdefault("nov_rect_y", 0.35)  # 0-1 bottom
-    state.setdefault("nov_rect_w", 0.3)
-    state.setdefault("nov_rect_h", 0.3)
+    state.setdefault("nov_rect_w", 0.2)   # 20% of view
+    state.setdefault("nov_rect_h", 0.2)   # 20% of view
     # Lens drag (Trame-only: client sets these via v_on; server commits on nov_dragging -> false)
     state.setdefault("nov_dragging", False)
     state.setdefault("nov_drag_start_rect_x", 0.35)
@@ -293,7 +311,7 @@ def register_state_change_handlers(state, ctrl):
         try:
             parts = nov_drag_live_str.strip().split(",")
             if len(parts) >= 2:
-                side = float(getattr(state, "nov_rect_w", 0.3))
+                side = float(getattr(state, "nov_rect_w", 0.2))
                 side = max(0.05, min(0.9, side))
                 x = max(0, min(1 - side, float(parts[0])))
                 y = max(0, min(1 - side, float(parts[1])))
@@ -350,6 +368,11 @@ def register_state_change_handlers(state, ctrl):
     @state.change("heatmap_combination")
     def on_heatmap_combination_change(heatmap_combination, **kwargs):
         print(f"[state] Heatmap combination changed: {heatmap_combination}")
+        if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
+    @state.change("heatmap_outline_only")
+    def on_heatmap_outline_only_change(heatmap_outline_only, **kwargs):
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
 
@@ -450,13 +473,36 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("bookmark_open")
     def on_bookmark_open_change(bookmark_open, **kwargs):
-        if bookmark_open and hasattr(ctrl, "bookmark_refresh_names"):
-            ctrl.bookmark_refresh_names()
+        if bookmark_open:
+            if hasattr(ctrl, "bookmark_refresh_categories"):
+                ctrl.bookmark_refresh_categories()
+            if hasattr(ctrl, "bookmark_refresh_list"):
+                ctrl.bookmark_refresh_list()
+        else:
+            if getattr(state, "bookmark_flags_visible", False) and hasattr(ctrl, "bookmark_hide_flags"):
+                ctrl.bookmark_hide_flags()
+
+    @state.change("bookmark_selected_category")
+    def on_bookmark_selected_category_change(bookmark_selected_category, **kwargs):
+        if hasattr(ctrl, "bookmark_refresh_list"):
+            ctrl.bookmark_refresh_list()
 
     @state.change("nov_panel_visible")
     def on_nov_panel_visible_change(nov_panel_visible, **kwargs):
-        """When Optimal View popup becomes visible, refresh OV bookmarks list."""
-        if nov_panel_visible and hasattr(ctrl, "ov_bookmark_refresh_names"):
+        """When Optimal View popup becomes visible, refresh OV categories and names; when closing, hide OV flags."""
+        if nov_panel_visible:
+            if hasattr(ctrl, "ov_bookmark_refresh_categories"):
+                ctrl.ov_bookmark_refresh_categories()
+            if hasattr(ctrl, "ov_bookmark_refresh_names"):
+                ctrl.ov_bookmark_refresh_names()
+        else:
+            if getattr(state, "ov_bookmark_flags_visible", False) and hasattr(ctrl, "ov_bookmark_hide_flags"):
+                ctrl.ov_bookmark_hide_flags()
+
+    @state.change("ov_bookmark_selected_category")
+    def on_ov_bookmark_selected_category_change(ov_bookmark_selected_category, **kwargs):
+        """When OV category changes, refresh names list."""
+        if hasattr(ctrl, "ov_bookmark_refresh_names"):
             ctrl.ov_bookmark_refresh_names()
 
     @state.change("analysis_channels")

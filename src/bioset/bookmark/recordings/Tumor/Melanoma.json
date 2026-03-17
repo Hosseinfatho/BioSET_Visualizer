@@ -1,0 +1,166 @@
+{
+  "id": "3fd4c957-59f7-48ba-8247-b29256fbc5a2",
+  "title": "Melanoma",
+  "category": "Tumor",
+  "created": "2026-03-14T17:13:27Z",
+  "updated": "2026-03-16T19:25:09Z",
+  "notes": "increasing SOX10 around Hoechst ",
+  "camera": {
+    "position": [
+      257.20323128803966,
+      510.62791224354277,
+      316.2560351699362
+    ],
+    "focalPoint": [
+      269.3881370333612,
+      544.0312868455193,
+      43.68154597648012
+    ],
+    "viewUp": [
+      0.022128017702780466,
+      0.9922116194683364,
+      0.12258243358885826
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FFFF00",
+      "range": [
+        3.0,
+        95.0
+      ]
+    },
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        11.0,
+        100.0
+      ]
+    },
+    {
+      "id": 7,
+      "name": "SOX10",
+      "color": "#00FF00",
+      "range": [
+        6.0,
+        86.0
+      ]
+    },
+    {
+      "id": 10,
+      "name": "MITF",
+      "color": "#0000FF",
+      "range": [
+        79.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    7,
+    0,
+    3,
+    10
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 3064,
+    "height": 1606
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          257.20323128803966,
+          510.62791224354277,
+          316.2560351699362
+        ],
+        "focalPoint": [
+          269.3881370333612,
+          544.0312868455193,
+          43.68154597648012
+        ],
+        "viewUp": [
+          0.022128017702780466,
+          0.9922116194683364,
+          0.12258243358885826
+        ]
+      },
+      "notes": "increasing SOX10 around Hoechst ",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FFFF00",
+          "range": [
+            3.0,
+            95.0
+          ]
+        },
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            11.0,
+            100.0
+          ]
+        },
+        {
+          "id": 7,
+          "name": "SOX10",
+          "color": "#00FF00",
+          "range": [
+            6.0,
+            86.0
+          ]
+        },
+        {
+          "id": 10,
+          "name": "MITF",
+          "color": "#0000FF",
+          "range": [
+            79.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        7,
+        0,
+        3,
+        10
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 3064,
+        "height": 1606
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 371,
+          "x1": 1610,
+          "y0": 1629,
+          "y1": 2302
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 371,
+      "x1": 1610,
+      "y0": 1629,
+      "y1": 2302
+    }
+  },
+  "description": "increasing SOX10 around Hoechst "
+}

@@ -261,8 +261,8 @@ class HeatmapLOD:
             )
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(getattr(state, 'heatmap_color', '#FFFFFF'))
-
-            heatmap_renderer.update_tiles(result.tiles, spacing=spacing, color=color)
+            outline_only = getattr(state, 'heatmap_outline_only', False)
+            heatmap_renderer.update_tiles(result.tiles, spacing=spacing, color=color, outline_only=outline_only)
             print(f"[heatmap_lod] Applied level {result.level}: {len(result.tiles)} tiles")
             applied = True
 

@@ -1,0 +1,166 @@
+{
+  "id": "24d866bf-3694-45a8-b9c7-d8e6b555b24f",
+  "title": "SOX10 niche",
+  "category": "Tumor",
+  "created": "2026-03-15T23:57:32Z",
+  "updated": "2026-03-16T19:39:25Z",
+  "notes": "starting  interaction between SOX10 and MART1 in high density",
+  "description": "starting  interaction between SOX10 and MART1 in high density",
+  "camera": {
+    "position": [
+      822.8365098072893,
+      271.802405346016,
+      218.78881436763623
+    ],
+    "focalPoint": [
+      849.3542801134037,
+      269.44629345272983,
+      116.20746103476766
+    ],
+    "viewUp": [
+      0.015886620763491607,
+      0.9996960157590244,
+      -0.018854478413615053
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FFFF00",
+      "range": [
+        100.0,
+        100.0
+      ]
+    },
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        34.0,
+        71.0
+      ]
+    },
+    {
+      "id": 7,
+      "name": "SOX10",
+      "color": "#00FF00",
+      "range": [
+        24.0,
+        100.0
+      ]
+    },
+    {
+      "id": 47,
+      "name": "PMEL",
+      "color": "#00FFFF",
+      "range": [
+        48.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    47,
+    7,
+    0,
+    3
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 3064,
+    "height": 1606
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          822.8365098072893,
+          271.802405346016,
+          218.78881436763623
+        ],
+        "focalPoint": [
+          849.3542801134037,
+          269.44629345272983,
+          116.20746103476766
+        ],
+        "viewUp": [
+          0.015886620763491607,
+          0.9996960157590244,
+          -0.018854478413615053
+        ]
+      },
+      "notes": "starting  interaction between SOX10 and MART1 in high density",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FFFF00",
+          "range": [
+            100.0,
+            100.0
+          ]
+        },
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            34.0,
+            71.0
+          ]
+        },
+        {
+          "id": 7,
+          "name": "SOX10",
+          "color": "#00FF00",
+          "range": [
+            24.0,
+            100.0
+          ]
+        },
+        {
+          "id": 47,
+          "name": "PMEL",
+          "color": "#00FFFF",
+          "range": [
+            48.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        47,
+        7,
+        0,
+        3
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 3064,
+        "height": 1606
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2744,
+          "x1": 3648,
+          "y0": 678,
+          "y1": 1209
+        }
+      }
+    }
+  ],
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 2744,
+      "x1": 3648,
+      "y0": 678,
+      "y1": 1209
+    }
+  }
+}

@@ -12,13 +12,21 @@ from .snapshot_io import (
     load_snapshot_by_name,
     save_snapshot,
     snapshot_names,
+    snapshot_categories,
+    load_snapshots_by_category,
     delete_snapshot_by_name,
+    delete_snapshot_in_category,
     save_screenshot,
+    thumbnail_path,
+    thumbnail_path_or_fallback,
+    save_thumbnail,
 )
 from .ov_snapshot_io import (
     ov_save_snapshot,
     ov_snapshot_names,
+    ov_snapshot_categories,
     ov_load_snapshot_by_name,
+    ov_load_snapshots_by_category,
 )
 from bioset.scene.volumes import build_tf_with_range
 
@@ -140,6 +148,45 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def bookmark_camera_animation_tick():
+        """Run each frame: deferred re-apply of bookmark camera, or smooth animation (20 steps) from current to JSON camera."""
+        import time
+        streamer = _refs.get("streamer")
+        if not streamer or not streamer.renderer:
+            return
+        once = _refs.get("bookmark_camera_apply_once")
+        if once and (time.time() - once["set_at"]) > 0.4:
+            _apply_camera(streamer, once["camera"])
+            _refs.pop("bookmark_camera_apply_once", None)
+            if _refs.get("view"):
+                _refs["view"].update()
+            return
+        anim = _refs.get("bookmark_camera_animate")
+        if not anim:
+            return
+        elapsed = time.time() - anim["start_time"]
+        duration = max(anim.get("duration", 20.0), 0.01)
+        if elapsed >= duration:
+            _apply_camera(streamer, anim["end"])
+            _refs.pop("bookmark_camera_animate", None)
+            if _refs.get("view"):
+                _refs["view"].update()
+            if getattr(streamer, "on_interaction_end", None):
+                try:
+                    streamer.on_interaction_end()
+                except Exception:
+                    pass
+            import time as _time
+            _refs["bookmark_camera_apply_once"] = {"camera": anim["end"], "set_at": _time.time()}
+            return
+        t = min(1.0, elapsed / duration)
+        start = anim["start"]
+        end = anim["end"]
+        pos = [start["position"][i] + t * (end["position"][i] - start["position"][i]) for i in range(3)]
+        focal = [start["focalPoint"][i] + t * (end["focalPoint"][i] - start["focalPoint"][i]) for i in range(3)]
+        viewup = [start["viewUp"][i] + t * (end["viewUp"][i] - start["viewUp"][i]) for i in range(3)]
+        _apply_camera(streamer, {"position": pos, "focalPoint": focal, "viewUp": viewup})
+
     def _apply_nov_view(streamer, nov_data):
         """Apply NOV view: set lens, sync volumes, apply camera to nov_renderer, open popup."""
         if not streamer or not getattr(streamer, "nov_renderer", None) or not nov_data:
@@ -192,8 +239,12 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             if rng and len(rng) >= 2 and ch_id in getattr(streamer, "_channel_data_range", {}):
                 data_range = streamer._channel_data_range[ch_id]
                 tint = streamer._channel_colors.get(ch_id, (1, 1, 1))
+                pct_bounds = getattr(streamer, "_channel_percentile_bounds", {}).get(
+                    ch_id, (data_range[0], data_range[1], data_range[1])
+                )
+                intensity_range_pct = (float(rng[0]), float(rng[1]))
                 color_tf, opacity_tf = build_tf_with_range(
-                    data_range, (float(rng[0]), float(rng[1])), tint
+                    data_range, pct_bounds, intensity_range_pct, tint
                 )
                 streamer._channel_tfs[ch_id] = (color_tf, opacity_tf)
                 if ch_id in streamer.volumes:
@@ -207,9 +258,56 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         names = snapshot_names(dataset_id)
         state.bookmark_snapshot_names = names
 
-    def bookmark_open_snapshot():
-        """Open selected snapshot: restore camera, channels, colors, LOD, TF; show description/comment."""
-        name = getattr(state, "bookmark_selected_name", None) or "Name"
+    def bookmark_refresh_categories():
+        """Load unique categories for current dataset into dropdown."""
+        dataset_id = _bookmark_dataset_id()
+        state.bookmark_categories = snapshot_categories(dataset_id)
+        if not getattr(state, "bookmark_selected_category", None) or state.bookmark_selected_category not in state.bookmark_categories:
+            state.bookmark_selected_category = (state.bookmark_categories or ["Uncategorized"])[0]
+
+    def bookmark_refresh_list():
+        """Load bookmarks for selected category into bookmark_list_items (name, category, description, thumbnail, channels_active)."""
+        import base64
+        dataset_id = _bookmark_dataset_id()
+        category = getattr(state, "bookmark_selected_category", None) or "Uncategorized"
+        snapshots = load_snapshots_by_category(dataset_id, category)
+        items = []
+        for s in snapshots:
+            title = (s.get("title") or s.get("id") or "").strip() or "Unnamed"
+            cat = (s.get("category") or s.get("_folder") or "").strip() or "Uncategorized"
+            # Description in front of thumbnail: use "description" from the related JSON file only
+            desc = (s.get("description") or "").strip()
+            if not isinstance(desc, str):
+                desc = str(desc or "")[:200]
+            else:
+                desc = (desc or "")[:200]
+            channels = s.get("channels") or []
+            id_to_name = {ch.get("id"): (ch.get("name") or "") for ch in channels if "id" in ch}
+            active_ids = s.get("active_channels") or []
+            channel_names = [id_to_name.get(aid, "") for aid in active_ids]
+            channels_active = ", ".join(n for n in channel_names if n).strip() or "—"
+            thumb_path = thumbnail_path_or_fallback(cat, title, dataset_id)
+            thumbnail = ""
+            if thumb_path:
+                try:
+                    raw = thumb_path.read_bytes()
+                    thumbnail = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+                except Exception:
+                    pass
+            items.append({
+                "name": title,
+                "category": cat,
+                "description": desc,
+                "thumbnail": thumbnail,
+                "channels_active": channels_active,
+                "channels_active_line": "Channels active: " + (channels_active if channels_active != "—" else "—"),
+                "description_line": "Description: " + (desc if desc else "—"),
+            })
+        state.bookmark_list_items = items
+
+    def bookmark_open_snapshot(name=None):
+        """Open selected snapshot (or by name if given): restore camera, channels, colors, LOD, TF; show description/comment."""
+        name = name or getattr(state, "bookmark_selected_name", None) or "Name"
         if not name or not str(name).strip():
             print("[callbacks] Bookmark: no name selected")
             return
@@ -234,6 +332,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             }]
         state.bookmark_current_view_index = 0
         v0 = views[0]
+        # 1) Load channels and colors first (state.channels, active_channels, visible)
         restored = _normalize_channels(v0.get("channels"))
         state.channels = _bookmark_merge_channels(restored, all_channels_before)
         state.active_channels = list(v0.get("active_channels") or [])
@@ -246,7 +345,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             state.bg_color = v0["background"]
             if hasattr(ctrl, "update_background_color"):
                 ctrl.update_background_color(v0["background"])
-        lod = snap.get("optional_LOD") or {}
+        # 2) Load LOD (same comp/distance) and channel TF ranges (filter range) from bookmark
+        lod = v0.get("optional_LOD") or snap.get("optional_LOD") or {}
         comp_target = lod.get("component")
         roi = lod.get("roi")
         has_lod = comp_target is not None and isinstance(roi, dict)
@@ -269,22 +369,54 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             if hasattr(ctrl, "update_active_channels"):
                 ctrl.update_active_channels(state.active_channels)
             _apply_channel_tfs_to_streamer(streamer)
+        # 3) Go to camera position: animate from current (start) to JSON camera (end) in 20 steps, smooth
+        camera_data = v0.get("camera") or snap.get("camera") or {}
         if v0.get("nov_view"):
             _apply_nov_view(streamer, v0["nov_view"])
         else:
-            _apply_camera(streamer, v0.get("camera") or {})
+            if camera_data and (camera_data.get("position") or camera_data.get("focalPoint")):
+                import time as _time
+                cam = streamer.renderer.GetActiveCamera()
+                start_cam = {
+                    "position": list(cam.GetPosition()),
+                    "focalPoint": list(cam.GetFocalPoint()),
+                    "viewUp": list(cam.GetViewUp()),
+                }
+                end_cam = {
+                    "position": [float(x) for x in (camera_data.get("position") or start_cam["position"])[:3]],
+                    "focalPoint": [float(x) for x in (camera_data.get("focalPoint") or start_cam["focalPoint"])[:3]],
+                    "viewUp": [float(x) for x in (camera_data.get("viewUp") or start_cam["viewUp"])[:3]],
+                }
+                _refs["bookmark_camera_animate"] = {
+                    "start": start_cam,
+                    "end": end_cam,
+                    "start_time": _time.time(),
+                    "duration": 10.0,
+                    "num_steps": 10,
+                }
         state.bookmark_edit_title = snap.get("title") or ""
+        state.bookmark_edit_category = (snap.get("category") or "").strip() or ""
         state.bookmark_edit_description = v0.get("notes") or ""
         state.bookmark_edit_comment = ""
+        state.bookmark_form_dialog = False
         state.bookmark_form_minimized = False
-        state.bookmark_display_snapshot = {
+        disp = {
             "title": snap.get("title"),
+            "category": (snap.get("category") or "").strip() or "",
             "description": v0.get("notes") or "",
             "comments": v0.get("comments", []),
             "created": snap.get("created"),
             "updated": snap.get("updated"),
             "views": views,
         }
+        state.bookmark_display_snapshot = None
+        state.bookmark_display_snapshot = disp
+        try:
+            state.flush()
+        except Exception:
+            pass
+        if _refs.get("view"):
+            _refs["view"].update()
 
     def _bookmark_apply_view(v):
         """Apply view to scene: camera, channels, active_channels, background, TF. Updates state and streamer. If nov_view, apply to NOV popup."""
@@ -330,10 +462,18 @@ def register_bookmark_callbacks(ctrl, state, _refs):
 
     # === OV bookmark model (Optimal View-only bookmarks) ===
 
-    def ov_bookmark_refresh_names():
-        """Load OV snapshot names for current dataset into OV dropdown."""
+    def ov_bookmark_refresh_categories():
+        """Load OV category list into dropdown."""
         dataset_id = _bookmark_dataset_id()
-        names = ov_snapshot_names(dataset_id)
+        state.ov_bookmark_categories = ov_snapshot_categories(dataset_id) or ["Uncategorized"]
+        if not getattr(state, "ov_bookmark_selected_category", None) or state.ov_bookmark_selected_category not in (state.ov_bookmark_categories or []):
+            state.ov_bookmark_selected_category = (state.ov_bookmark_categories or ["Uncategorized"])[0]
+
+    def ov_bookmark_refresh_names():
+        """Load OV snapshot names for selected category into OV dropdown."""
+        dataset_id = _bookmark_dataset_id()
+        category = getattr(state, "ov_bookmark_selected_category", None) or "Uncategorized"
+        names = ov_snapshot_names(dataset_id, category=category)
         state.ov_bookmark_snapshot_names = names or []
 
     def _ov_bookmark_capture_view():
@@ -362,18 +502,19 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         }
 
     def ov_bookmark_save_current():
-        """Save current NOV popup view as OV-only snapshot (independent from main bookmarks)."""
+        """Save current NOV popup view as OV snapshot in selected category folder."""
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         cap = _ov_bookmark_capture_view()
         if not cap or not cap.get("camera"):
             print("[ov_bookmark] No NOV camera to save")
             return
-        # Use whatever is in the single field (typed or selected) — always as name string
         raw = getattr(state, "ov_bookmark_selected_name", "") or ""
         title = str(raw).strip() or "OV_view"
+        category = (getattr(state, "ov_bookmark_selected_category", None) or "").strip() or "Uncategorized"
         snapshot = {
             "id": f"ov_{uuid.uuid4()}",
             "title": title,
+            "category": category,
             "created": now,
             "updated": now,
             "notes": "",
@@ -392,6 +533,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             ]
         dataset_id = _bookmark_dataset_id()
         ov_save_snapshot(snapshot, dataset_id)
+        ov_bookmark_refresh_categories()
         ov_bookmark_refresh_names()
         state.ov_bookmark_selected_name = title
 
@@ -418,6 +560,137 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             return
         _apply_nov_view(streamer, nov_data)
 
+    def ov_bookmark_hide_flags():
+        """Remove OV flag actors from NOV renderer and unregister picker."""
+        streamer = _refs.get("streamer")
+        actors_data = _refs.get("ov_bookmark_flag_actors") or []
+        for actor, _title, _popup_data in actors_data:
+            if streamer and getattr(streamer, "nov_renderer", None) and streamer.nov_renderer.HasViewProp(actor):
+                streamer.nov_renderer.RemoveActor(actor)
+        _refs["ov_bookmark_flag_actors"] = []
+        nov_win = getattr(streamer, "nov_render_window", None) if streamer else None
+        if nov_win:
+            interactor = nov_win.GetInteractor()
+            if interactor is not None:
+                obs_tag = _refs.get("_ov_bookmark_flag_picker_tag")
+                if obs_tag is not None:
+                    try:
+                        interactor.RemoveObserver(obs_tag)
+                    except Exception:
+                        pass
+                    _refs["_ov_bookmark_flag_picker_tag"] = None
+        state.ov_bookmark_flags_visible = False
+        state.ov_bookmark_flags_data = []
+
+    def ov_bookmark_show_category_flags():
+        """Show OV bookmarks in selected category as flags on NOV view; click=popup, double-click=open."""
+        category = getattr(state, "ov_bookmark_selected_category", None) or "Uncategorized"
+        dataset_id = _bookmark_dataset_id()
+        snapshots = ov_load_snapshots_by_category(dataset_id, category)
+        if not snapshots:
+            state.ov_bookmark_flags_visible = False
+            state.ov_bookmark_flags_data = []
+            return
+        streamer = _refs.get("streamer")
+        if not streamer or not getattr(streamer, "nov_renderer", None):
+            return
+        nov_win = getattr(streamer, "nov_render_window", None)
+        if not nov_win:
+            return
+        interactor = nov_win.GetInteractor()
+        if not interactor:
+            return
+        ov_bookmark_hide_flags()
+        try:
+            from vtkmodules.vtkFiltersSources import vtkConeSource
+            from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper
+        except ImportError:
+            return
+        renderer = streamer.nov_renderer
+        flag_height = 24.0
+        flag_radius = 12.0
+        actors_data = []
+        flags_data = []
+        for snap in snapshots:
+            nov_data = snap.get("nov_view")
+            if not nov_data:
+                views = snap.get("views") or []
+                if views and isinstance(views[0], dict):
+                    nov_data = views[0].get("nov_view")
+            if not nov_data:
+                continue
+            fp = nov_data.get("lens_center") or nov_data.get("box_center") or (nov_data.get("camera") or {}).get("focalPoint")
+            if not fp or len(fp) < 3:
+                continue
+            title = snap.get("title") or snap.get("id") or "Unnamed"
+            cat = (snap.get("category") or "").strip() or "Uncategorized"
+            notes = snap.get("notes") or ""
+            popup_data = {"name": title, "category": cat, "channels_active": "—", "description": notes or "—"}
+            cone = vtkConeSource()
+            cone.SetCenter(fp[0], fp[1], fp[2])
+            cone.SetDirection(0.0, 0.0, -1.0)
+            cone.SetHeight(flag_height)
+            cone.SetRadius(flag_radius)
+            cone.SetResolution(16)
+            mapper = vtkPolyDataMapper()
+            mapper.SetInputConnection(cone.GetOutputPort())
+            actor = vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(221 / 255.0, 28 / 255.0, 119 / 255.0)
+            actor.SetPickable(True)
+            renderer.AddActor(actor)
+            actors_data.append((actor, title, popup_data))
+            flags_data.append(popup_data)
+        _refs["ov_bookmark_flag_actors"] = actors_data
+        state.ov_bookmark_flags_data = flags_data
+        state.ov_bookmark_flags_visible = True
+
+        _ov_last_pick = [None, 0.0]
+
+        def _on_ov_left_click(obj, event):
+            from vtkmodules.vtkRenderingCore import vtkPropPicker
+            click_pos = obj.GetEventPosition()
+            ad = _refs.get("ov_bookmark_flag_actors") or []
+            picker = vtkPropPicker()
+            picker.PickFromListOn()
+            for a, _t, _p in ad:
+                picker.AddPickList(a)
+            picker.Pick(click_pos[0], click_pos[1], 0, renderer)
+            picked = picker.GetActor()
+            if not picked:
+                return
+            for actor, name, popup_data in ad:
+                if actor == picked:
+                    import time
+                    now = time.time()
+                    if _ov_last_pick[0] == name and (now - _ov_last_pick[1]) < 0.4:
+                        ov_bookmark_hide_flags()
+                        state.ov_bookmark_selected_name = name
+                        ov_bookmark_open_selected()
+                        return
+                    _ov_last_pick[0] = name
+                    _ov_last_pick[1] = now
+                    _esc = lambda x: (x or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                    state.bookmark_flag_popup = True
+                    state.bookmark_flag_popup_html = (
+                        f"<b>Category:</b> {_esc(str(popup_data.get('category') or '—'))}<br>"
+                        f"<b>Name:</b> {_esc(str(popup_data.get('name') or '—'))}<br>"
+                        f"<b>Channels active:</b> {_esc(str(popup_data.get('channels_active') or '—'))}<br>"
+                        f"<b>Description:</b> {_esc(str(popup_data.get('description') or '—'))}"
+                    )
+                    state.bookmark_flag_popup_left = click_pos[0] + 10
+                    state.bookmark_flag_popup_top = click_pos[1] - 8
+                    try:
+                        state.flush()
+                    except Exception:
+                        pass
+                    break
+
+        tag = interactor.AddObserver("LeftButtonPressEvent", _on_ov_left_click, 1.0)
+        _refs["_ov_bookmark_flag_picker_tag"] = tag
+        if nov_win:
+            nov_win.Render()
+
     def bookmark_apply_current_view():
         """Apply current view (camera, channels, TF, background) to the scene."""
         disp = getattr(state, "bookmark_display_snapshot", None)
@@ -430,6 +703,261 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     def bookmark_close_display():
         state.bookmark_display_snapshot = None
         state.bookmark_form_minimized = False
+
+    def bookmark_close_flag_popup():
+        state.bookmark_flag_popup = None
+        state.bookmark_flag_popup_html = ""
+        state.bookmark_flag_popup_screen = ""
+        state.bookmark_flag_popup_left = 0
+        state.bookmark_flag_popup_top = 0
+
+    _bookmark_last_pick = [None, 0.0]  # [actor, time] for double-click detection
+
+    def bookmark_hide_flags():
+        """Remove bookmark flag actors from the scene and unregister picker."""
+        streamer = _refs.get("streamer")
+        actors_data = _refs.get("bookmark_flag_actors") or []
+        if streamer and streamer.renderer and actors_data:
+            for actor, _name, _data, _fp in actors_data:
+                if actor and streamer.renderer.HasViewProp(actor):
+                    streamer.renderer.RemoveActor(actor)
+        _refs["bookmark_flag_actors"] = []
+        obs_tag = _refs.get("_bookmark_flag_picker_tag")
+        interactor = _refs.get("interactor")
+        if interactor is not None and obs_tag is not None:
+            try:
+                interactor.RemoveObserver(obs_tag)
+            except Exception:
+                pass
+        _refs["_bookmark_flag_picker_tag"] = None
+        state.bookmark_flags_visible = False
+        state.bookmark_flags_data = []
+        bookmark_close_flag_popup()
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def bookmark_show_category_flags():
+        """Show all bookmarks in the selected category as red flags (spheres) on the image; click=popup, double-click=open."""
+        category = getattr(state, "bookmark_selected_category", None) or "Uncategorized"
+        dataset_id = _bookmark_dataset_id()
+        snapshots = load_snapshots_by_category(dataset_id, category)
+        if not snapshots:
+            state.bookmark_flags_visible = False
+            state.bookmark_flags_data = []
+            if _refs.get("view"):
+                _refs["view"].update()
+            return
+        streamer = _refs.get("streamer")
+        interactor = _refs.get("interactor")
+        if not streamer or not streamer.renderer or not interactor:
+            return
+        bookmark_hide_flags()
+        try:
+            from vtkmodules.vtkFiltersSources import vtkConeSource
+            from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper
+        except ImportError:
+            return
+        renderer = streamer.renderer
+        # Cone marker (pin-like), 2x size so clearly visible
+        flag_height = 24.0
+        flag_radius = 12.0
+        actors_data = []
+        flags_data = []
+        for snap in snapshots:
+            views = snap.get("views") or []
+            if not views:
+                cam = snap.get("camera") or {}
+                fp = cam.get("focalPoint")
+                if not fp or len(fp) < 3:
+                    continue
+                view0 = {"camera": cam, "notes": snap.get("notes") or "", "channels": snap.get("channels") or [], "active_channels": snap.get("active_channels") or []}
+            else:
+                view0 = views[0] if isinstance(views[0], dict) else {}
+                cam = view0.get("camera") or {}
+                fp = cam.get("focalPoint")
+                if not fp or len(fp) < 3:
+                    continue
+            title = snap.get("title") or snap.get("id") or "Unnamed"
+            cat = (snap.get("category") or "").strip() or "Uncategorized"
+            notes = view0.get("notes") or snap.get("notes") or ""
+            active = view0.get("active_channels") or snap.get("active_channels") or []
+            ch_names = []
+            for ch in (view0.get("channels") or snap.get("channels") or []):
+                if ch.get("id") in active:
+                    ch_names.append(ch.get("name") or str(ch.get("id")))
+            channels_str = ", ".join(ch_names) if ch_names else "—"
+            cone = vtkConeSource()
+            cone.SetCenter(fp[0], fp[1], fp[2])
+            cone.SetDirection(0.0, 0.0, -1.0)
+            cone.SetHeight(flag_height)
+            cone.SetRadius(flag_radius)
+            cone.SetResolution(16)
+            mapper = vtkPolyDataMapper()
+            mapper.SetInputConnection(cone.GetOutputPort())
+            actor = vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(221 / 255.0, 28 / 255.0, 119 / 255.0)  # #dd1c77
+            actor.SetPickable(True)
+            renderer.AddActor(actor)
+            desc = (snap.get("description") or notes or "").strip() or "—"
+            popup_data = {"name": title, "category": cat, "channels_active": channels_str, "description": desc}
+            fp_list = [float(fp[0]), float(fp[1]), float(fp[2])]
+            actors_data.append((actor, title, popup_data, fp_list))
+            flags_data.append(popup_data)
+        _refs["bookmark_flag_actors"] = actors_data
+        state.bookmark_flags_data = flags_data
+        state.bookmark_flags_visible = True
+
+        def _on_left_click(obj, event):
+            from vtkmodules.vtkRenderingCore import vtkPropPicker
+            click_pos = obj.GetEventPosition()
+            ad = _refs.get("bookmark_flag_actors") or []
+            if not ad:
+                return
+            picker = vtkPropPicker()
+            picker.PickFromListOn()
+            for a, _n, _d, _fp in ad:
+                picker.AddPickList(a)
+            picker.Pick(click_pos[0], click_pos[1], 0, renderer)
+            picked_actor = picker.GetActor()
+            for actor, name, popup_data, _fp in ad:
+                if picked_actor is actor:
+                    import time
+                    now = time.time()
+                    last_actor, last_time = _bookmark_last_pick[0], _bookmark_last_pick[1]
+                    if last_actor is actor and (now - last_time) < 0.4:
+                        _bookmark_last_pick[0] = None
+                        _bookmark_last_pick[1] = 0.0
+                        bookmark_close_flag_popup()
+                        state.bookmark_selected_name = name
+                        bookmark_open_snapshot(name)
+                        bookmark_hide_flags()
+                        if _refs.get("view"):
+                            _refs["view"].update()
+                    else:
+                        _bookmark_last_pick[0] = actor
+                        _bookmark_last_pick[1] = now
+                        state.bookmark_flag_popup = popup_data
+                        import html as html_module
+                        _esc = html_module.escape
+                        _cat = _esc(str(popup_data.get("category") or "—"))
+                        _name = _esc(str(popup_data.get("name") or "—"))
+                        _ch = _esc(str(popup_data.get("channels_active") or "—"))
+                        _desc = _esc(str(popup_data.get("description") or "—"))
+                        state.bookmark_flag_popup_html = (
+                            f"<b>Category:</b> {_cat}<br>"
+                            f"<b>Name:</b> {_name}<br>"
+                            f"<b>Channels active:</b> {_ch}<br>"
+                            f"<b>Description:</b> {_desc}"
+                        )
+                        state.bookmark_flag_popup_screen = f"{click_pos[0]},{click_pos[1]}"
+                        state.bookmark_flag_popup_left = click_pos[0] + 10
+                        state.bookmark_flag_popup_top = click_pos[1] - 8
+                        try:
+                            state.flush()
+                        except Exception:
+                            pass
+                    return
+            bookmark_close_flag_popup()
+
+        tag = interactor.AddObserver("LeftButtonPressEvent", _on_left_click, 1.0)
+        _refs["_bookmark_flag_picker_tag"] = tag
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    _bookmark_flag_default_color = (221 / 255.0, 28 / 255.0, 119 / 255.0)  # #dd1c77
+    _bookmark_flag_highlight_color = (1.0, 0.85, 0.0)  # yellow/gold
+
+    def _world_to_display_near_flag(renderer, world_pt):
+        """Project 3D world point to 2D display coords (same system as GetEventPosition). Returns (left, top) for CSS position: absolute (origin top-left)."""
+        if not renderer or not world_pt or len(world_pt) < 3:
+            return (10, 80)
+        try:
+            renderer.SetWorldPoint(float(world_pt[0]), float(world_pt[1]), float(world_pt[2]), 1.0)
+            renderer.WorldToDisplay()
+            dx, dy, _ = renderer.GetDisplayPoint()
+            rw = renderer.GetRenderWindow()
+            w, h = rw.GetSize() if rw else (800, 600)
+            # VTK display Y is from bottom; CSS top is from top
+            left = dx + 10
+            top = (h - dy) - 8
+            return (max(0, left), max(0, top))
+        except Exception:
+            return (10, 80)
+
+    def bookmark_thumbnail_single_click(name=None):
+        """When user single-clicks a thumbnail: highlight the related flag on scene (if visible) and show popup near the flag."""
+        if not name:
+            return
+        import html as html_module
+        _esc = html_module.escape
+        popup_data = None
+        focal_pt = None
+        ad = _refs.get("bookmark_flag_actors") or []
+        if getattr(state, "bookmark_flags_visible", False) and ad:
+            for actor, flag_name, pdata, fp in ad:
+                if str(flag_name).strip() != str(name).strip():
+                    actor.GetProperty().SetColor(*_bookmark_flag_default_color)
+                    continue
+                actor.GetProperty().SetColor(*_bookmark_flag_highlight_color)
+                popup_data = pdata
+                focal_pt = fp
+                break
+        if popup_data is None:
+            dataset_id = _bookmark_dataset_id()
+            snap = load_snapshot_by_name(name, dataset_id)
+            if snap:
+                views = snap.get("views") or []
+                view0 = views[0] if views and isinstance(views[0], dict) else {}
+                cam = view0.get("camera") or snap.get("camera") or {}
+                focal_pt = cam.get("focalPoint")
+                ch_list = view0.get("channels") or snap.get("channels") or []
+                active = view0.get("active_channels") or snap.get("active_channels") or []
+                ch_names = [c.get("name") or str(c.get("id")) for c in ch_list if c.get("id") in active]
+                popup_data = {
+                    "name": snap.get("title") or name,
+                    "category": (snap.get("category") or "").strip() or "Uncategorized",
+                    "channels_active": ", ".join(ch_names) if ch_names else "—",
+                    "description": (snap.get("description") or snap.get("notes") or "").strip() or "—",
+                }
+        if popup_data:
+            state.bookmark_flag_popup = popup_data
+            _cat = _esc(str(popup_data.get("category") or "—"))
+            _name = _esc(str(popup_data.get("name") or "—"))
+            _ch = _esc(str(popup_data.get("channels_active") or "—"))
+            _desc = _esc(str(popup_data.get("description") or "—"))
+            state.bookmark_flag_popup_html = (
+                f"<b>Category:</b> {_cat}<br>"
+                f"<b>Name:</b> {_name}<br>"
+                f"<b>Channels active:</b> {_ch}<br>"
+                f"<b>Description:</b> {_desc}"
+            )
+            streamer = _refs.get("streamer")
+            if streamer and streamer.renderer and focal_pt:
+                left, top = _world_to_display_near_flag(streamer.renderer, focal_pt)
+                state.bookmark_flag_popup_left = left
+                state.bookmark_flag_popup_top = top
+            else:
+                state.bookmark_flag_popup_left = 10
+                state.bookmark_flag_popup_top = 80
+            state.bookmark_flag_popup_screen = f"{state.bookmark_flag_popup_left},{state.bookmark_flag_popup_top}"
+            try:
+                state.flush()
+            except Exception:
+                pass
+        if _refs.get("view"):
+            _refs["view"].update()
+
+    def bookmark_thumbnail_double_click(name=None):
+        """When user double-clicks a thumbnail: same as double-click on flag — open snapshot and hide flags."""
+        if not name:
+            return
+        bookmark_close_flag_popup()
+        state.bookmark_selected_name = name
+        bookmark_open_snapshot(name)
+        bookmark_hide_flags()
+        if _refs.get("view"):
+            _refs["view"].update()
 
     def bookmark_view_prev():
         idx = getattr(state, "bookmark_current_view_index", 0)
@@ -475,9 +1003,10 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def bookmark_open_new_form():
-        """Open the new-snapshot form (bottom-left). Optionally refresh names."""
+        """Open the new-snapshot form (bottom-left). Category first, then name, description, comment."""
         state.bookmark_capture_from_nov = False
-        bookmark_refresh_names()
+        bookmark_refresh_categories()
+        state.bookmark_form_category = getattr(state, "bookmark_selected_category", "Uncategorized") or "Uncategorized"
         state.bookmark_form_name = getattr(state, "bookmark_selected_name", "Name") or "Name"
         state.bookmark_form_description = ""
         state.bookmark_form_new_comment = ""
@@ -486,7 +1015,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     def bookmark_open_new_form_from_nov():
         """Open the new-snapshot form for saving the current NOV popup view as a bookmark."""
         state.bookmark_capture_from_nov = True
-        bookmark_refresh_names()
+        bookmark_refresh_categories()
+        state.bookmark_form_category = getattr(state, "bookmark_selected_category", "Uncategorized") or "Uncategorized"
         state.bookmark_form_name = getattr(state, "bookmark_selected_name", "Name") or "Name"
         state.bookmark_form_description = ""
         state.bookmark_form_new_comment = ""
@@ -540,17 +1070,24 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             }
         return out
 
-    def bookmark_save_snapshot():
-        """Capture current view + form fields; save to bookmark JSON; close form."""
+    def bookmark_save_snapshot(form_category=None, form_name=None, form_description=None, form_new_comment=None):
+        """Capture current view + form fields; save to bookmark JSON in folder for given category. Form values from client ensure correct category folder."""
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         cap = _bookmark_capture_view()
         state.bookmark_capture_from_nov = False
-        form_name = (getattr(state, "bookmark_form_name", None) or getattr(state, "bookmark_selected_name", None) or "").strip()
-        title = form_name or "Unnamed"
+        form_name = (form_name if form_name is not None else getattr(state, "bookmark_form_name", None) or getattr(state, "bookmark_selected_name", None) or "")
+        if not isinstance(form_name, str):
+            form_name = str(form_name or "")
+        title = form_name.strip() or "Unnamed"
+        category = (form_category if form_category is not None else getattr(state, "bookmark_form_category", None) or "")
+        if not isinstance(category, str):
+            category = str(category or "")
+        category = category.strip() or "Uncategorized"
         comments = []
-        if getattr(state, "bookmark_form_new_comment", "").strip():
-            comments.append({"date": now, "text": state.bookmark_form_new_comment})
-        notes = getattr(state, "bookmark_form_description", "") or ""
+        new_comment = form_new_comment if form_new_comment is not None else getattr(state, "bookmark_form_new_comment", "")
+        if isinstance(new_comment, str) and new_comment.strip():
+            comments.append({"date": now, "text": new_comment.strip()})
+        notes = form_description if (form_description is not None and isinstance(form_description, str)) else (getattr(state, "bookmark_form_description", "") or "")
         view0 = {
             "camera": cap["camera"],
             "notes": notes,
@@ -566,9 +1103,11 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         snapshot = {
             "id": str(uuid.uuid4()),
             "title": title,
+            "category": category,
             "created": now,
             "updated": now,
             "notes": notes,
+            "description": notes,
             "camera": cap["camera"],
             "channels": cap["channels"],
             "active_channels": cap["active_channels"],
@@ -583,8 +1122,17 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             snapshot["nov_view"] = cap["nov_view"]
         dataset_id = _bookmark_dataset_id()
         save_snapshot(snapshot, dataset_id)
+        # Capture thumbnail from current view and save in same category folder with same name
+        streamer = _refs.get("streamer")
+        if streamer:
+            png_bytes = capture_screenshot_png_bytes(streamer)
+            if png_bytes:
+                save_thumbnail(png_bytes, category, title, dataset_id)
         bookmark_refresh_names()
+        bookmark_refresh_categories()
+        bookmark_refresh_list()
         state.bookmark_selected_name = title
+        state.bookmark_selected_category = category
         state.bookmark_form_dialog = False
         state.bookmark_edit_title = title
         state.bookmark_edit_description = notes
@@ -592,6 +1140,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         state.bookmark_current_view_index = 0
         state.bookmark_display_snapshot = {
             "title": title,
+            "category": category or "",
             "description": notes,
             "comments": comments,
             "created": now,
@@ -613,10 +1162,12 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if not snap:
             print(f"[callbacks] Bookmark: snapshot not found: {old_title}")
             return
+        old_category = (snap.get("category") or disp.get("category") or "").strip() or "Uncategorized"
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         cap = _bookmark_capture_view()
         snap["updated"] = now
         snap["title"] = (getattr(state, "bookmark_edit_title", "") or "").strip() or old_title
+        snap["category"] = (getattr(state, "bookmark_edit_category", "") or "").strip() or "Uncategorized"
         views = list(disp.get("views") or [])
         if not views and snap.get("views"):
             views = list(snap.get("views") or [])
@@ -666,13 +1217,23 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         snap["notes"] = current_view.get("notes") or ""
         snap["description"] = snap["notes"]
         snap["comments"] = current_view.get("comments") or []
-        if snap["title"] != old_title:
-            delete_snapshot_by_name(old_title, dataset_id)
+        new_title = snap["title"]
+        new_category = (snap.get("category") or "").strip() or "Uncategorized"
+        if (old_title, old_category) != (new_title, new_category):
+            delete_snapshot_in_category(old_title, dataset_id, old_category)
         save_snapshot(snap, dataset_id)
+        # Update thumbnail from current view
+        streamer = _refs.get("streamer")
+        if streamer:
+            png_bytes = capture_screenshot_png_bytes(streamer)
+            if png_bytes:
+                save_thumbnail(png_bytes, new_category, new_title, dataset_id)
         bookmark_refresh_names()
+        bookmark_refresh_list()
         state.bookmark_selected_name = snap["title"]
         state.bookmark_display_snapshot = {
             "title": snap["title"],
+            "category": (snap.get("category") or "").strip() or "",
             "description": notes,
             "comments": view_comments,
             "created": snap.get("created"),
@@ -680,6 +1241,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "views": views,
         }
         state.bookmark_edit_title = snap["title"]
+        state.bookmark_edit_category = (snap.get("category") or "").strip() or ""
         state.bookmark_edit_comment = ""
 
     def bookmark_comment():
@@ -736,6 +1298,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
 
     # Attach to ctrl
     ctrl.bookmark_refresh_names = bookmark_refresh_names
+    ctrl.bookmark_refresh_categories = bookmark_refresh_categories
+    ctrl.bookmark_refresh_list = bookmark_refresh_list
     ctrl.bookmark_open_snapshot = bookmark_open_snapshot
     ctrl.bookmark_open_new_form = bookmark_open_new_form
     ctrl.bookmark_open_new_form_from_nov = bookmark_open_new_form_from_nov
@@ -744,12 +1308,21 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     ctrl.bookmark_view_next = bookmark_view_next
     ctrl.bookmark_add_view = bookmark_add_view
     ctrl.bookmark_close_display = bookmark_close_display
+    ctrl.bookmark_close_flag_popup = bookmark_close_flag_popup
+    ctrl.bookmark_show_category_flags = bookmark_show_category_flags
+    ctrl.bookmark_hide_flags = bookmark_hide_flags
+    ctrl.bookmark_thumbnail_single_click = bookmark_thumbnail_single_click
+    ctrl.bookmark_thumbnail_double_click = bookmark_thumbnail_double_click
+    ctrl.bookmark_camera_animation_tick = bookmark_camera_animation_tick
     ctrl.bookmark_apply_current_view = bookmark_apply_current_view
     ctrl.bookmark_open_export_screenshot = bookmark_open_export_screenshot
     ctrl.bookmark_export_screenshot_save = bookmark_export_screenshot_save
     ctrl.bookmark_comment = bookmark_comment
     ctrl.bookmark_update_snapshot = bookmark_update_snapshot
     # OV-specific controls (Optimal View-only bookmarks)
+    ctrl.ov_bookmark_refresh_categories = ov_bookmark_refresh_categories
     ctrl.ov_bookmark_refresh_names = ov_bookmark_refresh_names
+    ctrl.ov_bookmark_show_category_flags = ov_bookmark_show_category_flags
+    ctrl.ov_bookmark_hide_flags = ov_bookmark_hide_flags
     ctrl.ov_bookmark_save_current = ov_bookmark_save_current
     ctrl.ov_bookmark_open_selected = ov_bookmark_open_selected

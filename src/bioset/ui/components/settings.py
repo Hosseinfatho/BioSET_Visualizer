@@ -192,30 +192,3 @@ def settings_section(state, ctrl):
                             html.Span("Bookmark")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Bookmark")
-                with vuetify.VExpandTransition():
-                    with html.Div(v_show=("bookmark_open", False)):
-                        with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                            with vuetify.VListItemContent(v_if="!drawer_mini", style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;"):
-                                vuetify.VAutocomplete(
-                                    v_model=("bookmark_selected_name", "Name"),
-                                    items=("bookmark_snapshot_names", []),
-                                    dense=True,
-                                    hide_details=True,
-                                    placeholder="Select...",
-                                    style="flex: 0.4 1 0; min-width: 0;",
-                                )
-                                with vuetify.VBtn(
-                                    x_small=True,
-                                    color="primary",
-                                    disabled=("!bookmark_selected_name || !String(bookmark_selected_name).trim()",),
-                                    click=ctrl.bookmark_open_snapshot,
-                                    style="flex: 0.3 1 0; min-width: 0;",
-                                ):
-                                    html.Span("Open")
-                                with vuetify.VBtn(
-                                    x_small=True,
-                                    color="secondary",
-                                    click=ctrl.bookmark_open_new_form,
-                                    style="flex: 0.3 1 0; min-width: 0;",
-                                ):
-                                    html.Span("New")

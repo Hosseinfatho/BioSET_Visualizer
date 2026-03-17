@@ -477,8 +477,8 @@ def register_nov_callbacks(ctrl, state, _refs):
             return None
         rx = getattr(state, "nov_rect_x", 0.35)
         ry = getattr(state, "nov_rect_y", 0.35)
-        rw = getattr(state, "nov_rect_w", 0.3)
-        rh = getattr(state, "nov_rect_h", 0.3)
+        rw = getattr(state, "nov_rect_w", 0.2)
+        rh = getattr(state, "nov_rect_h", 0.2)
         ren = streamer.renderer
         cam = ren.GetActiveCamera()
         fp = list(cam.GetFocalPoint())
@@ -521,8 +521,8 @@ def register_nov_callbacks(ctrl, state, _refs):
         """Increase or decrease rect size by step (delta). Keeps position (bottom-left) fixed. Min 5%, max 90% of view."""
         rx = getattr(state, "nov_rect_x", 0.35)
         ry = getattr(state, "nov_rect_y", 0.35)
-        rw = getattr(state, "nov_rect_w", 0.3)
-        rh = getattr(state, "nov_rect_h", 0.3)
+        rw = getattr(state, "nov_rect_w", 0.2)
+        rh = getattr(state, "nov_rect_h", 0.2)
         new_w = max(MIN_LENS_SIZE, min(MAX_LENS_SIZE, rw + delta))
         new_h = max(MIN_LENS_SIZE, min(MAX_LENS_SIZE, rh + delta))
         # Keep same position (anchor at bottom-left) so lens does not jump to center when resizing
@@ -917,7 +917,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         D = b[5] - b[4]
         diagonal = 2.0 * nov_lens_circum_radius(L, W, D)
         if diagonal < 1e-9:
-            return (0.35, 0.35, 0.3, 0.3)
+            return (0.35, 0.35, 0.2, 0.2)
         min_side = nov_min_lens_side_for_comp(comp) if comp is not None else (MIN_LENS_HALF * 2.0)
         side = min_side / diagonal
         side = max(0.15, min(0.5, side))
@@ -1256,12 +1256,23 @@ def register_nov_callbacks(ctrl, state, _refs):
             streamer.set_nov_lens_clip((center[0], center[1], center[2]), L, W, D)
         if getattr(streamer, "sync_nov_volumes", None):
             streamer.sync_nov_volumes()
+        # Center NOV camera on lens (align with TF_inv_2 so data appears in middle of popup)
+        if candidates:
+            _point_nov_camera_at_lens_center()
+        if getattr(streamer, "nov_render_window", None):
+            streamer.nov_render_window.Render()
         state.nov_popup_open = True
         if _refs.get("nov_view"):
             _refs["nov_view"].update()
         if _refs.get("view"):
             _refs["view"].update()
         def _delayed_nov_resize():
+            # Re-center camera after popup has been laid out/resized so content stays in middle
+            if candidates:
+                _point_nov_camera_at_lens_center()
+            streamer = _refs.get("streamer")
+            if streamer and getattr(streamer, "nov_render_window", None):
+                streamer.nov_render_window.Render()
             if _refs.get("nov_view"):
                 try:
                     _refs["nov_view"].update()

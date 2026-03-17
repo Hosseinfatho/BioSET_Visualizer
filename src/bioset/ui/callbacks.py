@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime
+
 import datetime
 import hashlib
 import os
@@ -13,6 +16,8 @@ from bioset.llm import BiomniLocalClient
 from bioset.report import generate_report_bytes
 from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+from bioset.NOV import register_nov_callbacks
 from ..report.content_sections.AnalysisDataset import AnalysisDatasetContent, AnalysisDataset
 from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
 from ..report.content_sections.General import GeneralContent, General
@@ -20,7 +25,7 @@ from ..report.content_sections.General import GeneralContent, General
 
 def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
-    
+
     def _hex_to_rgb_tuple(color_hex: str):
         """Convert '#RRGGBB' to (r, g, b) floats in [0,1]."""
         color_hex = color_hex.lstrip("#")
@@ -28,7 +33,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         g = int(color_hex[2:4], 16) / 255.0
         b = int(color_hex[4:6], 16) / 255.0
         return (r, g, b)
-    
+
     _refs = {
         "streamer": streamer,
         "view": view,
@@ -36,7 +41,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "heatmap": None,
         "mesh_manager": None,
         "heatmap_lod": None,
-        "heatmap_lod": None,
+        "interactor": None,
     }
 
     def set_view(v):
@@ -58,7 +63,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the heatmap renderer reference."""
         _refs["heatmap"] = heatmap
         print(f"[callbacks] Heatmap renderer set: {heatmap}")
-        
+
     def set_mesh_manager(mesh_manager):
         """Set the mesh manager reference."""
         _refs["mesh_manager"] = mesh_manager
@@ -69,6 +74,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the heatmap LOD renderer reference."""
         _refs["heatmap_lod"] = heatmap_lod
         print(f"[callbacks] Heatmap LOD set: {heatmap_lod}")
+
+    def set_interactor(interactor):
+        """Set the main VTK interactor for bookmark flag picking."""
+        _refs["interactor"] = interactor
+
+    ctrl.set_interactor = set_interactor
 
     def set_heatmap_lod_auto_mode(enabled: bool):
         """Set heatmap LOD auto mode (controlled by UI toggle)."""
@@ -105,7 +116,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     metadata.physical_size_y,
                     metadata.physical_size_z
                 )
-                
+
             mesh_mgr = _refs.get("mesh_manager")
             if mesh_mgr:
                 mesh_mgr.update_spacing(
@@ -113,7 +124,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     metadata.physical_size_y,
                     metadata.physical_size_z
                 )
-            
+
             channels = [
                 {
                     "id": ch.id,
@@ -174,12 +185,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.renderer.ResetCameraClippingRange() 
             
         if heatmap:
-            heatmap.clear() 
+            heatmap.clear()
             
         mesh_mgr = _refs.get("mesh_manager")
         if mesh_mgr:
-            mesh_mgr.clear()  
-            
+            mesh_mgr.clear()
+
         if _refs["analysis_loader"]:
             _refs["analysis_loader"].close()
             _refs["analysis_loader"] = None
@@ -206,6 +217,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.heatmap_tile_count = 0
         
         state.right_drawer_open = False
+
+        # Close bookmark UI (column, forms, popups) when data is cleared
+        # Hide the bookmark side panel
+        state.bookmark_open = False
+        # Close any open bookmark display / details panel
+        state.bookmark_display_snapshot = None
+        state.bookmark_form_minimized = False
+        # Close new-bookmark form (bottom-left)
+        state.bookmark_form_dialog = False
+        # Close flag popups and hide bookmark flags
+        state.bookmark_flag_popup = None
+        state.bookmark_flag_popup_html = ""
+        state.bookmark_flag_popup_screen = ""
+        state.bookmark_flag_popup_left = 0
+        state.bookmark_flag_popup_top = 0
+        state.bookmark_flags_visible = False
+        state.bookmark_flags_data = []
+        # Close export-screenshot dialog if open
+        state.bookmark_export_screenshot_dialog = False
+        state.bookmark_export_screenshot_name = ""
+        state.bookmark_export_screenshot_caption = ""
 
         # Reset NOV and hide 2D rect overlay
         state.nov_show_rect = False
@@ -285,7 +317,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def load_analysis_file(file_info):
         """
         Load analysis results from uploaded .bioset file.
-        
+
         Args:
             file_info: File info dict from trame file upload containing 'content' (base64) and 'name'
         """
@@ -404,7 +436,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         streamer = _refs.get("streamer")
         mesh_mgr = _refs.get("mesh_manager")
-        
+
         if streamer is None:
             print(f"[callbacks] No streamer available yet")
             return
@@ -418,7 +450,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             streamer.deactivate_channel(channel_id)
             if mesh_mgr:
                 mesh_mgr.deactivate_channel_mesh(channel_id)
-        
+
         to_activate = new_active - currently_active
         for channel_id in to_activate:
             color_hex = "#FFFFFF"
@@ -446,7 +478,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.channel_histograms = {
                 str(ch_id): streamer._channel_histograms[ch_id] for ch_id in new_active if ch_id in streamer._channel_histograms
             }
-
+            
         if to_activate and not currently_active:
             heatmap_lod = _refs.get("heatmap_lod")
             if heatmap_lod:
@@ -462,35 +494,35 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Update available heatmap combinations based on active channels.
         """
         loader = _refs.get("analysis_loader")
-        
+
         if not loader or not loader.is_loaded:
             state.heatmap_available_combinations = []
             state.heatmap_combination = []
             return
-        
+
         active_channel_names = []
         for ch_id in (state.active_channels or []):
             for ch in (state.channels or []):
                 if ch["id"] == ch_id:
                     active_channel_names.append(ch["name"])
                     break
-        
+
         if not active_channel_names:
             state.heatmap_available_combinations = []
             state.heatmap_combination = []
             return
-        
+
         print(f"[callbacks] Updating heatmap combinations for active channels: {active_channel_names}")
-        
+
         available = []
-        
+
         for name in active_channel_names:
             available.append({
                 "channels": [name],
                 "label": name,
-                "iou": None,  
+                "iou": None,
             })
-        
+
         if len(active_channel_names) >= 2:
             try:
                 combinations = loader.get_filtered_combinations(
@@ -500,7 +532,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     limit=50,
                     exact_match=False,
                 )
-                
+
                 active_set = set(active_channel_names)
                 for combo in combinations:
                     if len(combo.channels) >= 2 and set(combo.channels).issubset(active_set):
@@ -511,11 +543,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
                         })
             except Exception as e:
                 print(f"[callbacks] Error querying heatmap combinations: {e}")
-        
+
         state.heatmap_available_combinations = available
-        
+
         print(f"[callbacks] Found {len(available)} heatmap combinations")
-        
+
         # prefer selection of all active channels if available
         current = state.heatmap_combination or []
         current_set = set(current)
@@ -526,23 +558,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.heatmap_combination = full_match[0]["channels"]
             update_heatmap()
             return
-        
+
         if current and any(set(c["channels"]) == current_set for c in available):
             update_heatmap()
             return
-        
+
         multi = [c for c in available if len(c["channels"]) >= 2]
         if multi:
             state.heatmap_combination = multi[0]["channels"]
             update_heatmap()
             return
-        
+
         if available:
             state.heatmap_combination = available[0]["channels"]
         else:
             state.heatmap_combination = []
         update_heatmap()
-            
+
     def update_heatmap():
         """Update heatmap visualization based on current state.
 
@@ -584,7 +616,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if _refs["view"]:
                 _refs["view"].update()
             return
-        
+
         selected_channel_names = state.heatmap_combination or []
         
         if not selected_channel_names:
@@ -619,7 +651,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            heatmap.update_tiles(tiles, spacing=spacing, color=color)
+            outline_only = getattr(state, "heatmap_outline_only", False)
+            heatmap.update_tiles(tiles, spacing=spacing, color=color, outline_only=outline_only)
             state.heatmap_tile_count = len(tiles)
         
         if _refs["view"]:
@@ -643,7 +676,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def update_upset_data():
         """Update UpSet plot data based on current analysis settings.
-        
+
         Uses aggregated IoU across tiles, sorted descending.
         """
         loader = _refs.get("analysis_loader")
@@ -707,7 +740,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return
 
         print(f"[callbacks] Updating UpSet local data for channels: {active_channel_names}")
-        
+
         try:
             combinations = loader.get_filtered_combinations(
                 channel_filter=active_channel_names,
@@ -736,7 +769,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     
     def update_bar_data():
         """Update bar chart data with coverage percentage per channel.
-        
+
         Coverage % = (tiles with marker present) / (total tiles) * 100
         Sorted descending. Filtered to bar_selected_channels.
         """
@@ -754,13 +787,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
         )
-        
+
         # Filter to selected channels
         filtered = [
             (name, pct) for name, pct in all_coverage
             if name in state.bar_selected_channels
         ]
-        
+
         state.bar_data = filtered
         
         print(f"[callbacks] Bar data updated: {len(filtered)} channels")
@@ -832,7 +865,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         mesh_mgr = _refs.get("mesh_manager")
         if mesh_mgr and channel_id in state.active_channels:
             mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
-            
+
     def on_channel_color_change(channel_id, color_value):
         """Handle color change from the color picker."""
         print(f"[callbacks] Raw color_value: {color_value}, type: {type(color_value)}")
@@ -1420,10 +1453,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                         )
                 else:
                     print(f"[picker] No mesh tile at voxel ({vox_x:.0f}, {vox_y:.0f}) - skipping mesh")
-            
+
             if _refs["view"]:
                 _refs["view"].update()
-        
+
 
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
