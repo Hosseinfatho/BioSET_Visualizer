@@ -29,11 +29,21 @@ class HeatmapConfig:
 
 
 class HeatmapRenderer:    
-    def __init__(self, renderer: vtkRenderer, config: Optional[HeatmapConfig] = None):
+    def __init__(
+        self,
+        renderer: vtkRenderer,
+        *,
+        outline_renderer: Optional[vtkRenderer] = None,
+        config: Optional[HeatmapConfig] = None,
+    ):
+        # renderer: used for filled tiles (behind the volume)
+        # outline_renderer: used for wireframe-only tiles (in front of the volume)
         self.renderer = renderer
+        self.outline_renderer = outline_renderer
         self.config = config or HeatmapConfig()
         
         self._actors: Dict[Tuple[int, int], vtkActor] = {}
+        self._outline_actors: Dict[Tuple[int, int], vtkActor] = {}
         self._visible = True
         
         self._current_tiles: List[TileData] = []
@@ -99,20 +109,37 @@ class HeatmapRenderer:
                 opacity = self.config.min_opacity + normalized * (self.config.max_opacity - self.config.min_opacity)
                 tile_color = base_color
 
-            actor = self._create_cube_actor(
-                center=(x_center, y_center, z_center),
-                size=(x_size, y_size, z_size),
-                color=tile_color,
-                opacity=opacity,
-                outline_only=self.config.outline_only,
-            )
-            
             tile_key = (tile.x0, tile.y0)
-            self._actors[tile_key] = actor
-            self._actor_to_tile[actor] = tile
-            
-            if self._visible:
-                self.renderer.AddActor(actor)
+
+            # Mode behavior:
+            # - outline_only=True: draw wireframe in outline_renderer (front), no fill
+            # - outline_only=False: draw fill in renderer (behind), no wireframe
+            if self.config.outline_only:
+                if self.outline_renderer is None:
+                    continue
+                outline_actor = self._create_cube_actor(
+                    center=(x_center, y_center, z_center),
+                    size=(x_size, y_size, z_size),
+                    color=tile_color,
+                    opacity=opacity,
+                    outline_only=True,
+                )
+                self._outline_actors[tile_key] = outline_actor
+                self._actor_to_tile[outline_actor] = tile
+                if self._visible:
+                    self.outline_renderer.AddActor(outline_actor)
+            else:
+                fill_actor = self._create_cube_actor(
+                    center=(x_center, y_center, z_center),
+                    size=(x_size, y_size, z_size),
+                    color=tile_color,
+                    opacity=opacity,
+                    outline_only=False,
+                )
+                self._actors[tile_key] = fill_actor
+                self._actor_to_tile[fill_actor] = tile
+                if self._visible:
+                    self.renderer.AddActor(fill_actor)
     
     def _create_cube_actor(
         self,
@@ -168,11 +195,22 @@ class HeatmapRenderer:
                     self.renderer.AddActor(actor)
             else:
                 self.renderer.RemoveActor(actor)
+        if self.outline_renderer is not None:
+            for actor in self._outline_actors.values():
+                if visible:
+                    if not self.outline_renderer.HasViewProp(actor):
+                        self.outline_renderer.AddActor(actor)
+                else:
+                    self.outline_renderer.RemoveActor(actor)
     
     def clear(self):
         for actor in self._actors.values():
             self.renderer.RemoveActor(actor)
+        if self.outline_renderer is not None:
+            for actor in self._outline_actors.values():
+                self.outline_renderer.RemoveActor(actor)
         self._actors.clear()
+        self._outline_actors.clear()
         self._current_tiles = []
         self._actor_to_tile.clear()
         
