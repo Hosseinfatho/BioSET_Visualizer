@@ -8,9 +8,25 @@ import requests
 
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+import datetime
+import hashlib
+import os
+import tempfile
+
+import requests
+
+from bioset.NOV import register_nov_callbacks
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
 from bioset.scene.volumes import build_tf_with_range
+from bioset.report import generate_report_bytes
+from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
+from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
+from bioset.NOV import register_nov_callbacks
+from ..report.content_sections.AnalysisDataset import AnalysisDatasetContent, AnalysisDataset
+from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
+from ..report.content_sections.General import GeneralContent, General
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -137,7 +153,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 state.bookmark_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
             except Exception:
                 state.bookmark_dataset_id = "default"
-
+            
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
             
@@ -246,7 +262,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.nov_sphere_xy = []
         if hasattr(ctrl, "nov_hide_lens"):
             ctrl.nov_hide_lens()
-
+    
         if _refs["view"]:
             _refs["view"].update()
         
@@ -1479,6 +1495,45 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    def generate_pdf_report(report_data=None):
+        """
+        API endpoint to generate and download a PDF report.
+        report_data: dict with 'title', 'params', 'channels', etc.
+        """
+        report_data = []
+
+        if state.export_general:
+            general_content = GeneralContent(state.zarr_url, state.metadata_url, datetime.datetime.now())
+            general = General(general_content)
+            report_data.append(general)
+
+        if state.export_analysis:
+            dataset_content = AnalysisDatasetContent(state.analysis_file_name, state.analysis_channels)
+            dataset = AnalysisDataset(dataset_content)
+            report_data.append(dataset)
+
+        if state.export_chat:
+            chat_contents = []
+            for message in state.chatbot_messages:
+                chat_contents.append(ChatContent(message["content"], message["role"] == "user"))
+
+            llm_settings = LLMSettings(state.biomni_model, state.biomni_mode)
+            chat = Chat(chat_contents, llm_settings)
+            report_data.append(chat)
+
+        print(f"[callbacks] Generating PDF report: {report_data}")
+        try:
+            pdf_bytes = generate_report_bytes(report_data)
+            filename = f"BioSET_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+
+            with open(filename, "wb") as f:
+                f.write(pdf_bytes)
+
+            print(f"Saved PDF to: {os.path.abspath(filename)}")
+
+        except Exception as e:
+            print(f"[callbacks] Error generating report: {e}")
+
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap                
@@ -1516,4 +1571,4 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
     ctrl.trigger("on_hover")(on_hover)
-
+    ctrl.generate_pdf_report = generate_pdf_report

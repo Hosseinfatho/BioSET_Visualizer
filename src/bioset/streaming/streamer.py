@@ -311,7 +311,7 @@ class VolumeStreamer:
             del self.nov_volumes[channel_id]
         if channel_id in self.nov_mappers:
             del self.nov_mappers[channel_id]
-        
+
         if channel_id in self.state:
             del self.state[channel_id]
         
@@ -364,7 +364,7 @@ class VolumeStreamer:
         
         # Compute histogram using the same range as the slider
         self._channel_histograms[channel_id] = self._compute_histogram(np_arr, (r0, r1))
-        
+
         vol, mapper = self._get_or_create_volume(channel_id)
         mapper.SetInputData(img)
         
@@ -372,7 +372,7 @@ class VolumeStreamer:
         color_tf, opacity_tf, pct_range = build_histogram_tf(img, tint_rgb=tint_rgb)
         self._channel_tfs[channel_id] = (color_tf, opacity_tf)
         self._channel_percentile_bounds[channel_id] = pct_range
-        
+
         prop = vol.GetProperty()
         prop.SetColor(color_tf)
         prop.SetScalarOpacity(opacity_tf)
@@ -402,7 +402,7 @@ class VolumeStreamer:
                 "focalPoint": fp,
                 "viewUp": vup,
             }
-        
+
         self.renderer.ResetCameraClippingRange()
         self._render()
         

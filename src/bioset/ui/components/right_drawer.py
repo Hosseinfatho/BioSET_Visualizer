@@ -22,7 +22,7 @@ def right_drawer(state, ctrl):
                 vuetify.VIcon("mdi-close", small=True)
         
         vuetify.VDivider()
-        
+
         # UpSet plot container
         with html.Div(classes="px-4 py-3"):
             html.Div("Marker Combinations", classes="text-overline mb-2 text-center", style="color: white;")

@@ -6,7 +6,6 @@ _SCRIPTS_DIR = Path(__file__).parent
 def _read_js(filename: str) -> str:
     return (_SCRIPTS_DIR / filename).read_text()
 
-
 # Lens drag: update position on every mousemove so the lens follows the cursor 1:1 (smooth).
 NOV_DRAG_SCRIPT = r"""
 (function() {
@@ -101,7 +100,7 @@ NOV_DRAG_SCRIPT = r"""
 })();
 """
 
-
+# register js files here
 def register_scripts(client):
     client.Script(NOV_DRAG_SCRIPT)  # Load first so window.novStartDrag exists when lens is clicked
     client.Script(_read_js("upset.js"))

@@ -43,6 +43,7 @@ def init_state(state):
     state.setdefault("data_open", True)
     state.setdefault("settings_open", False)
     state.setdefault("channels_open", True)
+    state.setdefault("report_generation_open", False)
     
     # Settings
     state.setdefault("bg_color", "#000000")
@@ -236,6 +237,11 @@ def init_state(state):
     state.setdefault("biomni_model", "claude-sonnet-4-6")
     state.setdefault("biomni_mode", "full") # one of [full, db, minimal]
     state.setdefault("biomni_port", 5000)
+
+    # Report Settings
+    state.setdefault("export_general", True)
+    state.setdefault("export_analysis", True)
+    state.setdefault("export_chat", True)
     
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""

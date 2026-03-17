@@ -4,15 +4,16 @@ from __future__ import annotations
 from trame.ui.vuetify import VAppLayout
 from trame.widgets import html, vuetify, client
 
-from bioset.bookmark import bookmark_form_panel
-from .callbacks import register_callbacks
-from .components import bookmark_column, nov_popup_panel
-from .components import left_drawer, right_drawer, viewer
 from .components.floating_chatbot import floating_chatbot_section
 from .scripts import register_scripts
 from .state import init_state, register_state_change_handlers
+
+from .callbacks import register_callbacks
+from .components import bookmark_column
 from .styles import register_styles
 
+from .components import left_drawer, right_drawer, viewer, nov_popup_panel
+from bioset.bookmark import bookmark_form_panel
 
 def build_ui(server, render_window, streamer=None, nov_render_window=None):
     ctrl = server.controller
@@ -26,9 +27,7 @@ def build_ui(server, render_window, streamer=None, nov_render_window=None):
         register_styles(client)
         left_drawer(state, ctrl)
         right_drawer(state, ctrl)
-
         floating_chatbot_section(state, ctrl)
-
         # VTK RENDERER
         with layout.root:
             # Container with fill-height so viewer gets height (avoids white screen)
