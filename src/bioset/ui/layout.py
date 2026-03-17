@@ -36,11 +36,22 @@ def build_ui(server, render_window, streamer=None, nov_render_window=None):
                     with html.Div(
                             style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; min-width: 0; min-height: 0;"):
                         view = viewer(ctrl, render_window)
+            # Hidden input: client script updates this with actual drawer width (px)
+            html.Input(
+                type="text",
+                v_model=("left_drawer_width_px", 350),
+                attrs={"id": "bioset-left-drawer-width", "aria-hidden": "true", "tabindex": "-1"},
+                style="position: fixed; opacity: 0; width: 0; height: 0; pointer-events: none;",
+            )
             # Bookmark: fixed overlay to the RIGHT of left drawer (not on top of settings)
             with html.Div(
                     v_show=("bookmark_open", False),
                     class_="bookmark-panel-beside-drawer",
-                    style="position: fixed; left: 250px; top: 0; width: 250px; height: 50vh; z-index: 12; pointer-events: auto;",
+                    style=(
+                        "'position: fixed; left: ' + ((left_drawer_width_px || 0) + 8) + 'px; top: 0; "
+                        "width: 250px; height: 50vh; z-index: 12; pointer-events: auto;'",
+                        "position: fixed; left: 358px; top: 0; width: 250px; height: 50vh; z-index: 12; pointer-events: auto;",
+                    ),
             ):
                 bookmark_column(state, ctrl)
             ctrl.set_view(view)

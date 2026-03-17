@@ -6,6 +6,46 @@ _SCRIPTS_DIR = Path(__file__).parent
 def _read_js(filename: str) -> str:
     return (_SCRIPTS_DIR / filename).read_text()
 
+# Keep overlay panels aligned with the real drawer width (Vuetify may override configured width)
+DRAWER_WIDTH_SCRIPT = r"""
+(function() {
+  "use strict";
+  function byId(id) { return document.getElementById(id); }
+  function setInput(id, value) {
+    var inp = byId(id);
+    if (inp) { inp.value = String(value); inp.dispatchEvent(new Event("input", { bubbles: true })); }
+  }
+  function getLeftDrawerEl() {
+    // Prefer the non-right navigation drawer (left side)
+    var all = document.querySelectorAll(".v-navigation-drawer");
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (el.classList && el.classList.contains("v-navigation-drawer--right")) continue;
+      return el;
+    }
+    return null;
+  }
+  var last = -1;
+  function update() {
+    var el = getLeftDrawerEl();
+    if (!el || !el.getBoundingClientRect) return;
+    var r = el.getBoundingClientRect();
+    var w = Math.round(r.width || 0);
+    if (!w || w < 40) return;
+    if (w !== last) {
+      last = w;
+      setInput("bioset-left-drawer-width", w);
+    }
+  }
+  // Initial + keep in sync with mini toggle/animations
+  window.addEventListener("resize", update, { passive: true });
+  document.addEventListener("transitionend", update, true);
+  setTimeout(update, 0);
+  setTimeout(update, 250);
+  setInterval(update, 750);
+})();
+"""
+
 # Lens drag: update position on every mousemove so the lens follows the cursor 1:1 (smooth).
 NOV_DRAG_SCRIPT = r"""
 (function() {
@@ -102,6 +142,7 @@ NOV_DRAG_SCRIPT = r"""
 
 # register js files here
 def register_scripts(client):
+    client.Script(DRAWER_WIDTH_SCRIPT)
     client.Script(NOV_DRAG_SCRIPT)  # Load first so window.novStartDrag exists when lens is clicked
     client.Script(_read_js("upset.js"))
     client.Script(_read_js("bar.js"))
