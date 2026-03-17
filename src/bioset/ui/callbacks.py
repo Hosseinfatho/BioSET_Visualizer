@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import os
-import tempfile
-
-import requests
-
-from bioset.NOV import register_nov_callbacks
-from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 import datetime
 import hashlib
 import os
@@ -18,13 +10,11 @@ import requests
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
-from bioset.scene.volumes import build_tf_with_range
 from bioset.report import generate_report_bytes
 from bioset.scene.volumes import build_tf_with_range
 from .state import get_channel_color
-from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
-from bioset.NOV import register_nov_callbacks
 from ..report.content_sections.AnalysisDataset import AnalysisDatasetContent, AnalysisDataset
+from ..report.content_sections.Bookmarks import Bookmarks, load_all_bookmarks
 from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
 from ..report.content_sections.General import GeneralContent, General
 
@@ -1495,7 +1485,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
-    def generate_pdf_report(report_data=None):
+    def generate_pdf_report():
         """
         API endpoint to generate and download a PDF report.
         report_data: dict with 'title', 'params', 'channels', etc.
@@ -1521,15 +1511,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
             chat = Chat(chat_contents, llm_settings)
             report_data.append(chat)
 
-        print(f"[callbacks] Generating PDF report: {report_data}")
+        if state.export_bookmarks:
+            bookmark_content = load_all_bookmarks("src/bioset/bookmark/recordings")
+            bookmarks = Bookmarks(bookmark_content)
+            report_data.append(bookmarks)
+
         try:
             pdf_bytes = generate_report_bytes(report_data)
-            filename = f"BioSET_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filename = f"BioSET_Report_{datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')}.pdf"
 
             with open(filename, "wb") as f:
                 f.write(pdf_bytes)
 
-            print(f"Saved PDF to: {os.path.abspath(filename)}")
+            print(f"[callbacks] Saved PDF to: {os.path.abspath(filename)}")
 
         except Exception as e:
             print(f"[callbacks] Error generating report: {e}")

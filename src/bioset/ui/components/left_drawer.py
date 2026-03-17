@@ -47,7 +47,7 @@ def left_drawer(state, ctrl):
 
         # Analysis Parameters
         analysis_parameters_section(state, ctrl)
-        
+
         vuetify.VDivider()
         
         # Settings
@@ -59,6 +59,6 @@ def left_drawer(state, ctrl):
         report_generation_section(state, ctrl)
 
         vuetify.VDivider()
-
+        
         # Channels
         channels_section(state, ctrl)

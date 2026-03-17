@@ -5,7 +5,39 @@ from fpdf import FPDF
 from bioset.report.content_sections.PDFSection import PDFSection, TITLE_FONT_SIZE, TITLE_COLOR
 
 
+def _replace_llm_symbols(txt):
+    if not isinstance(txt, str):
+        return txt
+
+    replacements = {
+        "\u2014": "-",
+        "\u2013": "-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2026": "...",
+    }
+    for char, replacement in replacements.items():
+        txt = txt.replace(char, replacement)
+
+    return txt
+
+
 class BioSETReport(FPDF):
+    def cell(self, w=None, h=None, text='', border=0, ln=0, align='', fill=False, link='', **kwargs):
+        text = _replace_llm_symbols(text)
+        return super().cell(w=w, h=h, text=text, border=border, ln=ln, align=align, fill=fill, link=link, **kwargs)
+
+    def multi_cell(self, w, h=None, text='', border=0, align='J', fill=False, split_only=False, link='', **kwargs):
+        text = _replace_llm_symbols(text)
+        return super().multi_cell(w=w, h=h, text=text, border=border, align=align, fill=fill, split_only=split_only,
+                                  link=link, **kwargs)
+
+    def write(self, h=None, text='', link='', **kwargs):
+        text = _replace_llm_symbols(text)
+        return super().write(h=h, text=text, link=link, **kwargs)
+
     def header(self):
         icon_w = 20
         self.image("src/bioset/ui/assets/icon.jpg", x=self.l_margin, y=self.t_margin, w=icon_w)

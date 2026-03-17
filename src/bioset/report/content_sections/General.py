@@ -15,9 +15,6 @@ class General(PDFSection):
         super().__init__("General")
         self.general = general
 
-    def get_content(self):
-        pass
-
     def append_pdf_bytes(self, pdf):
         pdf.set_font('Arial', 'B', SUBTITLE_FONT_SIZE)
         pdf.set_text_color(TITLE_COLOR)
@@ -25,7 +22,6 @@ class General(PDFSection):
 
         pdf.set_font('Arial', 'B', FONT_SIZE)
 
-        # Zarr URL
         pdf.set_text_color(TITLE_COLOR)
         pdf.write(5, 'Zarr URL:')
         pdf.ln(5)
@@ -33,7 +29,6 @@ class General(PDFSection):
         pdf.multi_cell(0, 5, self.general.zarr_url, align='L')
         pdf.ln(2)
 
-        # Metadata URL
         pdf.set_text_color(TITLE_COLOR)
         pdf.write(5, 'Metadata URL:')
         pdf.ln(5)
@@ -41,7 +36,6 @@ class General(PDFSection):
         pdf.multi_cell(0, 5, self.general.metadata_url, align='L')
         pdf.ln(2)
 
-        # Export Timestamp
         pdf.set_text_color(TITLE_COLOR)
         pdf.write(5, 'Export Timestamp: ')
         pdf.set_text_color(COLOR)

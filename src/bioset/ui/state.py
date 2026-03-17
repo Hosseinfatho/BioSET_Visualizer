@@ -46,11 +46,11 @@ def init_state(state):
     state.setdefault("settings_open", False)
     state.setdefault("channels_open", True)
     state.setdefault("report_generation_open", False)
-    
+
     # Settings
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)
-
+    
     # Bookmark (saved views / snapshots: name, open, new form)
     state.setdefault("bookmark_open", False)
     state.setdefault("bookmark_snapshot_names", [])
@@ -177,7 +177,7 @@ def init_state(state):
     state.setdefault("bar_filtered_channels", []) # Channels shown in filter list
     state.setdefault("bar_filter_dialog", False)
     state.setdefault("bar_expanded", False)
-
+    
     # NOV (Next Best View) — 2D rectangle overlay (resize/pan); depth = 2× diagonal of rect in world
     state.setdefault("nov_show_rect", False)  # show 2D rectangle overlay on main view
     state.setdefault("nov_rect_x", 0.35)  # 0-1 left
@@ -244,7 +244,8 @@ def init_state(state):
     state.setdefault("export_general", True)
     state.setdefault("export_analysis", True)
     state.setdefault("export_chat", True)
-    
+    state.setdefault("export_bookmarks", True)
+
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""
     return DEFAULT_CHANNEL_COLORS[index % len(DEFAULT_CHANNEL_COLORS)]

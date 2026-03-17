@@ -21,9 +21,6 @@ class Chat(PDFSection):
         self.chat_content = chat_content
         self.llm_settings = llm_settings
 
-    def get_content(self):
-        pass
-
     def append_pdf_bytes(self, pdf):
         pdf.set_font('Arial', 'B', SUBTITLE_FONT_SIZE)
         pdf.set_text_color(TITLE_COLOR)

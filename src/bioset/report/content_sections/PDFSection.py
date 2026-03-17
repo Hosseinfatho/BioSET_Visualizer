@@ -9,16 +9,14 @@ TITLE_COLOR = '#000000'
 SUBTITLE_COLOR = '#444444'
 COLOR = '#666666'
 
+BACKGROUND_COLOR = '#F5F5F5'
+
 class PDFSection(ABC):
     def __init__(self, name: str):
         self.name = name
 
     def get_title(self) -> str:
         return self.name
-
-    @abstractmethod
-    def get_content(self):
-        pass
 
     @abstractmethod
     def append_pdf_bytes(self, pdf):
