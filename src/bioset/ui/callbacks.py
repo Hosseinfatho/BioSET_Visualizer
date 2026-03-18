@@ -1198,6 +1198,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
         from vtkmodules.vtkRenderingCore import vtkPropPicker
         
+        # Avoid registering the same observer multiple times on the same interactor.
+        if getattr(interactor, "_bioset_right_click_picker_registered", False):
+            return
+        setattr(interactor, "_bioset_right_click_picker_registered", True)
+
         picker = vtkPropPicker()
         
         def _on_right_button_press(obj, event):
@@ -1209,26 +1214,35 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if not heatmap or not streamer:
                 return
             
-            renderer = streamer.renderer
-            
-            volumes = renderer.GetVolumes()
-            volumes.InitTraversal()
-            hidden_volumes = []
-            vol = volumes.GetNextVolume()
-            while vol:
-                hidden_volumes.append((vol, vol.GetVisibility()))
-                vol.SetVisibility(False)
-                vol = volumes.GetNextVolume()
-            
-            try:
-                picker.Pick(click_pos[0], click_pos[1], 0, renderer)
-                picked_actor = picker.GetActor()
-            finally:
-                for vol, was_visible in hidden_volumes:
-                    vol.SetVisibility(was_visible)
+            # VTK event position origin is bottom-left; canvas events are top-left.
+            # Use the render window size to flip Y.
+            renderer_main = streamer.renderer
+            render_window = renderer_main.GetRenderWindow()
+            win_size = render_window.GetSize()
+            vtk_x = int(click_pos[0])
+            vtk_y = int(win_size[1] - click_pos[1])
+
+            # Heatmap tiles are rendered in dedicated heatmap renderers (layers 0 and 2),
+            # so we must pick in those renderers (not just the main volume renderer).
+            candidate_renderers = []
+            if getattr(heatmap, "outline_renderer", None) is not None:
+                candidate_renderers.append(heatmap.outline_renderer)
+            if getattr(heatmap, "renderer", None) is not None:
+                candidate_renderers.append(heatmap.renderer)
+            candidate_renderers.append(renderer_main)
+
+            picked_actor = None
+            for ren in candidate_renderers:
+                try:
+                    picker.Pick(vtk_x, vtk_y, 0, ren)
+                    picked_actor = picker.GetActor()
+                except Exception:
+                    picked_actor = None
+                if picked_actor is not None:
+                    break
             
             if picked_actor is None:
-                print(f"[picker] No actor at ({click_pos[0]}, {click_pos[1]})")
+                print(f"[picker] No actor at ({vtk_x}, {vtk_y})")
                 return
             
             tile = heatmap.get_tile_for_actor(picked_actor)
@@ -1296,6 +1310,92 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
+
+    def on_right_click(px, py):
+        """Handle right-click from client JS (contextmenu) on the VTK canvas."""
+        heatmap = _refs.get("heatmap")
+        mesh_mgr = _refs.get("mesh_manager")
+        streamer = _refs.get("streamer")
+        if not heatmap or not streamer:
+            return
+
+        renderer_main = streamer.renderer
+        render_window = renderer_main.GetRenderWindow()
+        win_size = render_window.GetSize()
+
+        vtk_x = int(px)
+        vtk_y = int(win_size[1] - int(py))
+
+        # Pick against heatmap tile actors (tiles live in heatmap renderers, not in the main volume renderer).
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+        picker = vtkPropPicker()
+
+        candidate_renderers = []
+        if getattr(heatmap, "outline_renderer", None) is not None:
+            candidate_renderers.append(heatmap.outline_renderer)
+        if getattr(heatmap, "renderer", None) is not None:
+            candidate_renderers.append(heatmap.renderer)
+        candidate_renderers.append(renderer_main)
+
+        picked_actor = None
+        for ren in candidate_renderers:
+            try:
+                picker.Pick(vtk_x, vtk_y, 0, ren)
+                picked_actor = picker.GetActor()
+            except Exception:
+                picked_actor = None
+            if picked_actor is not None:
+                break
+
+        if picked_actor is None:
+            return
+        tile = heatmap.get_tile_for_actor(picked_actor)
+        if tile is None:
+            return
+
+        sx = getattr(state, "physical_size_x", 0.14)
+        sy = getattr(state, "physical_size_y", 0.14)
+        tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
+        tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
+        tile_center_z = 0.0
+        tile_width_world = (tile.x1 - tile.x0) * sx * 128
+        tile_height_world = (tile.y1 - tile.y0) * sy * 128
+        tile_extent = max(tile_width_world, tile_height_world)
+
+        cam = renderer_main.GetActiveCamera()
+        cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
+        cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+        cam.SetViewUp(0, 1, 0)
+        renderer_main.ResetCameraClippingRange()
+
+        active_channels = list(getattr(state, "active_channels", []) or [])
+        if mesh_mgr and mesh_mgr.is_available and active_channels:
+            vox_x = (tile.x0 + tile.x1) / 2.0 * 128
+            vox_y = (tile.y0 + tile.y1) / 2.0 * 128
+            state.selected_tile = None
+            for ch_id in active_channels:
+                mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
+                if not mesh_tile:
+                    continue
+                if state.selected_tile is None:
+                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                if ch_id not in state.surface_hidden_channels:
+                    color_hex = "#FFFFFF"
+                    for ch in state.channels:
+                        if ch["id"] == ch_id:
+                            color_hex = ch["color"]
+                            break
+                    color_rgb = _hex_to_rgb_tuple(color_hex)
+                    mesh_mgr.activate_channel_mesh(
+                        channel_idx=ch_id,
+                        color_rgb=color_rgb,
+                        tile_x=mesh_tile.tile_x,
+                        tile_y=mesh_tile.tile_y,
+                        opacity=1.0,
+                    )
+
+        if _refs.get("view"):
+            _refs["view"].update()
 
     _hover_last_actor = [None]
     def on_hover(px, py):
@@ -1431,4 +1531,5 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
     ctrl.trigger("on_hover")(on_hover)
+    ctrl.trigger("on_right_click")(on_right_click)
     ctrl.generate_pdf_report = generate_pdf_report

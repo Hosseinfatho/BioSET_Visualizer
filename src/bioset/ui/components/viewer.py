@@ -21,6 +21,15 @@ def viewer(ctrl, render_window):
                 render_window,
                 interactive_ratio=1.0,
             )
+            # Client-side mouse tracker: emits hover + right-click on the VTK canvas and forwards to server triggers.
+            vuetify.Template(
+                """
+                <hover-tracker
+                  @hover="trigger('on_hover', $event)"
+                  @rightclick="trigger('on_right_click', $event)"
+                />
+                """
+            )
             ctrl.view_update = view.update
             # 2D NOV lens: drag to move via Trame v_on (no custom JS); +/- for size.
             # Overlay: pointer-events auto when lens visible so lens can receive clicks (script needs this to start drag)

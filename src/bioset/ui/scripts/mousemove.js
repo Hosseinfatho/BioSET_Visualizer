@@ -22,6 +22,7 @@ Vue.component('hover-tracker', {
 
       canvas.addEventListener('contextmenu', function (e) {
         e.preventDefault();
+        self.$emit('rightclick', [e.offsetX, e.offsetY]);
       });
 
       return true;
