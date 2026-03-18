@@ -78,13 +78,13 @@ def main():
                 await asyncio.sleep(0.1)
                 try:
                     updated = False
-                    updated = False
                     if scene.streamer.check_and_apply_loaded_data():
                         updated = True
                     if scene.heatmap_lod is not None:
                         server_state = server.state
                         if scene.heatmap_lod.check_and_apply(scene.heatmap, server_state):
                             updated = True
+                    ctrl.check_label_setup()
                     if updated:
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
                         view.update()
@@ -133,8 +133,8 @@ def main():
         ctrl.set_mesh_manager(scene.mesh_manager)
     if scene.heatmap_lod is not None:
         ctrl.set_heatmap_lod(scene.heatmap_lod)
-
-    ctrl.get_available_llms()
+    ctrl.set_renderer(scene.renderer)
+    ctrl.setup_label_interaction_observer(scene.interactor)
 
     server.start()
 

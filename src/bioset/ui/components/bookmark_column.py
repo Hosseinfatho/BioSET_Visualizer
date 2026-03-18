@@ -35,7 +35,7 @@ def bookmark_column(state, ctrl):
                     with vuetify.VBtn(
                             v_show=("!bookmark_flags_visible", True),
                             x_small=True,
-                            color="primary",
+                            color="white",
                             click=ctrl.bookmark_show_category_flags,
                             style="flex: 1 1 0; min-width: 0;",
                     ):
@@ -43,7 +43,7 @@ def bookmark_column(state, ctrl):
                     with vuetify.VBtn(
                             v_show=("bookmark_flags_visible", False),
                             x_small=True,
-                            color="primary",
+                            color="white",
                             outlined=True,
                             click=ctrl.bookmark_hide_flags,
                             style="flex: 1 1 0; min-width: 0;",

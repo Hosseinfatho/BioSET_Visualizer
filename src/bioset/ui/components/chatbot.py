@@ -146,14 +146,23 @@ def chatbot_section(state, ctrl):
                             ):
                                 vuetify.VIcon("mdi-send", small=True)
 
-                        # Label button + Clear chat
+                        # Label / Suggest / Clear buttons
                         with html.Div(classes="d-flex mt-2"):
                             vuetify.VBtn(
                                 "Label",
                                 click=ctrl.chatbot_label,
                                 x_small=True,
                                 outlined=True,
-                                color="primary",
+                                color="white",
+                                disabled=("chatbot_loading",),
+                                classes="flex-grow-1 mr-1",
+                            )
+                            vuetify.VBtn(
+                                "Suggest",
+                                click=ctrl.chatbot_suggest,
+                                x_small=True,
+                                outlined=True,
+                                color="teal",
                                 disabled=("chatbot_loading",),
                                 classes="flex-grow-1 mr-1",
                             )
@@ -164,4 +173,13 @@ def chatbot_section(state, ctrl):
                                 text=True,
                                 color="grey",
                                 classes="flex-grow-1",
+                            )
+                        # Anchor toggle — freezes label positions while rotating
+                        with html.Div(classes="d-flex align-center mt-1"):
+                            vuetify.VSwitch(
+                                v_model=("anchor_labels",),
+                                label="Anchor labels",
+                                hide_details=True,
+                                dense=True,
+                                classes="mt-0",
                             )

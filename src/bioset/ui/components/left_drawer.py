@@ -8,7 +8,7 @@ from trame.widgets import vuetify
 from .analysis_parameters import analysis_parameters_section
 from .channels import channels_section
 from .data_sources import data_sources_section
-from .report_generation import report_generation_section
+from .tools import report_generation_section
 from .settings import settings_section
 
 

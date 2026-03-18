@@ -38,6 +38,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "heatmap": None,
         "mesh_manager": None,
         "heatmap_lod": None,
+        "renderer": None,
+        "label_manager": None,
+        "biomni_client": None,
+        "last_tile_channel_stats": None,
         "interactor": None,
     }
 
@@ -247,10 +251,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if heatmap_lod:
             heatmap_lod.clear_analysis()
 
-        heatmap_lod = _refs.get("heatmap_lod")
-        if heatmap_lod:
-            heatmap_lod.clear_analysis()
-        
+        label_mgr = _refs.get("label_manager")
+        if label_mgr:
+            label_mgr.clear()
+            _refs["label_manager"] = None
+
         state.channels = []
         state.active_channels = []
         state.visible_channel_ids = []
@@ -399,20 +404,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             loader = _refs["analysis_loader"]
             metadata = loader.load_from_bytes(file_bytes)
-
-            # Notify HeatmapLOD of new analysis context
-            heatmap_lod = _refs.get("heatmap_lod")
-            if heatmap_lod and loader.db_path:
-                z_depth = 1
-                bounds = metadata.volume_bounds
-                if bounds and "z" in bounds:
-                    z_depth = max(1, bounds["z"][1] - bounds["z"][0])
-                heatmap_lod.set_analysis(
-                    db_path=loader.db_path,
-                    channel_order=list(metadata.channels),
-                    z_depth=z_depth,
-                )
-
 
             # Notify HeatmapLOD of new analysis context
             heatmap_lod = _refs.get("heatmap_lod")
@@ -980,10 +971,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if mesh_mgr and channel_id in state.active_channels:
             mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
 
-        mesh_mgr = _refs.get("mesh_manager")
-        if mesh_mgr and channel_id in state.active_channels:
-            mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
-        
         new_channels = []
         for ch in state.channels:
             if ch["id"] == channel_id:
@@ -1053,8 +1040,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
         nov_view = _refs.get("nov_view")
         if nov_view and hasattr(nov_view, "update"):
             nov_view.update()
-
+            
     _refs["biomni_client"] = None
+    _refs["last_tile_channel_stats"] = None  # populated on right-click tile selection
 
     def _get_biomni_client():
         """Get or create the local Biomni client."""
@@ -1062,37 +1050,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         if _refs["biomni_client"] is None:
             _refs["biomni_client"] = BiomniLocalClient(base_url=url)
-            get_available_llms()
 
         if _refs["biomni_client"].base_url != url:
             _refs["biomni_client"] = BiomniLocalClient(base_url=url)
-            get_available_llms()
 
         return _refs["biomni_client"]
 
-    def get_available_llms():
-        try:
-            client = _get_biomni_client()
-            models = client.get_models()
-            if models:
-                state.biomni_available_models = models
-                if state.biomni_model not in models:
-                    state.biomni_model = models[0]
-        except Exception:
-            pass
-
     def chatbot_login():
         """Initialise the Biomni agent on the local server."""
-        print(f"[callbacks] Biomni init requested with llm {state.biomni_model} and mode {state.biomni_mode}")
+        print(f"[callbacks] Biomni init requested with llm={state.biomni_model}, db_llm={state.biomni_db_model}, mode={state.biomni_mode}")
         state.chatbot_loading = True
 
         try:
-            import os
             client = _get_biomni_client()
             client.init(
                 llm=state.biomni_model,
+                db_llm=state.biomni_db_model,
                 mode=state.biomni_mode,
-                api_key=os.getenv("ANTHROPIC_API_KEY")
+                dataset=state.biomni_dataset,
+                api_key=os.getenv("ANTHROPIC_API_KEY"),
             )
             state.chatbot_authenticated = True
             state.chatbot_messages = []
@@ -1106,27 +1082,47 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.chatbot_loading = False
 
-    def biomni_add_data(file_info):
-        print(f"[callbacks] Received file upload for Biomni Add Data ({len(file_info)} bytes)")
+    _refs["biomni_pending_file"] = None  # temp path of file waiting to be uploaded
 
+    def biomni_add_data(file_info):
+        """Stage a file for upload (saves to temp, waits for Upload button)."""
+        state.biomni_upload_success = False
         try:
             file_name = file_info.get("name", "upload")
             file_content = file_info.get("content")
-
             _, ext = os.path.splitext(file_name)
 
             fd, temp_path = tempfile.mkstemp(prefix="biomni_file_upload_", suffix=ext)
             with os.fdopen(fd, 'wb') as f:
                 f.write(file_content)
 
-            print(f"[callbacks] Wrote upload '{file_name}' to {temp_path}")
-
-            client = _get_biomni_client()
-            url = f"{client.base_url}/custom-data"
-            requests.post(url, json={"filepath": temp_path})
-
+            _refs["biomni_pending_file"] = temp_path
+            print(f"[callbacks] Staged file '{file_name}' at {temp_path}")
         except Exception as e:
-            print(f"[callbacks] Error processing file upload: {e}")
+            print(f"[callbacks] Error staging file: {e}")
+
+    def biomni_upload_file():
+        """Upload the staged file to Biomni with its description."""
+        state.biomni_upload_success = False
+        temp_path = _refs.get("biomni_pending_file")
+        description = (state.biomni_file_description or "").strip()
+
+        if not temp_path:
+            print("[callbacks] No file selected")
+            return
+        if not description:
+            print("[callbacks] No description provided")
+            return
+
+        try:
+            client = _get_biomni_client()
+            client.upload(file_path=temp_path, description=description)
+            state.biomni_upload_success = True
+            _refs["biomni_pending_file"] = None
+            print(f"[callbacks] File uploaded to Biomni successfully")
+        except Exception as e:
+            state.biomni_upload_success = False
+            print(f"[callbacks] Error uploading file: {e}")
 
 
     def _build_markers() -> list[str]:
@@ -1140,13 +1136,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
         return markers
 
+    def _require_tile_stats() -> dict | None:
+        """Return cached tile channel_stats, or add an error message and return None."""
+        cs = _refs.get("last_tile_channel_stats")
+        if not cs:
+            state.chatbot_messages = state.chatbot_messages + [{
+                "role": "error",
+                "content": "No tile selected. Right-click a heatmap tile first.",
+            }]
+        return cs
+
     def chatbot_send_message():
-        """Send a free-form /query using the active markers + screenshot."""
+        """Send a free-form /query using the active markers + tile stats + screenshot."""
         if not state.chatbot_input or not state.chatbot_input.strip():
             return
 
         if not state.chatbot_authenticated:
             print("[callbacks] Cannot send message - Biomni not initialised")
+            return
+
+        channel_stats = _require_tile_stats()
+        if channel_stats is None:
             return
 
         user_text = state.chatbot_input.strip()
@@ -1163,7 +1173,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             markers = _build_markers()
             screenshot_base64 = capture_screenshot()
 
-            result = client.query(markers, user_text, image=screenshot_base64)
+            result = client.query(markers, user_text, channel_stats, image=screenshot_base64)
             response_text = result.get("answer", str(result))
 
             state.chatbot_messages = state.chatbot_messages + [
@@ -1181,9 +1191,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_loading = False
 
     def chatbot_label():
-        """Run a /label call using active markers + screenshot."""
+        """Run a /label call using active markers + tile stats + screenshot."""
         if not state.chatbot_authenticated:
             print("[callbacks] Cannot label - Biomni not initialised")
+            return
+
+        channel_stats = _require_tile_stats()
+        if channel_stats is None:
             return
 
         markers = _build_markers()
@@ -1204,32 +1218,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
             client = _get_biomni_client()
             screenshot_base64 = capture_screenshot()
 
-            result = client.label(markers, image=screenshot_base64)
+            result = client.label(markers, channel_stats, image=screenshot_base64)
 
-            lines = []
+            import json as _json
             raw_labels = result.get("labels", {})
-            if raw_labels:
-                lines.append("Labels:")
-                for key, val in raw_labels.items():
-                    title = val[0] if val else ""
-                    subtitle = val[1] if len(val) > 1 else ""
-                    entry = f"  {key}: {title}"
-                    if subtitle:
-                        entry += f" — {subtitle}"
-                    lines.append(entry)
-
             overall = result.get("overall", [])
-            if overall:
-                lines.append(f"Overall: {overall[0]}")
-                if len(overall) > 1:
-                    lines[-1] += f" — {overall[1]}"
-
-            response_text = "\n".join(lines) if lines else str(result)
+            response_json = _json.dumps(result, indent=2)
 
             state.chatbot_messages = state.chatbot_messages + [
-                {"role": "assistant", "content": response_text}
+                {"role": "assistant", "content": response_json, "format": "json"}
             ]
             print("[callbacks] Biomni label response received")
+
+            if raw_labels:
+                _apply_mesh_labels(raw_labels, overall)
+                state.chatbot_labels_generated = True
 
         except Exception as e:
             error_msg = f"Error: {e}"
@@ -1239,18 +1242,212 @@ def register_callbacks(ctrl, state, view, streamer=None):
             ]
         finally:
             state.chatbot_loading = False
-    
+
+    def chatbot_suggest():
+        """Run a /suggest call using active markers + tile stats + screenshot."""
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot suggest - Biomni not initialised")
+            return
+
+        channel_stats = _require_tile_stats()
+        if channel_stats is None:
+            return
+
+        markers = _build_markers()
+        marker_display = ", ".join(m.split(":")[0] for m in markers) if markers else "(none)"
+        print(f"[callbacks] Biomni suggest for: {marker_display}")
+        state.chatbot_messages = state.chatbot_messages + [
+            {"role": "user", "content": f"Suggest channels to add alongside: {marker_display}"}
+        ]
+        state.chatbot_loading = True
+
+        try:
+            client = _get_biomni_client()
+            screenshot_base64 = capture_screenshot()
+
+            result = client.suggest(markers, channel_stats, image=screenshot_base64)
+
+            import json as _json
+            suggestions = result.get("suggestions", [])
+            priority_map = {"high": 3, "medium": 2, "low": 1}
+            suggestion_items = []
+            for s in suggestions:
+                raw_priority = str(s.get("priority", "medium")).lower()
+                dots = priority_map.get(raw_priority, 2)
+                suggestion_items.append({
+                    "channel": s.get("channel", ""),
+                    "reason": s.get("reason", ""),
+                    "dots": dots,
+                })
+
+            state.chatbot_messages = state.chatbot_messages + [{
+                "role": "assistant",
+                "content": _json.dumps(result, indent=2),
+                "format": "suggest",
+                "suggestions": suggestion_items,
+            }]
+            print("[callbacks] Biomni suggest response received")
+
+        except Exception as e:
+            error_msg = f"Error: {e}"
+            print(f"[callbacks] Biomni suggest error: {error_msg}")
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+
     def chatbot_clear():
         """Clear the chatbot conversation history."""
         print("[callbacks] Clearing chatbot messages")
         state.chatbot_messages = []
         state.chatbot_input = ""
 
+    def toggle_labels():
+        """Show or hide label actors in the scene."""
+        state.show_labels = not state.show_labels
+        label_mgr = _refs.get("label_manager")
+        if not state.show_labels:
+            if label_mgr:
+                label_mgr.clear()
+            v = _refs.get("view")
+            if v:
+                v.update()
+        else:
+            if label_mgr:
+                refresh_labels()
+
+    def deselect_tile():
+        """Deselect the current tile: remove surface meshes, clear labels, reset state."""
+        print("[callbacks] Deselecting tile")
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr:
+            for ch_id in list(state.active_channels):
+                mesh_mgr.deactivate_channel_mesh(ch_id)
+        label_mgr = _refs.get("label_manager")
+        if label_mgr:
+            label_mgr.clear()
+            _refs["label_manager"] = None
+        state.selected_tile = None
+        state.chatbot_labels_generated = False
+        state.anchor_labels = False
+        v = _refs.get("view")
+        if v:
+            v.update()
+
+    def _apply_mesh_labels(raw_labels: dict, overall: list):
+        """Create/restart LabelSceneManager with the new labels from Biomni /label."""
+        from bioset.scene.labels import LabelSceneManager
+        renderer = _refs.get("renderer")
+        mesh_mgr = _refs.get("mesh_manager")
+        if renderer is None or mesh_mgr is None or not mesh_mgr.is_available:
+            print("[callbacks] Cannot apply labels: missing renderer or mesh_manager")
+            return
+
+        polydata_by_name = {}
+        for ch_id in (state.active_channels or []):
+            ch_name = next((ch["name"] for ch in state.channels if ch["id"] == ch_id), None)
+            if ch_name is None:
+                continue
+            manifest_idx = mesh_mgr.channel_idx_for_name(ch_name)
+            if manifest_idx is None:
+                continue
+            pd = mesh_mgr.get_channel_polydata(manifest_idx)
+            if pd is not None:
+                polydata_by_name[ch_name] = pd
+
+        if not polydata_by_name:
+            print("[callbacks] No mesh polydata available for label placement")
+            return
+
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is None:
+            label_mgr = LabelSceneManager(renderer)
+            _refs["label_manager"] = label_mgr
+        else:
+            label_mgr.clear()
+
+        label_mgr.start_preprocessing(polydata_by_name, raw_labels, overall)
+        print(f"[callbacks] Label preprocessing started for {list(polydata_by_name.keys())}")
+
+    def check_label_setup():
+        """Poll for completed label preprocessing; call from the app poll loop."""
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is None:
+            return
+        if label_mgr.check_and_apply_setup():
+            # Preprocessing just finished — do an initial placement pass
+            if label_mgr.update():
+                view = _refs.get("view")
+                if view:
+                    view.update()
+
+    def refresh_labels():
+        """Force label recompute and redraw for the current camera position."""
+        label_mgr = _refs.get("label_manager")
+        if label_mgr and label_mgr.update():
+            v = _refs.get("view")
+            if v:
+                v.update()
+
+    def setup_label_interaction_observer(interactor):
+        """Register EndInteractionEvent observer to refresh labels on camera move."""
+        def _on_end_interaction(obj, event):
+            if state.anchor_labels:
+                return  # labels are pinned — skip recompute
+            if not state.show_labels:
+                return  # labels are hidden — skip recompute
+            refresh_labels()
+
+        interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
+        print("[callbacks] Label EndInteractionEvent observer registered")
+
     def capture_screenshot():
         """Capture current VTK view as base64-encoded PNG."""
         import base64
         png_bytes = capture_screenshot_png_bytes(_refs.get("streamer"))
         return base64.b64encode(png_bytes).decode("utf-8") if png_bytes else None
+
+    def _print_tile_channel_stats(tile, level, dilation):
+        """Print per-channel stats and build the channel_stats dict stored in _refs."""
+        loader = _refs.get("analysis_loader")
+        if not loader or not loader.is_loaded:
+            return
+        stats = loader.get_tile_channel_stats(tile.x0, tile.y0, level, dilation)
+        print(f"[picker] Channel stats — tile ({tile.x0},{tile.y0}) "
+              f"level={level} dilation={dilation}:")
+        if stats:
+            print(f"  {'Channel':<20} {'Voxels':>10} {'MeanInt':>10} {'SumInt':>14}")
+            print(f"  {'-'*20} {'-'*10} {'-'*10} {'-'*14}")
+            for row in stats:
+                print(f"  {row['channel']:<20} {row['voxel_count']:>10} "
+                      f"{row['mean_intensity']:>10.3f} {row['sum_intensity']:>14.1f}")
+        else:
+            print("  (no data for this tile / dilation)")
+
+        # total voxels in this tile region (width × height in base voxels × z depth)
+        base_tile_px = 128
+        width_vox = (tile.x1 - tile.x0) * base_tile_px
+        height_vox = (tile.y1 - tile.y0) * base_tile_px
+        bounds = loader.metadata.volume_bounds if loader.metadata else {}
+        z_depth = max(1, bounds["z"][1] - bounds["z"][0]) if bounds and "z" in bounds else 1
+        total_voxels = width_vox * height_vox * z_depth
+
+        dtype_max = loader.metadata.dtype_max if loader.metadata else 65535
+
+        _refs["last_tile_channel_stats"] = {
+            "dtype_max": dtype_max,
+            "total_voxels": total_voxels,
+            "channels": {
+                row["channel"]: {
+                    "mean_intensity": row["mean_intensity"],
+                    "segmented_voxels": row["voxel_count"],
+                }
+                for row in stats
+            },
+        }
+        print(f"[picker] channel_stats cached: {len(stats)} channels, "
+              f"total_voxels={total_voxels}, dtype_max={dtype_max}")
 
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
@@ -1262,77 +1459,61 @@ def register_callbacks(ctrl, state, view, streamer=None):
         setattr(interactor, "_bioset_right_click_picker_registered", True)
 
         picker = vtkPropPicker()
-        
+
         def _on_right_button_press(obj, event):
             click_pos = obj.GetEventPosition()
             heatmap = _refs.get("heatmap")
             mesh_mgr = _refs.get("mesh_manager")
             streamer = _refs.get("streamer")
-            
+
             if not heatmap or not streamer:
                 return
-            
-            # VTK event position origin is bottom-left; canvas events are top-left.
-            # Use the render window size to flip Y.
-            renderer_main = streamer.renderer
-            render_window = renderer_main.GetRenderWindow()
-            win_size = render_window.GetSize()
-            vtk_x = int(click_pos[0])
-            vtk_y = int(win_size[1] - click_pos[1])
 
-            # Heatmap tiles are rendered in dedicated heatmap renderers (layers 0 and 2),
-            # so we must pick in those renderers (not just the main volume renderer).
-            candidate_renderers = []
-            if getattr(heatmap, "outline_renderer", None) is not None:
-                candidate_renderers.append(heatmap.outline_renderer)
-            if getattr(heatmap, "renderer", None) is not None:
-                candidate_renderers.append(heatmap.renderer)
-            candidate_renderers.append(renderer_main)
+            # Pick from the renderer that contains heatmap tile actors
+            outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
+            if outline_only and heatmap.outline_renderer is not None:
+                pick_renderer = heatmap.outline_renderer
+            else:
+                pick_renderer = heatmap.renderer
 
-            picked_actor = None
-            for ren in candidate_renderers:
-                try:
-                    picker.Pick(vtk_x, vtk_y, 0, ren)
-                    picked_actor = picker.GetActor()
-                except Exception:
-                    picked_actor = None
-                if picked_actor is not None:
-                    break
-            
+            picker.Pick(click_pos[0], click_pos[1], 0, pick_renderer)
+            picked_actor = picker.GetActor()
+
             if picked_actor is None:
                 print(f"[picker] No actor at ({vtk_x}, {vtk_y})")
                 return
-            
+
             tile = heatmap.get_tile_for_actor(picked_actor)
             if tile is None:
                 print(f"[picker] Picked actor is not a heatmap tile")
                 return
-            
+
             print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
                 f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
-            
+            _print_tile_channel_stats(tile, state.current_hierarchy_level, state.current_dilation)
+
             sx = getattr(state, 'physical_size_x', 0.14)
             sy = getattr(state, 'physical_size_y', 0.14)
             sz = getattr(state, 'physical_size_z', 0.28)
-        
+
             #   world_x = tile_coord * spacing * 128
             tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
             tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
             tile_center_z = 0.0
-            
+
             tile_width_world = (tile.x1 - tile.x0) * sx * 128
             tile_height_world = (tile.y1 - tile.y0) * sy * 128
             tile_extent = max(tile_width_world, tile_height_world)
-            
-            cam = renderer.GetActiveCamera()
+
+            cam = streamer.renderer.GetActiveCamera()
             cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 6.0)
             cam.SetViewUp(0, 1, 0)
-            renderer.ResetCameraClippingRange()
-            
+            streamer.renderer.ResetCameraClippingRange()
+
             print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
                 f"extent={tile_extent:.1f}")
-            
+
             active_channels = list(state.active_channels)
             if mesh_mgr and mesh_mgr.is_available and active_channels:
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
@@ -1422,7 +1603,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         cam = renderer_main.GetActiveCamera()
         cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-        cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+        cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 4.0)
         cam.SetViewUp(0, 1, 0)
         renderer_main.ResetCameraClippingRange()
 
@@ -1463,32 +1644,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if not heatmap or not streamer:
             return
 
-        renderer = streamer.renderer
-        render_window = renderer.GetRenderWindow()
+        # Pick from the renderer that actually contains the heatmap tile actors:
+        # outline_renderer (layer 2) when in outline mode, fill renderer (layer 0) otherwise.
+        outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
+        if outline_only and heatmap.outline_renderer is not None:
+            pick_renderer = heatmap.outline_renderer
+        else:
+            pick_renderer = heatmap.renderer
+
+        render_window = streamer.renderer.GetRenderWindow()
         win_size = render_window.GetSize()
 
         vtk_y = win_size[1] - int(py)
         vtk_x = int(px)
 
-        # Hide volumes so picker can reach the cube actors
         from vtkmodules.vtkRenderingCore import vtkPropPicker
         hover_picker = vtkPropPicker()
 
-        volumes = renderer.GetVolumes()
-        volumes.InitTraversal()
-        hidden = []
-        vol = volumes.GetNextVolume()
-        while vol:
-            hidden.append((vol, vol.GetVisibility()))
-            vol.SetVisibility(False)
-            vol = volumes.GetNextVolume()
-
-        try:
-            hover_picker.Pick(vtk_x, vtk_y, 0, renderer)
-            picked_actor = hover_picker.GetActor()
-        finally:
-            for vol, was_visible in hidden:
-                vol.SetVisibility(was_visible)
+        hover_picker.Pick(vtk_x, vtk_y, 0, pick_renderer)
+        picked_actor = hover_picker.GetActor()
 
         prev = _hover_last_actor[0]
 
@@ -1509,7 +1683,150 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
-    def generate_pdf_report():
+    def setup_right_click_picker(interactor):
+        """Register a VTK prop picker on right-click to select heatmap tiles."""
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+
+        picker = vtkPropPicker()
+
+        def _on_right_button_press(obj, event):
+            click_pos = obj.GetEventPosition()
+            heatmap = _refs.get("heatmap")
+            mesh_mgr = _refs.get("mesh_manager")
+            streamer = _refs.get("streamer")
+
+            if not heatmap or not streamer:
+                return
+
+            # Pick from the renderer that contains heatmap tile actors
+            outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
+            if outline_only and heatmap.outline_renderer is not None:
+                pick_renderer = heatmap.outline_renderer
+            else:
+                pick_renderer = heatmap.renderer
+
+            picker.Pick(click_pos[0], click_pos[1], 0, pick_renderer)
+            picked_actor = picker.GetActor()
+
+            if picked_actor is None:
+                print(f"[picker] No actor at ({click_pos[0]}, {click_pos[1]})")
+                return
+
+            tile = heatmap.get_tile_for_actor(picked_actor)
+            if tile is None:
+                print(f"[picker] Picked actor is not a heatmap tile")
+                return
+
+            print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
+                f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
+            _print_tile_channel_stats(tile, state.current_hierarchy_level, state.current_dilation)
+
+            sx = getattr(state, 'physical_size_x', 0.14)
+            sy = getattr(state, 'physical_size_y', 0.14)
+            sz = getattr(state, 'physical_size_z', 0.28)
+
+            #   world_x = tile_coord * spacing * 128
+            tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
+            tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
+            tile_center_z = 0.0
+
+            tile_width_world = (tile.x1 - tile.x0) * sx * 128
+            tile_height_world = (tile.y1 - tile.y0) * sy * 128
+            tile_extent = max(tile_width_world, tile_height_world)
+
+            cam = streamer.renderer.GetActiveCamera()
+            cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
+            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 4.0)
+            cam.SetViewUp(0, 1, 0)
+            streamer.renderer.ResetCameraClippingRange()
+            
+            print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
+                f"extent={tile_extent:.1f}")
+            
+            active_channels = list(state.active_channels)
+            if mesh_mgr and mesh_mgr.is_available and active_channels:
+                vox_x = (tile.x0 + tile.x1) / 2.0 * 128
+                vox_y = (tile.y0 + tile.y1) / 2.0 * 128
+                state.selected_tile = None
+
+                for ch_id in active_channels:
+                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
+                    if not mesh_tile:
+                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
+                        continue
+                    if state.selected_tile is None:
+                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
+                    if ch_id not in state.surface_hidden_channels:
+                        color_hex = "#FFFFFF"
+                        for ch in state.channels:
+                            if ch["id"] == ch_id:
+                                color_hex = ch["color"]
+                                break
+                        color_rgb = _hex_to_rgb_tuple(color_hex)
+                        mesh_mgr.activate_channel_mesh(
+                            channel_idx=ch_id,
+                            color_rgb=color_rgb,
+                            tile_x=mesh_tile.tile_x,
+                            tile_y=mesh_tile.tile_y,
+                            opacity=1.0,
+                        )
+
+            if _refs["view"]:
+                _refs["view"].update()
+
+
+        interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
+        print("[callbacks] Right-click picker registered on interactor")
+
+    _hover_last_actor = [None]
+    def on_hover(px, py):
+        """Handle throttled mousemove from client JS"""
+        heatmap = _refs.get("heatmap")
+        streamer = _refs.get("streamer")
+        if not heatmap or not streamer:
+            return
+
+        # Pick from the renderer that actually contains the heatmap tile actors:
+        # outline_renderer (layer 2) when in outline mode, fill renderer (layer 0) otherwise.
+        outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
+        if outline_only and heatmap.outline_renderer is not None:
+            pick_renderer = heatmap.outline_renderer
+        else:
+            pick_renderer = heatmap.renderer
+
+        render_window = streamer.renderer.GetRenderWindow()
+        win_size = render_window.GetSize()
+
+        vtk_y = win_size[1] - int(py)
+        vtk_x = int(px)
+
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+        hover_picker = vtkPropPicker()
+
+        hover_picker.Pick(vtk_x, vtk_y, 0, pick_renderer)
+        picked_actor = hover_picker.GetActor()
+
+        prev = _hover_last_actor[0]
+
+        if picked_actor is prev:
+            return
+
+        if prev is not None:
+            prev.GetProperty().EdgeVisibilityOff()
+
+        if picked_actor is not None and heatmap.get_tile_for_actor(picked_actor) is not None:
+            picked_actor.GetProperty().EdgeVisibilityOn()
+            picked_actor.GetProperty().SetEdgeColor(0.0, 0.0, 0.0)
+            picked_actor.GetProperty().SetLineWidth(5.0)
+            _hover_last_actor[0] = picked_actor
+        else:
+            _hover_last_actor[0] = None
+
+        if _refs["view"]:
+            _refs["view"].update()
+
+    def generate_pdf_report(report_data=None):
         """
         API endpoint to generate and download a PDF report.
         report_data: dict with 'title', 'params', 'channels', etc.
@@ -1576,18 +1893,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_bar_data_local = update_bar_data_local
     ctrl.chatbot_login = chatbot_login
     ctrl.biomni_add_data = biomni_add_data
+    ctrl.biomni_upload_file = biomni_upload_file
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
+    ctrl.chatbot_suggest = chatbot_suggest
     ctrl.chatbot_clear = chatbot_clear
-    ctrl.get_available_llms = get_available_llms
+    ctrl.toggle_labels = toggle_labels
+    ctrl.deselect_tile = deselect_tile
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
     ctrl.trigger("on_hover")(on_hover)
-    ctrl.setup_right_click_picker = setup_right_click_picker
-    ctrl.set_heatmap_lod = set_heatmap_lod
-    ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
-    ctrl.trigger("on_hover")(on_hover)
-    ctrl.trigger("on_right_click")(on_right_click)
     ctrl.generate_pdf_report = generate_pdf_report
+    ctrl.set_renderer = set_renderer
+    ctrl.refresh_labels = refresh_labels
+    ctrl.check_label_setup = check_label_setup
+    ctrl.setup_label_interaction_observer = setup_label_interaction_observer
+

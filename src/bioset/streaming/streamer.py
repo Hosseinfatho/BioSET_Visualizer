@@ -45,7 +45,7 @@ class LoadedData:
 class VolumeStreamer:
     DEBOUNCE_DELAY = 0.15
     # Initial camera distance: 1.0 = VTK default. Use e.g. 0.7 to move camera a little closer, 0.5 for more zoom.
-    INITIAL_CAMERA_ZOOM = 0.7
+    INITIAL_CAMERA_ZOOM = 1.0
 
     _executor: ThreadPoolExecutor = None
 

@@ -39,15 +39,15 @@ def settings_section(state, ctrl):
                 with vuetify.VListItem(classes="mt-2 text-left ml-4"):
                     html.Span("Camera / View", classes="text-caption grey--text font-weight-bold")
 
-                # Toggle Theme
-                with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
-                    with vuetify.VListItemIcon():
-                        with vuetify.VTooltip(right=True):
-                            with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("Light on/off")
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Toggle Theme")
+                # # Toggle Theme
+                # with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
+                #     with vuetify.VListItemIcon():
+                #         with vuetify.VTooltip(right=True):
+                #             with html.Template(v_slot_activator="{ on, attrs }"):
+                #                 vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                #             html.Span("Light on/off")
+                #     with vuetify.VListItemContent(v_if="!drawer_mini"):
+                #         html.Span("Toggle Theme")
                 
                 # Background Color
                 with vuetify.VListItem(
@@ -101,74 +101,72 @@ def settings_section(state, ctrl):
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Reset Camera")
 
-                # NOV: press to show box and panel; Set/Reset are in the popup window
-                with vuetify.VListItem(class_="nav-item nav-item--nested", style="overflow: visible;"):
-                    with vuetify.VListItemIcon():
-                        with vuetify.VTooltip(right=True):
-                            with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("Next Best View (popup)")
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Optimal View", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;",
-                                  click=ctrl.nov_toggle)
-                # Bookmark (saved views / snapshots)
-                with vuetify.VListItem(
-                        class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
-                        link=True,
-                        ripple=True,
-                        click="bookmark_open = !bookmark_open",
-                ):
-                    with vuetify.VListItemIcon():
-                        with vuetify.VTooltip(right=True):
-                            with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-bookmark", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("Bookmark")
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Bookmark")
-
                 with vuetify.VListItem(classes="mt-4 text-left ml-4"):
                     html.Span("Biomni / LLM", classes="text-caption grey--text font-weight-bold")
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
-                    vuetify.VSelect(
-                        v_model=("biomni_model",),
-                        items=("biomni_available_models",),
-                        label="Model",
-                        dense=True,
-                        outlined=True,
-                        hide_details=True,
-                    )
+                # Row 1: Model, DB Model, Mode
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-2 px-4"):
+                    with vuetify.VRow(dense=True, no_gutters=False):
+                        with vuetify.VCol(cols=4, classes="py-0"):
+                            vuetify.VSelect(
+                                v_model=("biomni_model",),
+                                items=("biomni_available_models",),
+                                label="Model",
+                                dense=True,
+                                outlined=True,
+                                hide_details=True,
+                                style="max-height: 32px;",
+                                dark=True,
+                            )
+                        with vuetify.VCol(cols=4, classes="py-0"):
+                            vuetify.VSelect(
+                                v_model=("biomni_db_model",),
+                                items=("biomni_available_models",),
+                                label="DB Model",
+                                dense=True,
+                                outlined=True,
+                                hide_details=True,
+                                style="max-height: 32px;",
+                                dark=True,
+                            )
+                        with vuetify.VCol(cols=4, classes="py-0"):
+                            vuetify.VSelect(
+                                v_model=("biomni_mode",),
+                                items=(["full", "db", "minimal"],),
+                                label="Mode",
+                                dense=True,
+                                outlined=True,
+                                hide_details=True,
+                                style="max-height: 32px;",
+                                dark=True,
+                            )
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
-                    vuetify.VSelect(
-                        v_model=("biomni_mode",),
-                        items=(["full", "db", "minimal"],),
-                        label="Mode",
-                        dense=True,
-                        outlined=True,
-                        hide_details=True,
-                    )
+                # Row 2: Port, Dataset Description
+                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-2 px-4"):
+                    with vuetify.VRow(dense=True, no_gutters=False):
+                        with vuetify.VCol(cols=3, classes="py-0"):
+                            vuetify.VTextField(
+                                v_model=("biomni_port",),
+                                label="Port",
+                                type="number",
+                                dense=True,
+                                outlined=True,
+                                hide_details=True,
+                                style="max-height: 32px;",
+                                dark=True,
+                            )
+                        with vuetify.VCol(cols=9, classes="py-0"):
+                            vuetify.VTextField(
+                                v_model=("biomni_dataset",),
+                                label="Dataset Description",
+                                dense=True,
+                                outlined=True,
+                                hide_details=True,
+                                style="max-height: 32px;",
+                                dark=True,
+                            )
 
-                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
-                    vuetify.VTextField(
-                        v_model=("biomni_port",),
-                        label="Port",
-                        type="number",
-                        dense=True,
-                        outlined=True,
-                        hide_details=True,
-                    )
-
-                with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-4"):
-                    vuetify.VFileInput(
-                        label="Add context data",
-                        dense=True,
-                        outlined=True,
-                        hide_details=True,
-                        __events=["change"],
-                        change=(ctrl.biomni_add_data, "[$event]"),
-                    )
-
+                # Initialize / Update button
                 with vuetify.VListItem(class_="nav-item nav-item--nested pt-2 pb-2"):
                     vuetify.VBtn(
                         "{{ chatbot_authenticated ? 'Update Settings' : 'Initialize Biomni' }}",
@@ -177,3 +175,48 @@ def settings_section(state, ctrl):
                         small=True,
                         loading=("chatbot_loading",),
                     )
+
+                # File Upload section (only shown after initialization)
+                with vuetify.VExpandTransition():
+                    with html.Div(v_show=("chatbot_authenticated",)):
+                        with vuetify.VListItem(classes="mt-2 text-left ml-4"):
+                            html.Span("Upload Context Data", classes="text-caption grey--text font-weight-bold")
+
+                        with vuetify.VListItem(class_="nav-item nav-item--nested", classes="mb-2 px-4"):
+                            with vuetify.VRow(dense=True, no_gutters=False, align="center"):
+                                with vuetify.VCol(cols=5, classes="py-0"):
+                                    vuetify.VFileInput(
+                                        label="Upload file",
+                                        dense=True,
+                                        outlined=True,
+                                        hide_details=True,
+                                        truncate_length=2,
+                                        style="max-height: 32px;",
+                                        __events=["change"],
+                                        change=(ctrl.biomni_add_data, "[$event]"),
+                                    )
+                                with vuetify.VCol(cols=6, classes="py-0"):
+                                    vuetify.VTextField(
+                                        v_model=("biomni_file_description",),
+                                        label="File description",
+                                        dense=True,
+                                        outlined=True,
+                                        hide_details=True,
+                                        style="max-height: 32px;",
+                                    )
+                                with vuetify.VCol(cols=1, classes="py-0 d-flex justify-center"):
+                                    vuetify.VIcon(
+                                        "mdi-check-circle",
+                                        v_show=("biomni_upload_success",),
+                                        color="white",
+                                        small=True,
+                                    )
+
+                        with vuetify.VListItem(class_="nav-item nav-item--nested pt-1 pb-2 px-4"):
+                            vuetify.VBtn(
+                                "Upload File",
+                                click=ctrl.biomni_upload_file,
+                                block=True,
+                                small=True,
+                                disabled=("!biomni_file_description",),
+                            )

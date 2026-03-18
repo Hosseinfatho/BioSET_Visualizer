@@ -15,6 +15,7 @@ class AnalysisMetadata:
     hierarchy_levels: list[dict]
     dilation_amounts: list[float]
     volume_bounds: dict
+    dtype_max: int = 65535  # max intensity value for dataset dtype (default: uint16)
 
 
 @dataclass
@@ -95,6 +96,7 @@ class AnalysisLoader:
             hierarchy_levels=meta_dict.get("hierarchy_levels", []),
             dilation_amounts=meta_dict.get("dilation_amounts", []),
             volume_bounds=meta_dict.get("volume_bounds", {}),
+            dtype_max=int(meta_dict.get("dtype_max", 65535)),
         )
         
         self._loaded = True
@@ -656,10 +658,31 @@ class AnalysisLoader:
                 return 0
             raise
     
+    def get_tile_channel_stats(
+        self, tile_x0: int, tile_y0: int, level: int, dilation: float
+    ) -> list[dict]:
+        """Return per-channel stats for a single tile at the given level and dilation.
+
+        Returns a list of dicts with keys:
+            channel, voxel_count, sum_intensity, mean_intensity
+        sorted descending by voxel_count.
+        """
+        if not self.is_loaded:
+            return []
+        cursor = self._conn.execute('''
+            SELECT channel, voxel_count, sum_intensity, mean_intensity
+            FROM channel_stats
+            WHERE tile_x0 = ? AND tile_y0 = ?
+              AND hierarchy_level = ?
+              AND dilation = ?
+            ORDER BY voxel_count DESC
+        ''', (tile_x0, tile_y0, level, dilation))
+        return [dict(row) for row in cursor.fetchall()]
+
     # ──────────────────────────────────────────────
     # Cleanup
     # ──────────────────────────────────────────────
-    
+
     def close(self):
         if self._conn:
             self._conn.close()
