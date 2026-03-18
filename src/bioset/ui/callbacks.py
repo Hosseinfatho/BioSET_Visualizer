@@ -1173,6 +1173,120 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.chatbot_loading = False
     
+    def chatbot_explain_upset():
+        """Explain the currently displayed UpSet plot via /plot."""
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot explain plot - Biomni not initialised")
+            return
+
+        source_data = list(state.upset_data_local if state.upset_view_mode == "local" else state.upset_data)
+        offset = state.upset_offset
+        limit = state.upset_limit
+        visible_data = source_data[offset:offset + limit]
+
+        active_channel_names = [
+            ch["name"] for ch in (state.channels or [])
+            if ch["id"] in (state.active_channels or [])
+        ]
+
+        plot_payload = {
+            "type": "upset",
+            "view_mode": state.upset_view_mode,
+            "selected_channels": list(state.upset_selected_channels or []),
+            "active_channels": active_channel_names,
+            "filters": {
+                "offset": offset,
+                "limit": limit,
+                "selected_only": list(state.upset_selected_channels or []),
+                "min_channels": state.upset_min_channels,
+            },
+            "data": source_data,
+            "visible_data": visible_data,
+        }
+
+        state.chatbot_panel_open = True
+        state.chatbot_messages = list(state.chatbot_messages) + [
+            {"role": "user", "content": "Explain the UpSet plot"}
+        ]
+        state.chatbot_loading = True
+
+        try:
+            client = _get_biomni_client()
+            markers = _build_markers()
+            result = client.plot(plot_payload, markers=markers, mode=state.biomni_mode)
+            response_text = result.get("answer", str(result))
+            state.chatbot_messages = list(state.chatbot_messages) + [
+                {"role": "assistant", "content": response_text}
+            ]
+            print("[callbacks] Biomni explain upset response received")
+        except Exception as e:
+            error_msg = f"Error: {e}"
+            print(f"[callbacks] Biomni explain upset error: {error_msg}")
+            state.chatbot_messages = list(state.chatbot_messages) + [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+
+    def chatbot_explain_bar():
+        """Explain the currently displayed bar chart via /plot."""
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot explain plot - Biomni not initialised")
+            return
+
+        raw_data = list(state.bar_data_local if state.bar_view_mode == "local" else state.bar_data)
+        offset = state.bar_offset
+        limit = state.bar_limit
+        # normalise tuples/lists → dicts for the LLM
+        source_data = [
+            {"channel": e[0], "coverage_pct": e[1]} if isinstance(e, (list, tuple)) else e
+            for e in raw_data
+        ]
+        visible_data = source_data[offset:offset + limit]
+
+        active_channel_names = [
+            ch["name"] for ch in (state.channels or [])
+            if ch["id"] in (state.active_channels or [])
+        ]
+
+        plot_payload = {
+            "type": "bar",
+            "view_mode": state.bar_view_mode,
+            "selected_channels": list(state.bar_selected_channels or []),
+            "active_channels": active_channel_names,
+            "filters": {
+                "offset": offset,
+                "limit": limit,
+                "selected_only": list(state.bar_selected_channels or []),
+            },
+            "data": source_data,
+            "visible_data": visible_data,
+        }
+
+        state.chatbot_panel_open = True
+        state.chatbot_messages = list(state.chatbot_messages) + [
+            {"role": "user", "content": "Explain the bar chart"}
+        ]
+        state.chatbot_loading = True
+
+        try:
+            client = _get_biomni_client()
+            markers = _build_markers()
+            result = client.plot(plot_payload, markers=markers, mode=state.biomni_mode)
+            response_text = result.get("answer", str(result))
+            state.chatbot_messages = list(state.chatbot_messages) + [
+                {"role": "assistant", "content": response_text}
+            ]
+            print("[callbacks] Biomni explain bar response received")
+        except Exception as e:
+            error_msg = f"Error: {e}"
+            print(f"[callbacks] Biomni explain bar error: {error_msg}")
+            state.chatbot_messages = list(state.chatbot_messages) + [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+
     def chatbot_clear():
         """Clear the chatbot conversation history."""
         print("[callbacks] Clearing chatbot messages")
@@ -1630,6 +1744,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.biomni_upload_file = biomni_upload_file
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
+    ctrl.chatbot_explain_upset = chatbot_explain_upset
+    ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker

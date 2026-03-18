@@ -159,3 +159,29 @@ class BiomniLocalClient:
         print(f"[biomni] POST /query  markers={len(markers)}  image={bool(image)}")
         resp = requests.post(f"{self.base_url}/query", json=payload, timeout=300)
         return _check_response(resp)
+
+    def plot(
+        self,
+        plot_payload: dict,
+        markers: Optional[list[str]] = None,
+        mode: str = _DEFAULT_MODE,
+    ) -> dict:
+        """Call POST /plot to explain the currently displayed UpSet or bar plot.
+
+        Args:
+            plot_payload: dict with type, view_mode, data, visible_data, etc.
+            markers:      optional list of active markers with colors
+            mode:         "minimal" | "db" | "full"
+
+        Returns dict with key "answer".
+        """
+        if not self.initialized:
+            raise RuntimeError("Client not initialised. Call init() first.")
+
+        payload: dict = {"plot": plot_payload, "mode": mode}
+        if markers:
+            payload["markers"] = markers
+
+        print(f"[biomni] POST /plot  type={plot_payload.get('type')}  view_mode={plot_payload.get('view_mode')}")
+        resp = requests.post(f"{self.base_url}/plot", json=payload, timeout=300)
+        return _check_response(resp)
