@@ -45,8 +45,9 @@ def init_state(state):
     state.setdefault("data_open", True)
     state.setdefault("settings_open", False)
     state.setdefault("channels_open", True)
-    state.setdefault("report_generation_open", False)
-
+    # state.setdefault("report_generation_open", False)
+    state.setdefault("tools_open", False)
+    
     # Settings
     state.setdefault("bg_color", "#000000")
     state.setdefault("bg_color_dialog", False)

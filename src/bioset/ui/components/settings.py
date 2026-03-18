@@ -39,15 +39,15 @@ def settings_section(state, ctrl):
                 with vuetify.VListItem(classes="mt-2 text-left ml-4"):
                     html.Span("Camera / View", classes="text-caption grey--text font-weight-bold")
 
-                # Toggle Theme
-                with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
-                    with vuetify.VListItemIcon():
-                        with vuetify.VTooltip(right=True):
-                            with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("Light on/off")
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Toggle Theme")
+                # # Toggle Theme
+                # with vuetify.VListItem(class_="nav-item nav-item--nested", link=True, ripple=True):
+                #     with vuetify.VListItemIcon():
+                #         with vuetify.VTooltip(right=True):
+                #             with html.Template(v_slot_activator="{ on, attrs }"):
+                #                 vuetify.VIcon("mdi-lightbulb-outline", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                #             html.Span("Light on/off")
+                #     with vuetify.VListItemContent(v_if="!drawer_mini"):
+                #         html.Span("Toggle Theme")
                 
                 # Background Color
                 with vuetify.VListItem(
@@ -100,31 +100,6 @@ def settings_section(state, ctrl):
                             html.Span("Reset camera position")
                     with vuetify.VListItemContent(v_if="!drawer_mini"):
                         html.Span("Reset Camera")
-
-                # NOV: press to show box and panel; Set/Reset are in the popup window
-                with vuetify.VListItem(class_="nav-item nav-item--nested", style="overflow: visible;"):
-                    with vuetify.VListItemIcon():
-                        with vuetify.VTooltip(right=True):
-                            with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-camera-enhance", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("Next Best View (popup)")
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Optimal View", style="cursor: pointer; flex-shrink: 0; font-size: 0.875rem;",
-                                  click=ctrl.nov_toggle)
-                # Bookmark (saved views / snapshots)
-                with vuetify.VListItem(
-                        class_=("bookmark_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
-                        link=True,
-                        ripple=True,
-                        click="bookmark_open = !bookmark_open",
-                ):
-                    with vuetify.VListItemIcon():
-                        with vuetify.VTooltip(right=True):
-                            with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-bookmark", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("Bookmark")
-                    with vuetify.VListItemContent(v_if="!drawer_mini"):
-                        html.Span("Bookmark")
 
                 with vuetify.VListItem(classes="mt-4 text-left ml-4"):
                     html.Span("Biomni / LLM", classes="text-caption grey--text font-weight-bold")
