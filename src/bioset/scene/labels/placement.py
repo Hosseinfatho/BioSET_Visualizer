@@ -1150,7 +1150,7 @@ def place_all_labels(single_regions, composite_regions, channels, renderer,
 # ==========================================================================
 
 def render_interaction_billboard(interaction, camera, renderer):
-    text_pd, _ = get_text_mesh(interaction.label_text)
+    text_pd, _ = get_text_mesh(interaction.label_text.upper())
     cam_pos = np.array(camera.GetPosition(), dtype=np.float64)
     offset = config.get("INTERACTION_BILLBOARD_OFFSET", 2.0)
     scale = config.get("INTERACTION_BILLBOARD_SCALE", 0.5)
@@ -1174,7 +1174,7 @@ def render_interaction_billboard(interaction, camera, renderer):
 
 
 def render_interaction_flagpole(interaction, camera, renderer):
-    text_pd, _ = get_text_mesh(interaction.label_text)
+    text_pd, _ = get_text_mesh(interaction.label_text.upper())
     cam_pos = np.array(camera.GetPosition(), dtype=np.float64)
     height = config.get("INTERACTION_FLAGPOLE_HEIGHT", 3.0)
     scale = config.get("INTERACTION_FLAGPOLE_SCALE", 0.4)

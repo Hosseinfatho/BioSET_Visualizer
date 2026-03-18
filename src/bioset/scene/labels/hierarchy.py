@@ -104,9 +104,9 @@ class RegionHierarchy:
         # Cluster level: interpolate cut height
         t = (camera_distance - region_dist) / (overview_dist - region_dist)
         t = np.clip(t, 0.0, 1.0)
-        t = t ** 1.5  # nonlinear: merge more aggressively at far distances
+        t = t ** 1.8  # nonlinear: merge more aggressively at far distances
 
-        min_cut = self.max_distance * 0.05
+        min_cut = self.max_distance * 0.2
         max_cut = self.max_distance * 0.95
         cut_height = min_cut + t * (max_cut - min_cut)
 
