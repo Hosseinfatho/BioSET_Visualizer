@@ -60,6 +60,7 @@ class MeshManager:
 
         self._actors: Dict[int, List[Tuple[str, vtkActor]]] = {}
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {}
+        self._world_polydatas: Dict[int, object] = {}  # channel_idx -> vtkPolyData
 
         self._load_manifest()
 
@@ -222,6 +223,7 @@ class MeshManager:
             self._actors[channel_idx] = []
         self._actors[channel_idx].append((tile_key, actor))
         self._channel_colors[channel_idx] = color_rgb
+        self._world_polydatas[channel_idx] = world_pd  # cache for label placement
 
         print(f"[meshes] Added mesh {tile_key}: "
               f"offset=({tile_info.world_offset_x}, {tile_info.world_offset_y}) "
@@ -236,6 +238,7 @@ class MeshManager:
             print(f"[meshes] Removed mesh {tile_key}")
         del self._actors[channel_idx]
         self._channel_colors.pop(channel_idx, None)
+        self._world_polydatas.pop(channel_idx, None)
 
     def update_channel_color(self, channel_idx: int, color_rgb: Tuple[float, float, float]):
         """Update the color of all mesh actors for a channel."""
@@ -258,6 +261,7 @@ class MeshManager:
             self.deactivate_channel_mesh(channel_idx)
         self._actors.clear()
         self._channel_colors.clear()
+        self._world_polydatas.clear()
 
     def get_active_channels(self) -> set:
         return set(self._actors.keys())
@@ -278,6 +282,40 @@ class MeshManager:
         cy = (tile.world_offset_y + tile.tile_height / 2.0) * self.base_sy
         cz = (tile.tile_depth / 2.0) * self.base_sz
         return (cx, cy, cz)
+
+    def channel_idx_for_name(self, channel_name: str) -> Optional[int]:
+        """Map a human-readable channel name to its manifest channel_idx.
+
+        manifest channel_idx (0, 1, 2…) is NOT the same as the state channel ID.
+        Returns None if the name is not found in the manifest.
+        """
+        for t in self._tiles:
+            if t.channel_name == channel_name:
+                return t.channel_idx
+        return None
+
+    def get_channel_actor(self, channel_idx: int):
+        """Return the first VTK actor for a channel, or None if not active."""
+        actors = self._actors.get(channel_idx)
+        if actors:
+            return actors[0][1]
+        return None
+
+    def get_channel_polydata(self, channel_idx: int):
+        """Return the cached world-space vtkPolyData for a channel, or None."""
+        if channel_idx in self._world_polydatas:
+            return self._world_polydatas[channel_idx]
+        # Fallback: try to extract from the actor's mapper
+        actor = self.get_channel_actor(channel_idx)
+        if actor is None:
+            return None
+        mapper = actor.GetMapper()
+        if mapper is None:
+            return None
+        pd = mapper.GetInput()
+        if pd is not None:
+            self._world_polydatas[channel_idx] = pd
+        return pd
 
 
 # for debug
