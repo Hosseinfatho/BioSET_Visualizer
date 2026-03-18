@@ -3,6 +3,7 @@
 .git
 .vscode
 .idea
+.claude
 
 *.egg-info/
 build/
