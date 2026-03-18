@@ -90,13 +90,28 @@ def register_callbacks(ctrl, state, view, streamer=None):
     register_nov_callbacks(ctrl, state, _refs)
 
     def update_main_scale_bar():
-        """Compute/update scale bar for the main (non-NOV) view."""
+        """Compute/update scale bar for the main (non-NOV) view. Uses current LOD (comp) from streamer for accurate µm per voxel."""
         s = _refs.get("streamer")
         if not s or not getattr(s, "renderer", None) or not getattr(s, "render_window", None):
             state.main_scale_bar_label = ""
             state.main_scale_bar_width_px = 0
             return
-        label, width_px = compute_scale_bar(renderer=s.renderer, render_window=s.render_window, unit="µm")
+        # Current LOD: same comp that is printed in terminal when zoom/load updates
+        comp = getattr(s, "_last_component", None)
+        if comp is None and getattr(s, "state", None):
+            for ch in s.get_active_channels() if hasattr(s, "get_active_channels") else []:
+                st = s.state.get(ch)
+                if st is not None and hasattr(st, "component"):
+                    comp = st.component
+                    break
+        base_xy = getattr(state, "physical_size_x", None) or getattr(state, "physical_size_y", 0.14)
+        label, width_px = compute_scale_bar(
+            renderer=s.renderer,
+            render_window=s.render_window,
+            unit="µm",
+            component=comp,
+            base_spacing_xy=base_xy,
+        )
         state.main_scale_bar_label = label
         state.main_scale_bar_width_px = int(width_px or 0)
 
