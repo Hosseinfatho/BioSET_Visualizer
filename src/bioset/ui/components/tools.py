@@ -79,12 +79,17 @@ def report_generation_section(state, ctrl):
                         dense=True,
                         hide_details=True,
                     )
+                    vuetify.VCheckbox(
+                        label="Bookmarks",
+                        v_model="export_bookmarks",
+                        dense=True,
+                        hide_details=True,
+                    )
 
-                with html.Div(classes="mb-2 mt-4"):
+                with vuetify.VListItem(class_="nav-item nav-item--nested pt-2 pb-2"):
                     vuetify.VBtn(
                         "Generate Report",
                         block=True,
                         small=True,
-                        classes="ml-1 px-2",
                         click=ctrl.generate_pdf_report,
                     )
