@@ -5,8 +5,6 @@ import hashlib
 import os
 import tempfile
 
-import requests
-
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
@@ -661,7 +659,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         filtered_combinations = []
 
         for combo in combinations:
-            if any(ch in selected_channels for ch in combo.channels):
+            if all(ch in selected_channels for ch in combo.channels):
                 filtered_combinations.append(combo)
 
         return filtered_combinations
@@ -690,10 +688,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         )
         
         # Filter to selected channels
-        #all_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
+        filtered_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
 
         mapped_combinations = []
-        for combination in combinations:
+        for combination in filtered_data:
             mapped_combinations.append({
                 "channels": combination.channels,
                 "iou": combination.iou,
