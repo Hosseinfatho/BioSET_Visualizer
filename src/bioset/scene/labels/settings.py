@@ -75,7 +75,7 @@ label_config = {
     # =====================================================================
     # SURFACE LABEL SETTINGS
     # =====================================================================
-    "DILATION_AMOUNT": 2.0,            # BioSET geometry requires smaller value than 10x scaling
+    "DILATION_AMOUNT": 3.0,            # BioSET geometry requires smaller value than 10x scaling
     "SMOOTH_ITERATIONS": 100,
     "SURFACE_LABEL_HEIGHT": 1.0,       # scaled from 10.0
     "SURFACE_HEIGHT_FACTOR": 0.12,     # region_diag * this = label height
@@ -91,6 +91,10 @@ label_config = {
     "SURFACE_LABEL_COLOR": (1.0, 1.0, 1.0),
     "SURFACE_PROBE_DIRECTIONS": 6,
     "SURFACE_PROBE_STEPS": 8,
+    # Minimum dot(surface_normal, to_camera) to attempt a surface label.
+    # 1.0 = dead-on, 0.0 = edge-on, <0 = away. Below threshold → flagpole fallback.
+    # 0.3 ≈ 72° off from facing camera.
+    "SURFACE_MIN_FACING": 0.5,
 
     # =====================================================================
     # FLAGPOLE LABEL SETTINGS

@@ -663,6 +663,15 @@ def _deform_text(text_pd, bounds, positions, normals, tangents, height, cam_up):
 
 def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, cam_fwd, renderer):
     """Surface-conforming label using probe-then-commit direction selection."""
+    # Cheap early-out: if the surface faces away from or is edge-on to the camera,
+    # the text would be heavily foreshortened and unreadable — fall back to flagpole.
+    to_cam = _norm(cam_pos - anchor_pos)
+    facing = np.dot(anchor_normal, to_cam)
+    min_facing = config.get("SURFACE_MIN_FACING", 0.3)
+    if facing < min_facing:
+        return render_flagpole(region, anchor_pos, anchor_normal,
+                               renderer.GetActiveCamera(), renderer)
+
     _, dil_normals, dil_locator = preprocess_channel(channel)
     text_pd, text_bounds = get_text_mesh(region.label_text)
 
