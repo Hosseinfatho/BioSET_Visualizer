@@ -230,6 +230,8 @@ def init_state(state):
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", False)  # False = closed, True = open
+    state.setdefault("chatbot_labels_generated", False)  # True after a Label call succeeds
+    state.setdefault("show_labels", True)  # Eye button: show/hide label actors in scene
     state.setdefault("chatbot_authenticated", False)
     state.setdefault("chatbot_messages", [])  # List of {role: str, content: str}
     state.setdefault("chatbot_input", "")

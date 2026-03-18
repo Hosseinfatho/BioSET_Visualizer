@@ -1177,6 +1177,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             if raw_labels:
                 _apply_mesh_labels(raw_labels, overall)
+                state.chatbot_labels_generated = True
 
         except Exception as e:
             error_msg = f"Error: {e}"
@@ -1243,6 +1244,37 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.chatbot_messages = []
         state.chatbot_input = ""
 
+    def toggle_labels():
+        """Show or hide label actors in the scene."""
+        state.show_labels = not state.show_labels
+        label_mgr = _refs.get("label_manager")
+        if not state.show_labels:
+            if label_mgr:
+                label_mgr.clear()
+            v = _refs.get("view")
+            if v:
+                v.update()
+        else:
+            if label_mgr:
+                refresh_labels()
+
+    def deselect_tile():
+        """Deselect the current tile: remove surface meshes, clear labels, reset state."""
+        print("[callbacks] Deselecting tile")
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr:
+            for ch_id in list(state.active_channels):
+                mesh_mgr.deactivate_channel_mesh(ch_id)
+        label_mgr = _refs.get("label_manager")
+        if label_mgr:
+            label_mgr.clear()
+        state.selected_tile = None
+        state.chatbot_labels_generated = False
+        state.anchor_labels = False
+        v = _refs.get("view")
+        if v:
+            v.update()
+
     def _apply_mesh_labels(raw_labels: dict, overall: list):
         """Create/restart LabelSceneManager with the new labels from Biomni /label."""
         from bioset.scene.labels import LabelSceneManager
@@ -1303,6 +1335,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         def _on_end_interaction(obj, event):
             if state.anchor_labels:
                 return  # labels are pinned — skip recompute
+            if not state.show_labels:
+                return  # labels are hidden — skip recompute
             refresh_labels()
 
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
@@ -1804,6 +1838,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_suggest = chatbot_suggest
     ctrl.chatbot_clear = chatbot_clear
+    ctrl.toggle_labels = toggle_labels
+    ctrl.deselect_tile = deselect_tile
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
