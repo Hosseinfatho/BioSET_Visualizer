@@ -987,37 +987,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         if _refs["biomni_client"] is None:
             _refs["biomni_client"] = BiomniLocalClient(base_url=url)
-            get_available_llms()
 
         if _refs["biomni_client"].base_url != url:
             _refs["biomni_client"] = BiomniLocalClient(base_url=url)
-            get_available_llms()
 
         return _refs["biomni_client"]
 
-    def get_available_llms():
-        try:
-            client = _get_biomni_client()
-            models = client.get_models()
-            if models:
-                state.biomni_available_models = models
-                if state.biomni_model not in models:
-                    state.biomni_model = models[0]
-        except Exception:
-            pass
-
     def chatbot_login():
         """Initialise the Biomni agent on the local server."""
-        print(f"[callbacks] Biomni init requested with llm {state.biomni_model} and mode {state.biomni_mode}")
+        print(f"[callbacks] Biomni init requested with llm={state.biomni_model}, db_llm={state.biomni_db_model}, mode={state.biomni_mode}")
         state.chatbot_loading = True
 
         try:
-            import os
             client = _get_biomni_client()
             client.init(
                 llm=state.biomni_model,
+                db_llm=state.biomni_db_model,
                 mode=state.biomni_mode,
-                api_key=os.getenv("ANTHROPIC_API_KEY")
+                dataset=state.biomni_dataset,
+                api_key=os.getenv("ANTHROPIC_API_KEY"),
             )
             state.chatbot_authenticated = True
             state.chatbot_messages = []
@@ -1031,27 +1019,47 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.chatbot_loading = False
 
-    def biomni_add_data(file_info):
-        print(f"[callbacks] Received file upload for Biomni Add Data ({len(file_info)} bytes)")
+    _refs["biomni_pending_file"] = None  # temp path of file waiting to be uploaded
 
+    def biomni_add_data(file_info):
+        """Stage a file for upload (saves to temp, waits for Upload button)."""
+        state.biomni_upload_success = False
         try:
             file_name = file_info.get("name", "upload")
             file_content = file_info.get("content")
-
             _, ext = os.path.splitext(file_name)
 
             fd, temp_path = tempfile.mkstemp(prefix="biomni_file_upload_", suffix=ext)
             with os.fdopen(fd, 'wb') as f:
                 f.write(file_content)
 
-            print(f"[callbacks] Wrote upload '{file_name}' to {temp_path}")
-
-            client = _get_biomni_client()
-            url = f"{client.base_url}/custom-data"
-            requests.post(url, json={"filepath": temp_path})
-
+            _refs["biomni_pending_file"] = temp_path
+            print(f"[callbacks] Staged file '{file_name}' at {temp_path}")
         except Exception as e:
-            print(f"[callbacks] Error processing file upload: {e}")
+            print(f"[callbacks] Error staging file: {e}")
+
+    def biomni_upload_file():
+        """Upload the staged file to Biomni with its description."""
+        state.biomni_upload_success = False
+        temp_path = _refs.get("biomni_pending_file")
+        description = (state.biomni_file_description or "").strip()
+
+        if not temp_path:
+            print("[callbacks] No file selected")
+            return
+        if not description:
+            print("[callbacks] No description provided")
+            return
+
+        try:
+            client = _get_biomni_client()
+            client.upload(file_path=temp_path, description=description)
+            state.biomni_upload_success = True
+            _refs["biomni_pending_file"] = None
+            print(f"[callbacks] File uploaded to Biomni successfully")
+        except Exception as e:
+            state.biomni_upload_success = False
+            print(f"[callbacks] Error uploading file: {e}")
 
 
     def _build_markers() -> list[str]:
@@ -1619,10 +1627,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_bar_data_local = update_bar_data_local
     ctrl.chatbot_login = chatbot_login
     ctrl.biomni_add_data = biomni_add_data
+    ctrl.biomni_upload_file = biomni_upload_file
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_clear = chatbot_clear
-    ctrl.get_available_llms = get_available_llms
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod

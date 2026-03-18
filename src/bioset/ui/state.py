@@ -236,10 +236,16 @@ def init_state(state):
     state.setdefault("chatbot_loading", False)
 
     # Biomni Settings
-    state.setdefault("biomni_available_models", [])
-    state.setdefault("biomni_model", "claude-sonnet-4-6")
-    state.setdefault("biomni_mode", "full") # one of [full, db, minimal]
+    from bioset.llm.biomni import load_models as _load_models
+    _all_models, _default_model, _default_llm = _load_models()
+    state.setdefault("biomni_available_models", _all_models)
+    state.setdefault("biomni_model", _default_model)
+    state.setdefault("biomni_db_model", _default_llm)
+    state.setdefault("biomni_mode", "full")  # one of [full, db, minimal]
     state.setdefault("biomni_port", 5000)
+    state.setdefault("biomni_dataset", "melanoma CyCIF")
+    state.setdefault("biomni_file_description", "")
+    state.setdefault("biomni_upload_success", False)
 
     # Report Settings
     state.setdefault("export_general", True)

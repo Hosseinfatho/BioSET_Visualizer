@@ -9,6 +9,7 @@ Talks to the Flask server started via:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -17,6 +18,33 @@ import requests
 _DEFAULT_BASE_URL = "http://localhost:5000"
 _DEFAULT_LLM = "claude-sonnet-4-6"
 _DEFAULT_MODE = "full"
+
+_MODELS_FILE = Path(__file__).parent / "models.txt"
+
+
+def load_models() -> tuple[list[str], str, str]:
+    """Load models from models.txt.
+
+    Returns (all_models, default_model, default_llm_model).
+    Each line: "<model_id> [default|default_llm]"
+    """
+    models = []
+    default_model = _DEFAULT_LLM
+    default_llm = _DEFAULT_LLM
+
+    if _MODELS_FILE.exists():
+        for line in _MODELS_FILE.read_text().strip().splitlines():
+            parts = line.strip().split()
+            if not parts:
+                continue
+            model_id = parts[0]
+            models.append(model_id)
+            if "default" in parts[1:]:
+                default_model = model_id
+            if "default_llm" in parts[1:]:
+                default_llm = model_id
+
+    return models, default_model, default_llm
 
 
 def _check_response(resp: "requests.Response") -> dict:
@@ -38,20 +66,23 @@ class BiomniLocalClient:
         self.base_url = base_url.rstrip("/")
         self.initialized = False
 
-
     def init(
         self,
         llm: str = _DEFAULT_LLM,
+        db_llm: Optional[str] = None,
         mode: str = _DEFAULT_MODE,
+        dataset: str = "melanoma CyCIF",
         api_key: Optional[str] = None,
     ) -> bool:
         """Call POST /init to start the A1 agent on the server."""
         api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        payload: dict = {"llm": llm, "mode": mode}
+        payload: dict = {"llm": llm, "mode": mode, "dataset": dataset}
+        if db_llm:
+            payload["db_llm"] = db_llm
         if api_key:
             payload["api_key"] = api_key
 
-        print(f"[biomni] Initialising server at {self.base_url} (llm={llm}, mode={mode})")
+        print(f"[biomni] Initialising server at {self.base_url} (llm={llm}, db_llm={db_llm}, mode={mode})")
         resp = requests.post(f"{self.base_url}/init", json=payload, timeout=60)
         data = _check_response(resp)
         if data.get("status") != "ok":
@@ -61,17 +92,19 @@ class BiomniLocalClient:
         print("[biomni] Server initialised successfully")
         return True
 
-    def get_models(self) -> list[str]:
-        """Call GET /models to get available model options based on server config."""
-        try:
-            resp = requests.get(f"{self.base_url}/models", timeout=5)
-            data = _check_response(resp)
-            models = data.get("models", [])
-            print(f"[biomni] Following models are available: {models}")
-            return models
-        except Exception as e:
-            print(f"[biomni] Failed to fetch models: {e}")
-            return []
+    def upload(self, file_path: str, description: str) -> dict:
+        """Call POST /upload to send a file with its description."""
+        if not self.initialized:
+            raise RuntimeError("Client not initialised. Call init() first.")
+
+        with open(file_path, "rb") as f:
+            resp = requests.post(
+                f"{self.base_url}/upload",
+                files={"file": (os.path.basename(file_path), f)},
+                data={"description": description},
+                timeout=120,
+            )
+        return _check_response(resp)
 
     def label(
         self,
