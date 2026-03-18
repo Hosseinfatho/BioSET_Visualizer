@@ -230,8 +230,9 @@ class AnalysisLoader:
         Get top N combinations by aggregated IoU.
         
         Aggregates across all tiles:
-          global_iou = SUM(total_count) / SUM(total_union)
-          
+        global_iou = SUM(total_count) / SUM(total_union)
+        global_overlap_coeff = SUM(total_count) / MIN(SUM(ch_a), SUM(ch_b), ...)
+        
         Sorted by global_iou DESC.
         Self-pairs (e.g. CD8|CD8) are excluded.
         """
@@ -266,10 +267,16 @@ class AnalysisLoader:
             sum_union = row["sum_union"] or 1
             agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
             
+            # Calculate overlap coefficient from channel_stats
+            overlap_coeff = self._compute_overlap_coeff(
+                channels, sum_inter, dilation, hierarchy_level
+            )
+            
             results.append(CombinationData(
                 channels=channels,
                 total_count=row["agg_count"] or 0,
                 iou=agg_iou,
+                overlap_coeff=overlap_coeff,
             ))
             
             if len(results) >= limit:
@@ -287,6 +294,7 @@ class AnalysisLoader:
     ) -> list[CombinationData]:
         """
         Get combinations containing ANY of the specified channels, aggregated by IoU.
+        Also computes aggregated overlap coefficient.
         """
         if not self.is_loaded or not channel_filter:
             return []
@@ -348,16 +356,54 @@ class AnalysisLoader:
             sum_union = row["sum_union"] or 1
             agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
             
+            # Calculate overlap coefficient from channel_stats
+            overlap_coeff = self._compute_overlap_coeff(
+                channels, sum_inter, dilation, hierarchy_level
+            )
+            
             results.append(CombinationData(
                 channels=channels,
                 total_count=row["agg_count"] or 0,
                 iou=agg_iou,
+                overlap_coeff=overlap_coeff,
             ))
             
             if len(results) >= limit:
                 break
         
         return results
+    
+    def _compute_overlap_coeff(
+        self,
+        channels: list[str],
+        sum_inter: int,
+        dilation: float,
+        hierarchy_level: int,
+    ) -> float:
+        """
+        Compute aggregated overlap coefficient.
+        
+        overlap_coeff = SUM(intersection) / MIN(SUM(ch_a), SUM(ch_b), ...)
+        
+        Queries channel_stats to get total voxels per channel.
+        """
+        if not channels or sum_inter == 0:
+            return 0.0
+        
+        # Get total voxels for each channel
+        channel_totals = []
+        for ch in channels:
+            total = self.get_channel_total_voxels(ch, dilation, hierarchy_level)
+            if total > 0:
+                channel_totals.append(total)
+        
+        if not channel_totals:
+            return 0.0
+        
+        min_voxels = min(channel_totals)
+        return sum_inter / min_voxels if min_voxels > 0 else 0.0
+
+
     
     # ──────────────────────────────────────────────
     # Bar chart: coverage percentage
@@ -596,22 +642,23 @@ class AnalysisLoader:
     # ──────────────────────────────────────────────
     
     def get_dilation_curve(
-    self,
-    channels: list[str],
-    hierarchy_level: int,
+        self,
+        channels: list[str],
+        hierarchy_level: int,
     ) -> list[dict]:
         """
         Get metric across all dilations for a channel or combination.
         
         For single channel: returns voxel_count and density per dilation
-        For multi-channel: returns IoU per dilation
+        For multi-channel: returns IoU and overlap_coeff per dilation
         
         Returns:
             List of dicts with keys:
             - dilation: float
             - count: int (voxel count or intersection count)
             - iou: float (only meaningful for multi-channel; 0.0 for single)
-            - density: float (only for single channel; voxel_count / total_volume)
+            - overlap_coeff: float (only meaningful for multi-channel; 1.0 for single)
+            - density: float (voxel_count / total_volume * 100)
         """
         if not self.is_loaded:
             return []
@@ -656,7 +703,8 @@ class AnalysisLoader:
                 results.append({
                     "dilation": row["dilation"],
                     "count": total_voxels,
-                    "iou": 0.0,  # Not applicable for single channel
+                    "iou": 1.0,  # Self-overlap is always 1.0
+                    "overlap_coeff": 1.0,  # Self-overlap is always 1.0
                     "density": density,
                 })
             
@@ -672,41 +720,59 @@ class AnalysisLoader:
         self,
         channels: list[str],
         hierarchy_level: int,
-    ) -> list[dict]:
-        """Get IoU across dilations for a multi-channel combination."""
-        
-        channel_order = self.metadata.channels if self.metadata else []
-        sorted_channels = sorted(
-            channels,
-            key=lambda c: channel_order.index(c) if c in channel_order else 999
-        )
-        channels_str = "|".join(sorted_channels)
-        
-        cursor = self._conn.execute('''
-            SELECT 
-                dilation,
-                SUM(total_count) as sum_inter,
-                SUM(total_union) as sum_union
-            FROM combinations
-            WHERE channels = ? AND hierarchy_level = ?
-            GROUP BY dilation
-            ORDER BY dilation
-        ''', (channels_str, hierarchy_level))
-        
-        results = []
-        for row in cursor:
-            sum_inter = row["sum_inter"] or 0
-            sum_union = row["sum_union"] or 1
-            agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
+        ) -> list[dict]:
+            """Get IoU and overlap coefficient across dilations for a multi-channel combination."""
             
-            results.append({
-                "dilation": row["dilation"],
-                "count": sum_inter,
-                "iou": agg_iou,
-                "density": 0.0,  # Not typically used for combinations
-            })
-        
-        return results
+            # Get total volume for density calculation
+            bounds = self.metadata.volume_bounds
+            total_volume = (
+                (bounds["x"][1] - bounds["x"][0]) *
+                (bounds["y"][1] - bounds["y"][0]) *
+                (bounds["z"][1] - bounds["z"][0])
+            )
+            
+            channel_order = self.metadata.channels if self.metadata else []
+            sorted_channels = sorted(
+                channels,
+                key=lambda c: channel_order.index(c) if c in channel_order else 999
+            )
+            channels_str = "|".join(sorted_channels)
+            
+            cursor = self._conn.execute('''
+                SELECT 
+                    dilation,
+                    SUM(total_count) as sum_inter,
+                    SUM(total_union) as sum_union
+                FROM combinations
+                WHERE channels = ? AND hierarchy_level = ?
+                GROUP BY dilation
+                ORDER BY dilation
+            ''', (channels_str, hierarchy_level))
+            
+            results = []
+            for row in cursor:
+                dilation = row["dilation"]
+                sum_inter = row["sum_inter"] or 0
+                sum_union = row["sum_union"] or 1
+                agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
+                
+                # Compute overlap coefficient for this dilation
+                overlap_coeff = self._compute_overlap_coeff(
+                    channels, sum_inter, dilation, hierarchy_level
+                )
+                
+                # Density of the intersection
+                density = (sum_inter / total_volume * 100) if total_volume > 0 else 0.0
+                
+                results.append({
+                    "dilation": dilation,
+                    "count": sum_inter,
+                    "iou": agg_iou,
+                    "overlap_coeff": overlap_coeff,
+                    "density": density,
+                })
+            
+            return results
     
     # ──────────────────────────────────────────────
     # Channel voxel totals (for reference)
