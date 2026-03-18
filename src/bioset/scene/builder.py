@@ -30,6 +30,7 @@ from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, color_name_to_rgb
 from ..streaming import VolumeStreamer
 from ..streaming.heatmap_lod import HeatmapLOD
+from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
 from .meshes import MeshManager
 
@@ -231,7 +232,15 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             _create_nov_axis_renderer(nov_renderer, nov_render_window, streamer)
 
             def _on_end_interaction(obj, evt):
+                # Keep volume streamer + heatmap LOD in sync with camera zoom.
                 streamer.on_interaction_end()
+                try:
+                    if heatmap_lod is not None:
+                        cam = streamer.renderer.GetActiveCamera()
+                        dist = camera_distance_to_focal(cam)
+                        heatmap_lod.on_camera_moved(dist)
+                except Exception:
+                    pass
 
             def _on_nov_end_interaction(obj, evt):
                 nov_render_window.Render()
