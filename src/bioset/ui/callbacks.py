@@ -752,7 +752,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             _refs["view"].update()
     
     def print_dilation_curve():
-        """Print IoU/density vs dilation for the currently selected combination."""
+        """Print dilation curves for all subcombinations of the selected channels."""
         loader = _refs.get("analysis_loader")
         if not loader or not loader.is_loaded:
             return
@@ -762,23 +762,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return
 
         level = state.current_hierarchy_level
-        curve = loader.get_dilation_curve(channels, level)
-        if not curve:
+        curves = loader.get_subcombination_dilation_curves(channels, level)
+        if not curves:
             print(f"[dilation-curve] No data for {channels}")
             return
 
-        label = " | ".join(channels)
-        print(f"[dilation-curve] {label}  (hierarchy_level={level})")
-        if len(channels) == 1:
-            print(f"  {'Dilation':>10}  {'Voxels':>12}  {'Density':>10}  {'Overlap':>10}")
-            print(f"  {'-'*10}  {'-'*12}  {'-'*10}  {'-'*10}")
-            for pt in curve:
-                print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt.get('density', 0):>10.6f}  {pt.get('overlap_coeff', 0):>10.6f}")
-        else:
-            print(f"  {'Dilation':>10}  {'Intersection':>12}  {'IoU':>10}  {'Overlap':>10}")
-            print(f"  {'-'*10}  {'-'*12}  {'-'*10}  {'-'*10}")
-            for pt in curve:
-                print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt['iou']:>10.6f}  {pt.get('overlap_coeff', 0):>10.6f}")
+        print(f"[dilation-curve] Subcombination curves for {' | '.join(channels)}  (hierarchy_level={level})")
+        for combo_key, curve in curves.items():
+            is_single = "|" not in combo_key
+            print(f"\n  --- {combo_key} ---")
+            if is_single:
+                print(f"  {'Dilation':>10}  {'Voxels':>12}  {'Density':>10}")
+                print(f"  {'-'*10}  {'-'*12}  {'-'*10}")
+                for pt in curve:
+                    print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt.get('density', 0):>10.6f}")
+            else:
+                print(f"  {'Dilation':>10}  {'Intersection':>12}  {'IoU':>10}  {'Overlap':>10}")
+                print(f"  {'-'*10}  {'-'*12}  {'-'*10}  {'-'*10}")
+                for pt in curve:
+                    print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt['iou']:>10.6f}  {pt.get('overlap_coeff', 0):>10.6f}")
 
     def _filter_combinations_by_channel_selection(combinations, selected_channels):
         """

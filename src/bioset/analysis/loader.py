@@ -7,6 +7,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from itertools import combinations as iter_combinations
 
 
 @dataclass
@@ -641,34 +642,75 @@ class AnalysisLoader:
     # Dilation curve
     # ──────────────────────────────────────────────
     
-    def get_dilation_curve(
+    def get_subcombination_dilation_curves(
         self,
         channels: list[str],
-        hierarchy_level: int,
-    ) -> list[dict]:
+        hierarchy_level: int = 0,
+    ) -> dict[str, list[dict]]:
         """
-        Get metric across all dilations for a channel or combination.
+        Get dilation curves for all subcombinations of the given channels.
         
-        For single channel: returns voxel_count and density per dilation
-        For multi-channel: returns IoU and overlap_coeff per dilation
+        For channels ["A", "B", "C"], attempts to find curves for:
+        - Single channels: A, B, C
+        - Pairs: A|B, A|C, B|C (if they exist in the database)
+        - Triple: A|B|C (if it exists)
+        
+        Only returns subcombinations that actually exist in the database.
         
         Returns:
-            List of dicts with keys:
+            Dict mapping channel string (e.g., "A|B") to list of dilation points:
+            {
+                "A": [{"dilation": 0.0, "count": ..., "iou": 1.0, "overlap_coeff": 1.0, "density": ...}, ...],
+                "A|B": [{"dilation": 0.0, "count": ..., "iou": ..., "overlap_coeff": ..., "density": ...}, ...],
+                ...
+            }
+            
+        Each dilation point dict contains:
             - dilation: float
             - count: int (voxel count or intersection count)
-            - iou: float (only meaningful for multi-channel; 0.0 for single)
-            - overlap_coeff: float (only meaningful for multi-channel; 1.0 for single)
-            - density: float (voxel_count / total_volume * 100)
+            - iou: float
+            - overlap_coeff: float
+            - density: float (percentage of total volume)
         """
-        if not self.is_loaded:
-            return []
+        if not self.is_loaded or not channels:
+            return {}
         
-        if len(channels) == 1:
-            return self._get_single_channel_dilation_curve(channels[0], hierarchy_level)
-        else:
-            return self._get_multi_channel_dilation_curve(channels, hierarchy_level)
-
-
+        # Get channel ordering for consistent key generation
+        channel_order = self.metadata.channels if self.metadata else []
+        
+        def sort_channels(ch_list: list[str]) -> list[str]:
+            return sorted(
+                ch_list,
+                key=lambda c: channel_order.index(c) if c in channel_order else 999
+            )
+        
+        def make_key(ch_list: list[str]) -> str:
+            return "|".join(sort_channels(ch_list))
+        
+        results = {}
+        
+        # Generate all subcombinations of size 1 to len(channels)
+        for size in range(1, len(channels) + 1):
+            for combo in iter_combinations(channels, size):
+                combo_list = list(combo)
+                combo_key = make_key(combo_list)
+                
+                # Get dilation curve for this subcombination
+                if size == 1:
+                    curve = self._get_single_channel_dilation_curve(
+                        combo_list[0], hierarchy_level
+                    )
+                else:
+                    curve = self._get_multi_channel_dilation_curve_full(
+                        combo_list, hierarchy_level
+                    )
+                
+                # Only include if data exists
+                if curve:
+                    results[combo_key] = curve
+        
+        return results
+    
     def _get_single_channel_dilation_curve(
         self,
         channel: str,
@@ -716,13 +758,16 @@ class AnalysisLoader:
             raise
 
 
-    def _get_multi_channel_dilation_curve(
-        self,
-        channels: list[str],
-        hierarchy_level: int,
+    def _get_multi_channel_dilation_curve_full(
+            self,
+            channels: list[str],
+            hierarchy_level: int,
         ) -> list[dict]:
-            """Get IoU and overlap coefficient across dilations for a multi-channel combination."""
+            """
+            Get IoU, overlap coefficient, and density across dilations for a multi-channel combination.
             
+            Returns empty list if the combination doesn't exist in the database.
+            """
             # Get total volume for density calculation
             bounds = self.metadata.volume_bounds
             total_volume = (
@@ -749,25 +794,32 @@ class AnalysisLoader:
                 ORDER BY dilation
             ''', (channels_str, hierarchy_level))
             
+            rows = cursor.fetchall()
+            
+            if not rows:
+                return []  # Combination doesn't exist in database
+            
             results = []
-            for row in cursor:
+            for row in rows:
                 dilation = row["dilation"]
                 sum_inter = row["sum_inter"] or 0
                 sum_union = row["sum_union"] or 1
-                agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
                 
-                # Compute overlap coefficient for this dilation
+                # IoU
+                iou = sum_inter / sum_union if sum_union > 0 else 0.0
+                
+                # Overlap coefficient: intersection / min(channel_voxels)
                 overlap_coeff = self._compute_overlap_coeff(
                     channels, sum_inter, dilation, hierarchy_level
                 )
                 
-                # Density of the intersection
+                # Density of intersection
                 density = (sum_inter / total_volume * 100) if total_volume > 0 else 0.0
                 
                 results.append({
                     "dilation": dilation,
                     "count": sum_inter,
-                    "iou": agg_iou,
+                    "iou": iou,
                     "overlap_coeff": overlap_coeff,
                     "density": density,
                 })
