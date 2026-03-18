@@ -84,6 +84,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     ctrl.set_interactor = set_interactor
 
+    def set_renderer(renderer):
+        """Set the main VTK renderer reference (used by label scene manager)."""
+        _refs["renderer"] = renderer
+
     def set_heatmap_lod_auto_mode(enabled: bool):
         """Set heatmap LOD auto mode (controlled by UI toggle)."""
         heatmap_lod = _refs.get("heatmap_lod")
