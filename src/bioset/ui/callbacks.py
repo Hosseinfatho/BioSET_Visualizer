@@ -1413,13 +1413,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             cam = streamer.renderer.GetActiveCamera()
             cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 3.0)
+            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 6.0)
             cam.SetViewUp(0, 1, 0)
             streamer.renderer.ResetCameraClippingRange()
-            
+
             print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
                 f"extent={tile_extent:.1f}")
-            
+
             active_channels = list(state.active_channels)
             if mesh_mgr and mesh_mgr.is_available and active_channels:
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
@@ -1509,7 +1509,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         cam = renderer_main.GetActiveCamera()
         cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-        cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+        cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 4.0)
         cam.SetViewUp(0, 1, 0)
         renderer_main.ResetCameraClippingRange()
 
@@ -1642,7 +1642,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             cam = streamer.renderer.GetActiveCamera()
             cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
+            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 4.0)
             cam.SetViewUp(0, 1, 0)
             streamer.renderer.ResetCameraClippingRange()
             

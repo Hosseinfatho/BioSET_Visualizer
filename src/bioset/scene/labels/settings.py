@@ -1,11 +1,3 @@
-"""
-All tunable parameters for the BioSET label placement system.
-
-Distance and size values are scaled for BioSET world-space units
-(physical_size * voxel_coords), which are typically ~10x smaller
-than the cycif_mesh_labelling reference units.
-"""
-
 label_config = {
     # =====================================================================
     # REGION EXTRACTION
