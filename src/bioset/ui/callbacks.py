@@ -751,6 +751,35 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
     
+    def print_dilation_curve():
+        """Print IoU/density vs dilation for the currently selected combination."""
+        loader = _refs.get("analysis_loader")
+        if not loader or not loader.is_loaded:
+            return
+
+        channels = state.heatmap_combination or []
+        if not channels:
+            return
+
+        level = state.current_hierarchy_level
+        curve = loader.get_dilation_curve(channels, level)
+        if not curve:
+            print(f"[dilation-curve] No data for {channels}")
+            return
+
+        label = " | ".join(channels)
+        print(f"[dilation-curve] {label}  (hierarchy_level={level})")
+        if len(channels) == 1:
+            print(f"  {'Dilation':>10}  {'Voxels':>12}  {'Density':>10}")
+            print(f"  {'-'*10}  {'-'*12}  {'-'*10}")
+            for pt in curve:
+                print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt.get('density', 0):>10.6f}")
+        else:
+            print(f"  {'Dilation':>10}  {'Intersection':>12}  {'IoU':>10}")
+            print(f"  {'-'*10}  {'-'*12}  {'-'*10}")
+            for pt in curve:
+                print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt['iou']:>10.6f}")
+
     def _filter_combinations_by_channel_selection(combinations, selected_channels):
         """
         Filter combinations to only include those whose channels are all
@@ -1909,6 +1938,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.load_analysis_file = load_analysis_file
     ctrl.update_heatmap = update_heatmap
     ctrl.update_heatmap_combinations = update_heatmap_combinations
+    ctrl.print_dilation_curve = print_dilation_curve
     ctrl.toggle_channel = toggle_channel
     ctrl.update_active_channels = update_active_channels
     ctrl.reset_camera = reset_camera

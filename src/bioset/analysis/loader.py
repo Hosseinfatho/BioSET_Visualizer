@@ -596,13 +596,84 @@ class AnalysisLoader:
     # ──────────────────────────────────────────────
     
     def get_dilation_curve(
+    self,
+    channels: list[str],
+    hierarchy_level: int,
+    ) -> list[dict]:
+        """
+        Get metric across all dilations for a channel or combination.
+        
+        For single channel: returns voxel_count and density per dilation
+        For multi-channel: returns IoU per dilation
+        
+        Returns:
+            List of dicts with keys:
+            - dilation: float
+            - count: int (voxel count or intersection count)
+            - iou: float (only meaningful for multi-channel; 0.0 for single)
+            - density: float (only for single channel; voxel_count / total_volume)
+        """
+        if not self.is_loaded:
+            return []
+        
+        if len(channels) == 1:
+            return self._get_single_channel_dilation_curve(channels[0], hierarchy_level)
+        else:
+            return self._get_multi_channel_dilation_curve(channels, hierarchy_level)
+
+
+    def _get_single_channel_dilation_curve(
+        self,
+        channel: str,
+        hierarchy_level: int,
+    ) -> list[dict]:
+        """Get voxel count across dilations for a single channel."""
+        
+        # Get total volume for density calculation
+        bounds = self.metadata.volume_bounds
+        total_volume = (
+            (bounds["x"][1] - bounds["x"][0]) *
+            (bounds["y"][1] - bounds["y"][0]) *
+            (bounds["z"][1] - bounds["z"][0])
+        )
+        
+        try:
+            cursor = self._conn.execute('''
+                SELECT 
+                    dilation,
+                    SUM(voxel_count) as total_voxels
+                FROM channel_stats
+                WHERE channel = ? AND hierarchy_level = ?
+                GROUP BY dilation
+                ORDER BY dilation
+            ''', (channel, hierarchy_level))
+            
+            results = []
+            for row in cursor:
+                total_voxels = row["total_voxels"] or 0
+                density = (total_voxels / total_volume * 100) if total_volume > 0 else 0.0
+                
+                results.append({
+                    "dilation": row["dilation"],
+                    "count": total_voxels,
+                    "iou": 0.0,  # Not applicable for single channel
+                    "density": density,
+                })
+            
+            return results
+            
+        except sqlite3.OperationalError as e:
+            if "no such table: channel_stats" in str(e):
+                return []
+            raise
+
+
+    def _get_multi_channel_dilation_curve(
         self,
         channels: list[str],
         hierarchy_level: int,
     ) -> list[dict]:
-        """Get aggregated IoU across all dilations for a combination."""
-        if not self.is_loaded:
-            return []
+        """Get IoU across dilations for a multi-channel combination."""
         
         channel_order = self.metadata.channels if self.metadata else []
         sorted_channels = sorted(
@@ -627,10 +698,12 @@ class AnalysisLoader:
             sum_inter = row["sum_inter"] or 0
             sum_union = row["sum_union"] or 1
             agg_iou = sum_inter / sum_union if sum_union > 0 else 0.0
+            
             results.append({
                 "dilation": row["dilation"],
                 "count": sum_inter,
                 "iou": agg_iou,
+                "density": 0.0,  # Not typically used for combinations
             })
         
         return results

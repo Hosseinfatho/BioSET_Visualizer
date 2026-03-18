@@ -398,6 +398,8 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Heatmap combination changed: {heatmap_combination}")
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
+        if hasattr(ctrl, 'print_dilation_curve'):
+            ctrl.print_dilation_curve()
 
     @state.change("heatmap_outline_only")
     def on_heatmap_outline_only_change(heatmap_outline_only, **kwargs):
