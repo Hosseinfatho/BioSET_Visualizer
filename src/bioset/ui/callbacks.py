@@ -1085,9 +1085,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot send message - Biomni not initialised")
             return
 
-        channel_stats = _require_tile_stats()
-        if channel_stats is None:
-            return
+        channel_stats = _refs.get("last_tile_channel_stats")  # Optional — None if no tile selected
 
         user_text = state.chatbot_input.strip()
         print(f"[callbacks] Biomni query: {user_text}")
@@ -1259,6 +1257,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             label_mgr.clear()
             _refs["label_manager"] = None
         state.selected_tile = None
+        _refs.pop("last_tile_channel_stats", None)
         state.chatbot_labels_generated = False
         state.anchor_labels = False
         v = _refs.get("view")
