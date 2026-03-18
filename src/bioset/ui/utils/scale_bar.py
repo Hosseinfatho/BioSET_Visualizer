@@ -19,6 +19,7 @@ def compute_scale_bar_for_camera(
     unit: str = "µm",
     component: Optional[int] = None,
     base_spacing_xy: Optional[float] = None,
+    voxel_um_xy: Optional[float] = None,
 ) -> Tuple[str, int]:
     """
     Compute a "nice" scale bar length and its pixel width for a VTK camera.
@@ -67,8 +68,12 @@ def compute_scale_bar_for_camera(
     raw_units = float(target_px) * units_per_pixel
 
     # LOD-aware: quantize to multiples of voxel size at current component
+    # Prefer explicit voxel size if provided (used for NOV where we can read
+    # spacing directly from the currently loaded image/multires source).
     voxel_um: Optional[float] = None
-    if component is not None and base_spacing_xy is not None and base_spacing_xy > 0:
+    if voxel_um_xy is not None and voxel_um_xy > 0:
+        voxel_um = float(voxel_um_xy)
+    elif component is not None and base_spacing_xy is not None and base_spacing_xy > 0:
         voxel_um = _voxel_um_xy_for_lod(base_spacing_xy, component)
 
     if voxel_um is not None and voxel_um > 0:
@@ -94,10 +99,9 @@ def compute_scale_bar_for_camera(
             scale_units = min(nice, key=lambda x: abs(x - raw_units))
 
     width_px = int(round(min(scale_units / units_per_pixel, float(max_width_px))))
-    if scale_units >= 1:
-        label = f"{scale_units:.0f} {unit}"
-    else:
-        label = f"{scale_units} {unit}"
+    # Show at most 3 digits after decimal, e.g. 0.139 (no extra digits).
+    scale_str = f"{float(scale_units):.3f}".rstrip("0").rstrip(".")
+    label = f"{scale_str} {unit}"
     return (label, width_px)
 
 
@@ -111,6 +115,7 @@ def compute_scale_bar(
     unit: str = "µm",
     component: Optional[int] = None,
     base_spacing_xy: Optional[float] = None,
+    voxel_um_xy: Optional[float] = None,
 ) -> Tuple[str, int]:
     """Convenience wrapper that fetches the active camera from a renderer. Uses LOD (component + base_spacing_xy) when provided."""
     if renderer is None:
@@ -128,5 +133,6 @@ def compute_scale_bar(
         unit=unit,
         component=component,
         base_spacing_xy=base_spacing_xy,
+        voxel_um_xy=voxel_um_xy,
     )
 

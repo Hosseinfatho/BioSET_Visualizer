@@ -201,15 +201,15 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                           "background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; "
                           "color: rgba(255,255,255,0.92); font-size: 0.55rem;",
             ):
-                with html.Div(style="display: flex; align-items: center; height: 5px;"):
+                with html.Div(style="display: flex; align-items: center; height: 10px;"):
                     html.Div(
-                        style="width: 1px; height: 5px; min-width: 1px; background: rgba(255,255,255,0.95); border-radius: 0;")
+                        style="width: 1px; height: 10px; min-width: 1px; background: rgba(255,255,255,0.95); border-radius: 0;")
                     html.Div(
                         style=(
-                            "'width: ' + nov_scale_bar_width_px + 'px; height: 1.5px; min-width: 2px; background: rgba(255,255,255,0.95); border-radius: 0;'",
-                            "width: 50px; height: 1.5px; background: rgba(255,255,255,0.95);",
+                            "'width: ' + nov_scale_bar_width_px + 'px; height: 3px; min-width: 2px; background: rgba(255,255,255,0.95); border-radius: 0;'",
+                            "width: 50px; height: 3px; background: rgba(255,255,255,0.95);",
                         ),
                     )
                     html.Div(
-                        style="width: 1px; height: 5px; min-width: 1px; background: rgba(255,255,255,0.95); border-radius: 0;")
-                html.Span("{{ nov_scale_bar_label }}", style="font-size: 0.55rem; line-height: 1;")
+                        style="width: 1px; height: 10px; min-width: 1px; background: rgba(255,255,255,0.95); border-radius: 0;")
+                html.Span("{{ nov_scale_bar_label }}", style="font-size: 1.1rem; line-height: 1;")

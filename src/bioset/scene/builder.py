@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import sys
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -250,8 +251,25 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                     except Exception:
                         pass
 
+            # Keep NOV scale bar responsive during zoom/pan by updating on interaction,
+            # but throttle to avoid flooding the websocket/UI with updates.
+            _nov_scale_bar_last_update = 0.0
+
+            def _on_nov_interaction(obj, evt):
+                nonlocal _nov_scale_bar_last_update
+                now = time.time()
+                if now - _nov_scale_bar_last_update < 0.10:  # 10 FPS max
+                    return
+                _nov_scale_bar_last_update = now
+                if getattr(streamer, "nov_render_callback", None):
+                    try:
+                        streamer.nov_render_callback()
+                    except Exception:
+                        pass
+
             interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
             nov_interactor.AddObserver("EndInteractionEvent", _on_nov_end_interaction)
+            nov_interactor.AddObserver("InteractionEvent", _on_nov_interaction)
         except Exception as e:
             streamer = None
             nov_renderer = None
