@@ -28,8 +28,9 @@ class HeatmapConfig:
     outline_line_width: float = 5.0  # Fixed line width for all outline tiles
     # If >0 in outline_only mode, also draw a matching outline behind the volume (back)
     # and connect the 4 corners with the same line width/brightness.
-    outline_box_depth: float = 0.0  # world Z distance from front to back
+    outline_box_depth: float = 0.0  # world Z distance from front to back (used if outline_box_front_z not set)
     outline_box_back_z: float = 0.0  # world Z of the back plane (front plane is back_z + depth)
+    outline_box_front_z: float = 0.0  # if set, world Z of front plane (in front of image, closer to camera)
 
 
 class HeatmapRenderer:    
@@ -126,11 +127,14 @@ class HeatmapRenderer:
                 # If outline_box_depth is enabled, draw a true 12-edge "box" outline with
                 # consistent thickness/brightness on all edges (no duplicates).
                 if self.config.outline_box_depth and self.config.outline_box_depth > 0:
-                    # IMPORTANT: the "front" plane must match the existing tile outline we already draw.
-                    # That outline is a cube centered at z_center with height z_size, so its front face is:
-                    z_front = float(z_center) + float(z_size) / 2.0
-                    # Then place the back plane behind it by the configured depth.
-                    z_back = z_front - float(self.config.outline_box_depth)
+                    # Back rectangle: on heatmap tile position (behind the image).
+                    z_back = float(z_center)
+                    # Front rectangle: in front of the image (closer to camera). Use explicit front Z if set.
+                    if self.config.outline_box_front_z and self.config.outline_box_front_z != 0.0:
+                        z_front = float(self.config.outline_box_front_z)
+                    else:
+                        z_front = float(z_center) + float(z_size) / 2.0
+                        z_back = z_front - float(self.config.outline_box_depth)
 
                     front_actor = self._create_rect_outline_actor(
                         center_xy=(x_center, y_center),

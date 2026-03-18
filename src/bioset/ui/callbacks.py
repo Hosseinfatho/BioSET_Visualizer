@@ -21,6 +21,7 @@ from ..report.content_sections.General import GeneralContent, General
 
 def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
+    from bioset.ui.utils.scale_bar import compute_scale_bar
 
     def _hex_to_rgb_tuple(color_hex: str):
         """Convert '#RRGGBB' to (r, g, b) floats in [0,1]."""
@@ -54,6 +55,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the streamer reference."""
         _refs["streamer"] = streamer
         print(f"[callbacks] Streamer set: {streamer}")
+        _attach_main_scale_bar_observer(streamer)
+        update_main_scale_bar()
 
     def set_heatmap(heatmap):
         """Set the heatmap renderer reference."""
@@ -85,6 +88,39 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     register_bookmark_callbacks(ctrl, state, _refs)
     register_nov_callbacks(ctrl, state, _refs)
+
+    def update_main_scale_bar():
+        """Compute/update scale bar for the main (non-NOV) view."""
+        s = _refs.get("streamer")
+        if not s or not getattr(s, "renderer", None) or not getattr(s, "render_window", None):
+            state.main_scale_bar_label = ""
+            state.main_scale_bar_width_px = 0
+            return
+        label, width_px = compute_scale_bar(renderer=s.renderer, render_window=s.render_window, unit="µm")
+        state.main_scale_bar_label = label
+        state.main_scale_bar_width_px = int(width_px or 0)
+
+    def _attach_main_scale_bar_observer(s):
+        """Attach a render observer once so main scale bar updates with zoom/render."""
+        if not s or not getattr(s, "render_window", None):
+            return
+        rw = s.render_window
+        if getattr(rw, "_bioset_main_scale_bar_observer", False):
+            return
+
+        def _on_render(_obj=None, _evt=None):
+            try:
+                update_main_scale_bar()
+            except Exception:
+                pass
+
+        try:
+            rw.AddObserver("RenderEvent", _on_render)
+            setattr(rw, "_bioset_main_scale_bar_observer", True)
+        except Exception:
+            pass
+
+    ctrl.update_main_scale_bar = update_main_scale_bar
 
     def load_data():
         """Load data from zarr_url and metadata_url."""
@@ -150,6 +186,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if streamer:
                 streamer.renderer.ResetCamera()
                 streamer.renderer.ResetCameraClippingRange()
+                update_main_scale_bar()
             if _refs["view"]:
                 _refs["view"].update()
             
@@ -660,10 +697,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     z_depth_vox = max(0.0, z1_vox - z0_vox)
                     sz = float(spacing[2]) if spacing and len(spacing) >= 3 else 1.0
                     heatmap.config.outline_box_depth = z_depth_vox * sz
+                    # Front rectangle: in front of image (closer to camera). Back stays at heatmap position.
+                    volume_z_max = z1_vox * sz
+                    heatmap.config.outline_box_front_z = volume_z_max + 10.0
                 else:
                     heatmap.config.outline_box_depth = 0.0
+                    heatmap.config.outline_box_front_z = 0.0
             else:
                 heatmap.config.outline_box_depth = 0.0
+                heatmap.config.outline_box_front_z = 0.0
 
             heatmap.update_tiles(tiles, spacing=spacing, color=color, outline_only=outline_only)
             state.heatmap_tile_count = len(tiles)
@@ -842,6 +884,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             else:
                 streamer.renderer.ResetCamera()
                 streamer.renderer.ResetCameraClippingRange()
+        update_main_scale_bar()
         if _refs.get("view"):
             _refs["view"].update()
     
