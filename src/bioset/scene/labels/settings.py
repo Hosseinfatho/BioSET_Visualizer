@@ -20,10 +20,10 @@ label_config = {
     "INTERACTION_DISTANCE": 5.0,
     "INTERACTION_BILLBOARD_MIN_GAP": 2.0,
     "INTERACTION_BILLBOARD_OFFSET": 2.0,
-    "INTERACTION_BILLBOARD_SCALE": 0.5,
+    "INTERACTION_BILLBOARD_SCALE": 1.0,
     "INTERACTION_BILLBOARD_COLOR": (1.0, 0.8, 0.5),
-    "INTERACTION_FLAGPOLE_HEIGHT": 3.0,
-    "INTERACTION_FLAGPOLE_SCALE": 0.4,
+    "INTERACTION_FLAGPOLE_HEIGHT": 5.0,
+    "INTERACTION_FLAGPOLE_SCALE": 0.7,
     "INTERACTION_FLAGPOLE_COLOR": (1.0, 0.8, 0.5),
     "INTERACTION_CLUSTER_RADIUS": 6.0,   # scaled from 60.0
     "MAX_INTERACTION_LABELS": 8,
@@ -53,7 +53,7 @@ label_config = {
     "CLUSTER_LABEL_BASE_SCALE": 1.0,
     "CLUSTER_EXTENT_SCALE_FACTOR": 50.0,
     "CLUSTER_LABEL_COLOR": (1.0, 1.0, 0.8),
-    "CLUSTER_LABEL_OFFSET": 10.0,
+    "CLUSTER_LABEL_OFFSET": 40.0,
 
     # =====================================================================
     # ZOOM-BASED LABEL TYPE HEURISTIC
@@ -67,20 +67,20 @@ label_config = {
     # MID must be < HIERARCHY_REGION_DIST so SURFACE only triggers up close.
     # =====================================================================
     "FAR_THRESHOLD": 400.0,
-    "MID_THRESHOLD": 150.0,
+    "MID_THRESHOLD": 160.0,
 
-    "MAX_VISIBLE_LABELS": 50,
+    "MAX_VISIBLE_LABELS": 10,
     "LABEL_SCREEN_PADDING": 15,
 
     # =====================================================================
     # SURFACE LABEL SETTINGS
     # =====================================================================
-    "DILATION_AMOUNT": 3.0,            # BioSET geometry requires smaller value than 10x scaling
+    "DILATION_AMOUNT": 5.0,            # BioSET geometry requires smaller value than 10x scaling
     "SMOOTH_ITERATIONS": 100,
     "SURFACE_LABEL_HEIGHT": 1.0,       # scaled from 10.0
     "SURFACE_HEIGHT_FACTOR": 0.12,     # region_diag * this = label height
-    "SURFACE_MIN_HEIGHT": 0.5,         # scaled from 6.0
-    "SURFACE_MAX_HEIGHT": 2.0,         # scaled from 30.0
+    "SURFACE_MIN_HEIGHT": 1.0,         # scaled from 6.0
+    "SURFACE_MAX_HEIGHT": 1.5,         # scaled from 30.0
     "WALK_STEP": 3.0,
     "WALK_STEPS": 30,
     "WALK_NORMAL_COS_THRESHOLD": 0.5,
@@ -94,13 +94,13 @@ label_config = {
     # Minimum dot(surface_normal, to_camera) to attempt a surface label.
     # 1.0 = dead-on, 0.0 = edge-on, <0 = away. Below threshold → flagpole fallback.
     # 0.3 ≈ 72° off from facing camera.
-    "SURFACE_MIN_FACING": 0.5,
+    "SURFACE_MIN_FACING": 0.75,
 
     # =====================================================================
     # FLAGPOLE LABEL SETTINGS
     # =====================================================================
-    "FLAGPOLE_HEIGHT": 3.5,            # scaled from 35.0
-    "FLAGPOLE_TEXT_SCALE": 0.5,
+    "FLAGPOLE_HEIGHT": 3.0,            # scaled from 35.0
+    "FLAGPOLE_TEXT_SCALE": 1.0,
     "FLAGPOLE_COLOR": (1.0, 1.0, 1.0),
     "FLAGPOLE_LINE_COLOR": (1.0, 1.0, 1.0),
     "FLAGPOLE_LINE_WIDTH": 1.5,
@@ -118,5 +118,5 @@ label_config = {
     # =====================================================================
     # TEXT RENDERING
     # =====================================================================
-    "TEXT_EXTRUSION_DEPTH": 0.2,      # Z-depth for vtkLinearExtrusionFilter
+    "TEXT_EXTRUSION_DEPTH": 0.1,      # Z-depth for vtkLinearExtrusionFilter
 }

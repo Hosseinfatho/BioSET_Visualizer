@@ -1268,6 +1268,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         label_mgr = _refs.get("label_manager")
         if label_mgr:
             label_mgr.clear()
+            _refs["label_manager"] = None
         state.selected_tile = None
         state.chatbot_labels_generated = False
         state.anchor_labels = False
