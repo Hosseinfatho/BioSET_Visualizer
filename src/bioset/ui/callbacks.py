@@ -987,6 +987,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         if _refs["biomni_client"] is None:
             _refs["biomni_client"] = BiomniLocalClient(base_url=url)
+            get_available_llms()
+
+        if _refs["biomni_client"].base_url != url:
+            _refs["biomni_client"] = BiomniLocalClient(base_url=url)
+            get_available_llms()
+
         return _refs["biomni_client"]
 
     def get_available_llms():
@@ -1170,163 +1176,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         import base64
         png_bytes = capture_screenshot_png_bytes(_refs.get("streamer"))
         return base64.b64encode(png_bytes).decode("utf-8") if png_bytes else None
-
-    def setup_right_click_picker(interactor):
-        """Register a VTK prop picker on right-click to select heatmap tiles."""
-        from vtkmodules.vtkRenderingCore import vtkPropPicker
-        
-        picker = vtkPropPicker()
-        
-        def _on_right_button_press(obj, event):
-            click_pos = obj.GetEventPosition()
-            heatmap = _refs.get("heatmap")
-            mesh_mgr = _refs.get("mesh_manager")
-            streamer = _refs.get("streamer")
-            
-            if not heatmap or not streamer:
-                return
-            
-            renderer = streamer.renderer
-            
-            volumes = renderer.GetVolumes()
-            volumes.InitTraversal()
-            hidden_volumes = []
-            vol = volumes.GetNextVolume()
-            while vol:
-                hidden_volumes.append((vol, vol.GetVisibility()))
-                vol.SetVisibility(False)
-                vol = volumes.GetNextVolume()
-            
-            try:
-                picker.Pick(click_pos[0], click_pos[1], 0, renderer)
-                picked_actor = picker.GetActor()
-            finally:
-                for vol, was_visible in hidden_volumes:
-                    vol.SetVisibility(was_visible)
-            
-            if picked_actor is None:
-                print(f"[picker] No actor at ({click_pos[0]}, {click_pos[1]})")
-                return
-            
-            tile = heatmap.get_tile_for_actor(picked_actor)
-            if tile is None:
-                print(f"[picker] Picked actor is not a heatmap tile")
-                return
-            
-            print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
-                f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
-            
-            sx = getattr(state, 'physical_size_x', 0.14)
-            sy = getattr(state, 'physical_size_y', 0.14)
-            sz = getattr(state, 'physical_size_z', 0.28)
-        
-            #   world_x = tile_coord * spacing * 128
-            tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
-            tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
-            tile_center_z = 0.0
-            
-            tile_width_world = (tile.x1 - tile.x0) * sx * 128
-            tile_height_world = (tile.y1 - tile.y0) * sy * 128
-            tile_extent = max(tile_width_world, tile_height_world)
-            
-            cam = renderer.GetActiveCamera()
-            cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 1.5)
-            cam.SetViewUp(0, 1, 0)
-            renderer.ResetCameraClippingRange()
-            
-            print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
-                f"extent={tile_extent:.1f}")
-            
-            active_channels = list(state.active_channels)
-            if mesh_mgr and mesh_mgr.is_available and active_channels:
-                vox_x = (tile.x0 + tile.x1) / 2.0 * 128
-                vox_y = (tile.y0 + tile.y1) / 2.0 * 128
-                state.selected_tile = None
-
-                for ch_id in active_channels:
-                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
-                    if not mesh_tile:
-                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
-                        continue
-                    if state.selected_tile is None:
-                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                    if ch_id not in state.surface_hidden_channels:
-                        color_hex = "#FFFFFF"
-                        for ch in state.channels:
-                            if ch["id"] == ch_id:
-                                color_hex = ch["color"]
-                                break
-                        color_rgb = _hex_to_rgb_tuple(color_hex)
-                        mesh_mgr.activate_channel_mesh(
-                            channel_idx=ch_id,
-                            color_rgb=color_rgb,
-                            tile_x=mesh_tile.tile_x,
-                            tile_y=mesh_tile.tile_y,
-                            opacity=1.0,
-                        )
-
-            if _refs["view"]:
-                _refs["view"].update()
-
-
-        interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
-        print("[callbacks] Right-click picker registered on interactor")
-
-    _hover_last_actor = [None]
-    def on_hover(px, py):
-        """Handle throttled mousemove from client JS"""
-        heatmap = _refs.get("heatmap")
-        streamer = _refs.get("streamer")
-        if not heatmap or not streamer:
-            return
-
-        renderer = streamer.renderer
-        render_window = renderer.GetRenderWindow()
-        win_size = render_window.GetSize()
-
-        vtk_y = win_size[1] - int(py)
-        vtk_x = int(px)
-
-        # Hide volumes so picker can reach the cube actors
-        from vtkmodules.vtkRenderingCore import vtkPropPicker
-        hover_picker = vtkPropPicker()
-
-        volumes = renderer.GetVolumes()
-        volumes.InitTraversal()
-        hidden = []
-        vol = volumes.GetNextVolume()
-        while vol:
-            hidden.append((vol, vol.GetVisibility()))
-            vol.SetVisibility(False)
-            vol = volumes.GetNextVolume()
-
-        try:
-            hover_picker.Pick(vtk_x, vtk_y, 0, renderer)
-            picked_actor = hover_picker.GetActor()
-        finally:
-            for vol, was_visible in hidden:
-                vol.SetVisibility(was_visible)
-
-        prev = _hover_last_actor[0]
-
-        if picked_actor is prev:
-            return
-
-        if prev is not None:
-            prev.GetProperty().EdgeVisibilityOff()
-
-        if picked_actor is not None and heatmap.get_tile_for_actor(picked_actor) is not None:
-            picked_actor.GetProperty().EdgeVisibilityOn()
-            picked_actor.GetProperty().SetEdgeColor(0.0, 0.0, 0.0)
-            picked_actor.GetProperty().SetLineWidth(5.0)
-            _hover_last_actor[0] = picked_actor
-        else:
-            _hover_last_actor[0] = None
-
-        if _refs["view"]:
-            _refs["view"].update()
 
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
