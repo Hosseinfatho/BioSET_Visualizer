@@ -1150,28 +1150,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             result = client.label(markers, channel_stats, image=screenshot_base64)
 
-            lines = []
+            import json as _json
             raw_labels = result.get("labels", {})
-            if raw_labels:
-                lines.append("Labels:")
-                for key, val in raw_labels.items():
-                    title = val[0] if val else ""
-                    subtitle = val[1] if len(val) > 1 else ""
-                    entry = f"  {key}: {title}"
-                    if subtitle:
-                        entry += f" — {subtitle}"
-                    lines.append(entry)
-
             overall = result.get("overall", [])
-            if overall:
-                lines.append(f"Overall: {overall[0]}")
-                if len(overall) > 1:
-                    lines[-1] += f" — {overall[1]}"
-
-            response_text = "\n".join(lines) if lines else str(result)
+            response_json = _json.dumps(result, indent=2)
 
             state.chatbot_messages = state.chatbot_messages + [
-                {"role": "assistant", "content": response_text}
+                {"role": "assistant", "content": response_json, "format": "json"}
             ]
             print("[callbacks] Biomni label response received")
 
@@ -1212,21 +1197,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             result = client.suggest(markers, channel_stats, image=screenshot_base64)
 
+            import json as _json
             suggestions = result.get("suggestions", [])
-            if suggestions:
-                lines = ["Suggested channels:"]
-                for s in suggestions:
-                    priority = s.get("priority", "")
-                    channel = s.get("channel", "")
-                    reason = s.get("reason", "")
-                    lines.append(f"  [{priority}] {channel}: {reason}")
-                response_text = "\n".join(lines)
-            else:
-                response_text = str(result)
+            priority_map = {"high": 3, "medium": 2, "low": 1}
+            suggestion_items = []
+            for s in suggestions:
+                raw_priority = str(s.get("priority", "medium")).lower()
+                dots = priority_map.get(raw_priority, 2)
+                suggestion_items.append({
+                    "channel": s.get("channel", ""),
+                    "reason": s.get("reason", ""),
+                    "dots": dots,
+                })
 
-            state.chatbot_messages = state.chatbot_messages + [
-                {"role": "assistant", "content": response_text}
-            ]
+            state.chatbot_messages = state.chatbot_messages + [{
+                "role": "assistant",
+                "content": _json.dumps(result, indent=2),
+                "format": "suggest",
+                "suggestions": suggestion_items,
+            }]
             print("[callbacks] Biomni suggest response received")
 
         except Exception as e:
