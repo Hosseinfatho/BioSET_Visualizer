@@ -985,7 +985,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Get or create the local Biomni client."""
         url = f"http://localhost:{state.biomni_port}"
 
-        _refs["biomni_client"] = BiomniLocalClient(base_url=url)
+        if _refs["biomni_client"] is None:
+            _refs["biomni_client"] = BiomniLocalClient(base_url=url)
+            get_available_llms()
+
+        if _refs["biomni_client"].base_url != url:
+            _refs["biomni_client"] = BiomniLocalClient(base_url=url)
+            get_available_llms()
+
         return _refs["biomni_client"]
 
     def get_available_llms():
