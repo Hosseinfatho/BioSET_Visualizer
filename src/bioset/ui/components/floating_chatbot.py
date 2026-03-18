@@ -50,7 +50,7 @@ def floating_chatbot_section(state, ctrl):
 
             # Panel Content
             with html.Div(v_if="!chatbot_authenticated", classes="mb-3"):
-                html.Span("Biomni not initialized.",
+                html.Span("LLM not initialized.",
                           classes="text-caption grey--text font-weight-bold letter-spacing-1")
             with html.Div(v_if="chatbot_authenticated"):
                 with html.Div(
@@ -64,7 +64,7 @@ def floating_chatbot_section(state, ctrl):
                     ):
                         vuetify.VIcon("mdi-message-outline", size=48, color="grey")
                         html.Div(
-                            "Label active channels with Biomni",
+                            "Biomni / Claude",
                             classes="text-caption grey--text mt-2",
                         )
 
@@ -171,7 +171,7 @@ def floating_chatbot_section(state, ctrl):
                         click=ctrl.chatbot_label,
                         x_small=True,
                         outlined=True,
-                        color="primary",
+                        color="white",
                         disabled=("chatbot_loading",),
                         classes="flex-grow-1 mr-1",
                     )

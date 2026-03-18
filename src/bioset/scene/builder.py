@@ -191,6 +191,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     streamer: Optional[VolumeStreamer] = None
     nov_renderer: Optional[vtkRenderer] = None
     nov_render_window: Optional[vtkRenderWindow] = None
+    _heatmap_lod_ref: list = [None]  # mutable so _on_end_interaction closure can access it
 
     heatmap = HeatmapRenderer(heatmap_fill_renderer, outline_renderer=heatmap_outline_renderer)
 
@@ -234,13 +235,10 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             def _on_end_interaction(obj, evt):
                 # Keep volume streamer + heatmap LOD in sync with camera zoom.
                 streamer.on_interaction_end()
-                try:
-                    if heatmap_lod is not None:
-                        cam = streamer.renderer.GetActiveCamera()
-                        dist = camera_distance_to_focal(cam)
-                        heatmap_lod.on_camera_moved(dist)
-                except Exception:
-                    pass
+                from bioset.streaming.lod import camera_distance_to_focal
+                if _heatmap_lod_ref[0] is not None:
+                    dist = camera_distance_to_focal(renderer.GetActiveCamera())
+                    _heatmap_lod_ref[0].on_camera_moved(dist)
 
             def _on_nov_end_interaction(obj, evt):
                 nov_render_window.Render()
@@ -292,7 +290,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
         )
 
-    heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD() if streamer is not None else None
+    heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules) if streamer is not None else None
+    _heatmap_lod_ref[0] = heatmap_lod
 
     return VtkScene(
         renderer=renderer,

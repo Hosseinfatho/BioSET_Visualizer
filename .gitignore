@@ -1,8 +1,11 @@
+.env
 .vs
 *.tiff
 .git
 .vscode
 .idea
+.claude
+*.pdf
 
 *.egg-info/
 build/

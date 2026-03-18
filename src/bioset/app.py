@@ -134,8 +134,6 @@ def main():
     if scene.heatmap_lod is not None:
         ctrl.set_heatmap_lod(scene.heatmap_lod)
 
-    ctrl.get_available_llms()
-
     server.start()
 
 

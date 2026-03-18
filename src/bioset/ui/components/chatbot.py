@@ -153,7 +153,7 @@ def chatbot_section(state, ctrl):
                                 click=ctrl.chatbot_label,
                                 x_small=True,
                                 outlined=True,
-                                color="primary",
+                                color="white",
                                 disabled=("chatbot_loading",),
                                 classes="flex-grow-1 mr-1",
                             )
