@@ -158,8 +158,8 @@ def init_state(state):
     state.setdefault("heatmap_combination", [])  # Currently selected combination (list of channel names)
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
-    state.setdefault("heatmap_auto_level", True)  # Auto LOD vs manual level selection
-    state.setdefault("heatmap_outline_only", False)  # If True, show only tile outlines (wireframe); intensity per-tile
+    state.setdefault("heatmap_auto_level", "auto")  # "auto" or "manual" LOD level selection
+    state.setdefault("heatmap_outline_only", "filled")  # "filled" or "outline" tile display mode
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
@@ -394,24 +394,17 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("heatmap_auto_level")
     def on_heatmap_auto_level_change(heatmap_auto_level, **kwargs):
+        is_auto = heatmap_auto_level == "auto"
         if hasattr(ctrl, 'set_heatmap_lod_auto_mode'):
-            ctrl.set_heatmap_lod_auto_mode(heatmap_auto_level)
+            ctrl.set_heatmap_lod_auto_mode(is_auto)
         # Switching to manual: immediately re-query at the current level
-        if not heatmap_auto_level and hasattr(ctrl, 'update_heatmap'):
-            ctrl.update_heatmap()
-
-    @state.change("heatmap_auto_level")
-    def on_heatmap_auto_level_change(heatmap_auto_level, **kwargs):
-        if hasattr(ctrl, 'set_heatmap_lod_auto_mode'):
-            ctrl.set_heatmap_lod_auto_mode(heatmap_auto_level)
-        # Switching to manual: immediately re-query at the current level
-        if not heatmap_auto_level and hasattr(ctrl, 'update_heatmap'):
+        if not is_auto and hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
 
     @state.change("current_hierarchy_level")
     def on_hierarchy_change(current_hierarchy_level, **kwargs):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
-        if state.heatmap_auto_level:
+        if state.heatmap_auto_level == "auto":
             return
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()

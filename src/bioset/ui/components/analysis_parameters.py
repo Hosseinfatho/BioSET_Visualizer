@@ -72,59 +72,44 @@ def analysis_parameters_section(state, ctrl):
                 # Heatmap Header
                 with vuetify.VListItem(classes="mt-4 text-left ml-4"):
                     html.Span("Heatmap", classes="text-caption grey--text font-weight-bold")
-                    vuetify.VSpacer()
-                    with vuetify.VBtn(
-                            text=True,
-                            small=True,
-                            classes="ml-1 px-2 text-none",
-                            click="heatmap_visible = !heatmap_visible",
-                    ):
-                        with html.Div():
-                            html.Span("Toggle Visibility", classes="mr-2",
-                                      style="font-size: 11px; font-weight: bold;")
-                            vuetify.VIcon(
-                                v_text="heatmap_visible ? 'mdi-eye' : 'mdi-eye-off'",
-                                small=True,
-                                style=("heatmap_visible ? 'color:white' : 'color:#555'",),
-                            )
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
                     with vuetify.VListItemContent():
-                        # Outline only: show tile outlines (wireframe) with intensity per-tile
-                        with html.Div(classes="d-flex align-center justify-center mb-2"):
-                            html.Span(
-                                "Filled",
-                                style="color: grey; font-size: 11px; margin-right: 4px;",
-                            )
-                            vuetify.VSwitch(
-                                v_model=("heatmap_outline_only",),
-                                dense=True,
-                                hide_details=True,
-                                color="white",
-                                style="display: inline-flex; margin-top: 0;",
-                            )
-                            html.Span(
-                                "Outline",
-                                style="color: grey; font-size: 11px; margin-left: 4px;",
-                            )
+                        # Eye toggle + Filled/Outline + Manual/Auto in one row
+                        with html.Div(classes="d-flex align-center justify-center mb-2", style="gap: 8px;"):
+                            # Eye visibility toggle (square icon button)
+                            with vuetify.VBtn(
+                                    icon=True,
+                                    small=True,
+                                    outlined=True,
+                                    click="heatmap_visible = !heatmap_visible",
+                                    style="min-width: 32px; width: 32px; height: 32px;",
+                            ):
+                                vuetify.VIcon(
+                                    v_text="heatmap_visible ? 'mdi-eye' : 'mdi-eye-off'",
+                                    small=True,
+                                    style=("heatmap_visible ? 'color:white' : 'color:#555'",),
+                                )
 
-                        # Auto/Manual resolution toggle
-                        with html.Div(classes="d-flex align-center justify-center mb-2 mt-2"):
-                            html.Span(
-                                "Manual",
-                                style="color: grey; font-size: 11px; margin-right: 4px;",
-                            )
-                            vuetify.VSwitch(
-                                v_model=("heatmap_auto_level",),
-                                dense=True,
-                                hide_details=True,
-                                color="white",
-                                style="display: inline-flex; margin-top: 0;",
-                            )
-                            html.Span(
-                                "Auto",
-                                style="color: grey; font-size: 11px; margin-left: 4px;",
-                            )
+                            # Filled / Outline toggle
+                            with vuetify.VBtnToggle(
+                                    v_model=("heatmap_outline_only", "filled"),
+                                    mandatory=True,
+                                    dense=True,
+                                    style="background: transparent;",
+                            ):
+                                vuetify.VBtn("Filled", value="filled", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Outline", value="outline", small=True, classes="text-capitalize", outlined=True)
+
+                            # Manual / Auto toggle
+                            with vuetify.VBtnToggle(
+                                    v_model=("heatmap_auto_level", "auto"),
+                                    mandatory=True,
+                                    dense=True,
+                                    style="background: transparent;",
+                            ):
+                                vuetify.VBtn("Manual", value="manual", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Auto", value="auto", small=True, classes="text-capitalize", outlined=True)
 
                         # Combination dropdown
                         with html.Div(classes="d-flex justify-center mb-3"):
@@ -189,7 +174,7 @@ def analysis_parameters_section(state, ctrl):
                                     v_model=("current_hierarchy_level",),
                                     mandatory=True,
                                     dense=True,
-                                    disabled=("heatmap_auto_level",),
+                                    disabled=("heatmap_auto_level === 'auto'",),
                             ):
                                 vuetify.VBtn(
                                     v_for="level in analysis_hierarchy_levels",
