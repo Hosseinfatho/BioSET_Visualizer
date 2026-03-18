@@ -159,6 +159,8 @@ class HeatmapRenderer:
                     self._outline_back_actors[tile_key] = back_actor
                     self._outline_connector_actors[tile_key] = connector_actor
                     self._actor_to_tile[front_actor] = tile
+                    self._actor_to_tile[back_actor] = tile
+                    self._actor_to_tile[connector_actor] = tile
 
                     if self._visible:
                         # Front on outline layer (in front of volume)
@@ -259,7 +261,8 @@ class HeatmapRenderer:
 
         actor = vtkActor()
         actor.SetMapper(mapper)
-        actor.SetPickable(False)
+        # Allow picking (right-click drill-down) on outline geometry.
+        actor.SetPickable(True)
         # Match the existing tile scaling so back/connector lines align with the current outlines.
         actor.SetScale(128, 128, 1.0)
 
