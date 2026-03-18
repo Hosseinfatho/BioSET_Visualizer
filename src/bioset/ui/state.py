@@ -230,6 +230,8 @@ def init_state(state):
 
     # Chatbot state
     state.setdefault("chatbot_panel_open", False)  # False = closed, True = open
+    state.setdefault("chatbot_labels_generated", False)  # True after a Label call succeeds
+    state.setdefault("show_labels", True)  # Eye button: show/hide label actors in scene
     state.setdefault("chatbot_authenticated", False)
     state.setdefault("chatbot_messages", [])  # List of {role: str, content: str}
     state.setdefault("chatbot_input", "")
@@ -252,6 +254,9 @@ def init_state(state):
     state.setdefault("export_analysis", True)
     state.setdefault("export_chat", True)
     state.setdefault("export_bookmarks", True)
+
+    # Label anchor state
+    state.setdefault("anchor_labels", False)  # When True, labels stay pinned on camera move
 
 def get_channel_color(index: int) -> str:
     """Get default color for a channel by index."""
@@ -510,6 +515,12 @@ def register_state_change_handlers(state, ctrl):
         """When OV category changes, refresh names list."""
         if hasattr(ctrl, "ov_bookmark_refresh_names"):
             ctrl.ov_bookmark_refresh_names()
+
+    @state.change("anchor_labels")
+    def on_anchor_labels_change(anchor_labels, **kwargs):
+        # When un-anchoring, immediately recompute labels for current camera
+        if not anchor_labels and hasattr(ctrl, 'refresh_labels'):
+            ctrl.refresh_labels()
 
     @state.change("analysis_channels")
     def on_analysis_channels_change(analysis_channels, **kwargs):
