@@ -15,6 +15,11 @@ class HeatmapConfig:
     base_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)  
     min_opacity: float = 0.1
     max_opacity: float = 0.8
+    # Outline opacity is independent from filled-tile opacity.
+    # In outline mode we encode tile value via opacity (and grayscale brightness),
+    # while keeping line thickness fixed.
+    outline_min_opacity: float = 0.05
+    outline_max_opacity: float = 0.95
     z_height: float = 1.0  # todo, data and meta data decide?
     z_offset: float = 0.0    
     edge_visibility: bool = True
@@ -105,7 +110,7 @@ class HeatmapRenderer:
                 normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 1.0
                 value_0_10 = max(0.0, min(10.0, normalized * 10.0))
                 tile_color = (value_0_10 / 10.0, value_0_10 / 10.0, value_0_10 / 10.0)  # 0=black, 10=white
-                opacity = 1.0
+                opacity = self.config.outline_min_opacity + normalized * (self.config.outline_max_opacity - self.config.outline_min_opacity)
             elif self.config.opacity_scale == 'linear':
                 normalized = tile.active_fraction / scale
             else:
