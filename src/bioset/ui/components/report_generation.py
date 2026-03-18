@@ -9,7 +9,7 @@ def report_generation_section(state, ctrl):
     def toggle_report_generation():
         state.report_generation_open = not state.report_generation_open
 
-    with vuetify.VList(dense=True, nav=True):
+    with vuetify.VList(dense=True, nav=True, v_if="data_loaded"):
         with vuetify.VListItem(
                 class_=("report_generation_open ? 'nav-item nav-item--active' : 'nav-item'", "nav-item"),
                 classes="mb-0",
@@ -20,7 +20,7 @@ def report_generation_section(state, ctrl):
             with vuetify.VListItemIcon():
                 with vuetify.VTooltip(right=True, disabled=("!drawer_mini",)):
                     with html.Template(v_slot_activator="{ on, attrs }"):
-                        vuetify.VIcon("mdi-tune", style="font-size: 30px;", v_bind="attrs", v_on="on")
+                        vuetify.VIcon("mdi-file-pdf-box", style="font-size: 30px;", v_bind="attrs", v_on="on")
                     html.Span("Report Generation")
             with vuetify.VListItemContent(v_if="!drawer_mini"):
                 vuetify.VListItemTitle("Report Generation", classes="text-overline")
