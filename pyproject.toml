@@ -25,6 +25,7 @@ dependencies = [
   "dotenv",
   "gradio-client",
   "fpdf2",
+  "scipy",
 ]
 
 [project.scripts]
