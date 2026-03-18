@@ -648,6 +648,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
             outline_only = getattr(state, "heatmap_outline_only", False)
+
+            # Configure "box" outlines: back outline + corner connectors.
+            # Uses analysis volume Z bounds (voxels) converted to world units via physical_size_z.
+            if outline_only:
+                bounds = getattr(state, "analysis_volume_bounds", {}) or {}
+                z0z1 = bounds.get("z", None)
+                if isinstance(z0z1, (list, tuple)) and len(z0z1) >= 2:
+                    z0_vox = float(z0z1[0])
+                    z1_vox = float(z0z1[1])
+                    z_depth_vox = max(0.0, z1_vox - z0_vox)
+                    sz = float(spacing[2]) if spacing and len(spacing) >= 3 else 1.0
+                    heatmap.config.outline_box_depth = z_depth_vox * sz
+                else:
+                    heatmap.config.outline_box_depth = 0.0
+            else:
+                heatmap.config.outline_box_depth = 0.0
+
             heatmap.update_tiles(tiles, spacing=spacing, color=color, outline_only=outline_only)
             state.heatmap_tile_count = len(tiles)
         

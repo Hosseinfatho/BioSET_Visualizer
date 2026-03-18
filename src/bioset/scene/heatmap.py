@@ -26,6 +26,10 @@ class HeatmapConfig:
     gamma: float = 8.0  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
     outline_only: bool = False  # If True, draw only tile outlines (wireframe); brightness = gray→white by value, same thickness
     outline_line_width: float = 5.0  # Fixed line width for all outline tiles
+    # If >0 in outline_only mode, also draw a matching outline behind the volume (back)
+    # and connect the 4 corners with the same line width/brightness.
+    outline_box_depth: float = 0.0  # world Z distance from front to back
+    outline_box_back_z: float = 0.0  # world Z of the back plane (front plane is back_z + depth)
 
 
 class HeatmapRenderer:    
@@ -44,6 +48,8 @@ class HeatmapRenderer:
         
         self._actors: Dict[Tuple[int, int], vtkActor] = {}
         self._outline_actors: Dict[Tuple[int, int], vtkActor] = {}
+        self._outline_back_actors: Dict[Tuple[int, int], vtkActor] = {}
+        self._outline_connector_actors: Dict[Tuple[int, int], vtkActor] = {}
         self._visible = True
         
         self._current_tiles: List[TileData] = []
@@ -117,17 +123,63 @@ class HeatmapRenderer:
             if self.config.outline_only:
                 if self.outline_renderer is None:
                     continue
-                outline_actor = self._create_cube_actor(
-                    center=(x_center, y_center, z_center),
-                    size=(x_size, y_size, z_size),
-                    color=tile_color,
-                    opacity=opacity,
-                    outline_only=True,
-                )
-                self._outline_actors[tile_key] = outline_actor
-                self._actor_to_tile[outline_actor] = tile
-                if self._visible:
-                    self.outline_renderer.AddActor(outline_actor)
+                # If outline_box_depth is enabled, draw a true 12-edge "box" outline with
+                # consistent thickness/brightness on all edges (no duplicates).
+                if self.config.outline_box_depth and self.config.outline_box_depth > 0:
+                    # IMPORTANT: the "front" plane must match the existing tile outline we already draw.
+                    # That outline is a cube centered at z_center with height z_size, so its front face is:
+                    z_front = float(z_center) + float(z_size) / 2.0
+                    # Then place the back plane behind it by the configured depth.
+                    z_back = z_front - float(self.config.outline_box_depth)
+
+                    front_actor = self._create_rect_outline_actor(
+                        center_xy=(x_center, y_center),
+                        z_plane=z_front,
+                        size_xy=(x_size, y_size),
+                        color=tile_color,
+                        opacity=opacity,
+                    )
+                    back_actor = self._create_rect_outline_actor(
+                        center_xy=(x_center, y_center),
+                        z_plane=z_back,
+                        size_xy=(x_size, y_size),
+                        color=tile_color,
+                        opacity=opacity,
+                    )
+                    connector_actor = self._create_corner_connectors_actor(
+                        center_xy=(x_center, y_center),
+                        z_back=z_back,
+                        z_front=z_front,
+                        size_xy=(x_size, y_size),
+                        color=tile_color,
+                        opacity=opacity,
+                    )
+
+                    self._outline_actors[tile_key] = front_actor
+                    self._outline_back_actors[tile_key] = back_actor
+                    self._outline_connector_actors[tile_key] = connector_actor
+                    self._actor_to_tile[front_actor] = tile
+
+                    if self._visible:
+                        # Front on outline layer (in front of volume)
+                        self.outline_renderer.AddActor(front_actor)
+                        # Back should be behind the volume -> use the back renderer (layer 0).
+                        self.renderer.AddActor(back_actor)
+                        # Connectors should stay visible like front overlay -> add to outline layer.
+                        self.outline_renderer.AddActor(connector_actor)
+                else:
+                    # Default: draw current outline as a cube wireframe.
+                    outline_actor = self._create_cube_actor(
+                        center=(x_center, y_center, z_center),
+                        size=(x_size, y_size, z_size),
+                        color=tile_color,
+                        opacity=opacity,
+                        outline_only=True,
+                    )
+                    self._outline_actors[tile_key] = outline_actor
+                    self._actor_to_tile[outline_actor] = tile
+                    if self._visible:
+                        self.outline_renderer.AddActor(outline_actor)
             else:
                 fill_actor = self._create_cube_actor(
                     center=(x_center, y_center, z_center),
@@ -177,6 +229,95 @@ class HeatmapRenderer:
                 prop.SetLineWidth(self.config.edge_width)
         
         return actor
+
+    def _create_polyline_actor(
+        self,
+        points_xyz: List[Tuple[float, float, float]],
+        line_pairs: List[Tuple[int, int]],
+        *,
+        color: Tuple[float, float, float],
+        opacity: float,
+    ) -> vtkActor:
+        pts = vtk.vtkPoints()
+        pts.SetNumberOfPoints(len(points_xyz))
+        for i, (x, y, z) in enumerate(points_xyz):
+            pts.SetPoint(i, float(x), float(y), float(z))
+
+        lines = vtk.vtkCellArray()
+        for a, b in line_pairs:
+            ln = vtk.vtkLine()
+            ln.GetPointIds().SetId(0, int(a))
+            ln.GetPointIds().SetId(1, int(b))
+            lines.InsertNextCell(ln)
+
+        poly = vtk.vtkPolyData()
+        poly.SetPoints(pts)
+        poly.SetLines(lines)
+
+        mapper = vtkPolyDataMapper()
+        mapper.SetInputData(poly)
+
+        actor = vtkActor()
+        actor.SetMapper(mapper)
+        actor.SetPickable(False)
+        # Match the existing tile scaling so back/connector lines align with the current outlines.
+        actor.SetScale(128, 128, 1.0)
+
+        prop = actor.GetProperty()
+        prop.SetColor(*color)
+        prop.SetOpacity(opacity)
+        prop.SetRepresentationToWireframe()
+        prop.SetLineWidth(self.config.outline_line_width)
+        return actor
+
+    def _rect_points(
+        self,
+        *,
+        center_xy: Tuple[float, float],
+        z_plane: float,
+        size_xy: Tuple[float, float],
+    ) -> List[Tuple[float, float, float]]:
+        cx, cy = center_xy
+        sx, sy = size_xy
+        hx = sx / 2.0
+        hy = sy / 2.0
+        z = float(z_plane)
+        # Order: (x-,y-), (x+,y-), (x+,y+), (x-,y+)
+        return [
+            (cx - hx, cy - hy, z),
+            (cx + hx, cy - hy, z),
+            (cx + hx, cy + hy, z),
+            (cx - hx, cy + hy, z),
+        ]
+
+    def _create_rect_outline_actor(
+        self,
+        *,
+        center_xy: Tuple[float, float],
+        z_plane: float,
+        size_xy: Tuple[float, float],
+        color: Tuple[float, float, float],
+        opacity: float,
+    ) -> vtkActor:
+        pts = self._rect_points(center_xy=center_xy, z_plane=z_plane, size_xy=size_xy)
+        edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+        return self._create_polyline_actor(pts, edges, color=color, opacity=opacity)
+
+    def _create_corner_connectors_actor(
+        self,
+        *,
+        center_xy: Tuple[float, float],
+        z_back: float,
+        z_front: float,
+        size_xy: Tuple[float, float],
+        color: Tuple[float, float, float],
+        opacity: float,
+    ) -> vtkActor:
+        back_pts = self._rect_points(center_xy=center_xy, z_plane=z_back, size_xy=size_xy)
+        front_pts = self._rect_points(center_xy=center_xy, z_plane=z_front, size_xy=size_xy)
+        pts = back_pts + front_pts  # 0-3 back, 4-7 front
+        connectors = [(0, 4), (1, 5), (2, 6), (3, 7)]
+        return self._create_polyline_actor(pts, connectors, color=color, opacity=opacity)
     
     def set_color(self, color: Tuple[float, float, float]):
         self.config.base_color = color
@@ -202,6 +343,19 @@ class HeatmapRenderer:
                         self.outline_renderer.AddActor(actor)
                 else:
                     self.outline_renderer.RemoveActor(actor)
+            for actor in self._outline_connector_actors.values():
+                if visible:
+                    if not self.outline_renderer.HasViewProp(actor):
+                        self.outline_renderer.AddActor(actor)
+                else:
+                    self.outline_renderer.RemoveActor(actor)
+
+        for actor in self._outline_back_actors.values():
+            if visible:
+                if not self.renderer.HasViewProp(actor):
+                    self.renderer.AddActor(actor)
+            else:
+                self.renderer.RemoveActor(actor)
     
     def clear(self):
         for actor in self._actors.values():
@@ -209,8 +363,14 @@ class HeatmapRenderer:
         if self.outline_renderer is not None:
             for actor in self._outline_actors.values():
                 self.outline_renderer.RemoveActor(actor)
+            for actor in self._outline_connector_actors.values():
+                self.outline_renderer.RemoveActor(actor)
+        for actor in self._outline_back_actors.values():
+            self.renderer.RemoveActor(actor)
         self._actors.clear()
         self._outline_actors.clear()
+        self._outline_back_actors.clear()
+        self._outline_connector_actors.clear()
         self._current_tiles = []
         self._actor_to_tile.clear()
         
