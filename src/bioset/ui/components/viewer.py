@@ -74,8 +74,8 @@ def viewer(ctrl, render_window):
                 _lens_left = "(nov_dragging ? (nov_drag_start_rect_x + nov_drag_delta_x) : nov_rect_x) * 100"
                 _lens_bottom = "(nov_dragging ? (nov_drag_start_rect_y + nov_drag_delta_y) : nov_rect_y) * 100"
                 _lens_style = (
-                    "'left: ' + " + _lens_left + " + '%; bottom: ' + " + _lens_bottom + " + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1/1; position: absolute; border: 4px solid rgba(0,255,100,0.95); background: transparent; box-sizing: border-box; border-radius: 50%; pointer-events: auto;'",
-                    "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 4px solid rgba(0,255,100,0.95); background: transparent; border-radius: 50%; pointer-events: auto;",
+                    "'left: ' + " + _lens_left + " + '%; bottom: ' + " + _lens_bottom + " + '%; width: ' + (Math.min(nov_rect_w, nov_rect_h) * 100) + '%; height: auto; aspect-ratio: 1/1; position: absolute; border: 4px solid rgba(255,255,255,0.95); background: transparent; box-sizing: border-box; border-radius: 50%; pointer-events: auto;'",
+                    "left: 35%; bottom: 35%; width: 30%; height: auto; aspect-ratio: 1/1; position: absolute; border: 4px solid rgba(255,255,255,0.95); background: transparent; border-radius: 50%; pointer-events: auto;",
                 )
                 _start_drag = "if(window.novStartDrag){ $event.preventDefault(); $event.stopPropagation(); window.novStartDrag($event); }"
                 with html.Div(
