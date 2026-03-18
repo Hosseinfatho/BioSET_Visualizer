@@ -18,8 +18,8 @@ def floating_chatbot_section(state, ctrl):
             v_if="analysis_loaded && !right_drawer_open",
             fab=True,
             large=True,
-            dark=True,
-            color=("selected_tile ? 'primary' : ''",),
+            dark=("!selected_tile",),
+            color=("selected_tile ? 'white' : ''",),
             outlined=("!selected_tile",),
             style="position: absolute; bottom: 16px; right: 16px; z-index: 100;",
             click="chatbot_panel_open = !chatbot_panel_open",
@@ -31,8 +31,8 @@ def floating_chatbot_section(state, ctrl):
             v_if="analysis_loaded && right_drawer_open",
             fab=True,
             large=True,
-            dark=True,
-            color=("selected_tile ? 'primary' : ''",),
+            dark=("!selected_tile",),
+            color=("selected_tile ? 'white' : ''",),
             outlined=("!selected_tile",),
             style="position: absolute; bottom: 16px; right: 366px; z-index: 100;",
             click="chatbot_panel_open = !chatbot_panel_open",
@@ -64,10 +64,10 @@ def floating_chatbot_section(state, ctrl):
                     v_if="selected_tile",
                     classes="d-flex align-center mb-1",
             ):
-                vuetify.VIcon("mdi-grid", x_small=True, color="primary", classes="mr-1")
+                vuetify.VIcon("mdi-grid", x_small=True, color="white", classes="mr-1")
                 html.Span(
                     "Selected Tile",
-                    classes="text-caption primary--text font-weight-medium",
+                    classes="text-caption white--text font-weight-medium",
                     style="flex: 1;",
                 )
                 with vuetify.VBtn(
@@ -156,7 +156,7 @@ def floating_chatbot_section(state, ctrl):
                         click=ctrl.chatbot_label,
                         x_small=True,
                         outlined=True,
-                        color="primary",
+                        color="white",
                         disabled=("chatbot_loading",),
                         classes="mr-1",
                     )
@@ -166,7 +166,7 @@ def floating_chatbot_section(state, ctrl):
                         v_if="chatbot_labels_generated",
                         click="anchor_labels = !anchor_labels",
                         x_small=True,
-                        color="primary",
+                        color="white",
                         depressed=("anchor_labels",),
                         outlined=("!anchor_labels",),
                         classes="mr-1",
