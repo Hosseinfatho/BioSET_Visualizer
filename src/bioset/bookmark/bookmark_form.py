@@ -51,6 +51,15 @@ def bookmark_form_panel(state, ctrl):
                     placeholder="Comment",
                     **_FIELD,
                 )
+                vuetify.VCheckbox(
+                    v_model=("bookmark_save_chat_history",),
+                    label="Save chat history with bookmark",
+                    dense=True,
+                    hide_details=True,
+                    dark=True,
+                    color="#fff",
+                    class_="mt-1",
+                )
                 with html.Div(style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;"):
                     vuetify.VBtn("Cancel", text=True, x_small=True, click="bookmark_form_dialog = false", **_BTN)
                     with vuetify.VBtn(
@@ -116,6 +125,15 @@ def bookmark_form_panel(state, ctrl):
                     v_model=("bookmark_edit_comment",),
                     placeholder="Comment",
                     **_FIELD,
+                )
+                vuetify.VCheckbox(
+                    v_model=("bookmark_save_chat_history",),
+                    label="Save chat history with bookmark",
+                    dense=True,
+                    hide_details=True,
+                    dark=True,
+                    color="#fff",
+                    class_="mt-1",
                 )
         with html.Div(v_show=("bookmark_display_snapshot && !bookmark_form_dialog && bookmark_form_minimized", False)):
             with html.Div(
