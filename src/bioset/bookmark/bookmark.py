@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import datetime
 
@@ -96,8 +97,27 @@ def _add_caption_to_png(png_bytes: bytes, caption: str) -> bytes:
 def register_bookmark_callbacks(ctrl, state, _refs):
     """Register all bookmark_* and _bookmark_* methods on ctrl. Uses state and _refs."""
 
+    _snapshot_cache = {}
+
     def _bookmark_dataset_id():
         return getattr(state, "bookmark_dataset_id", None) or "default"
+
+    def _bookmark_snap_cache_key(dataset_id, title: str):
+        return (str(dataset_id), (title or "").strip())
+
+    def _bookmark_snap_cache_put(dataset_id, snap: dict | None):
+        if not snap or not isinstance(snap, dict):
+            return
+        t = (snap.get("title") or snap.get("id") or "").strip()
+        if not t:
+            return
+        _snapshot_cache[_bookmark_snap_cache_key(dataset_id, t)] = copy.deepcopy(snap)
+
+    def _bookmark_snap_cache_get(name: str):
+        return _snapshot_cache.get(_bookmark_snap_cache_key(_bookmark_dataset_id(), name or ""))
+
+    def _bookmark_snap_cache_drop_title(dataset_id, title: str):
+        _snapshot_cache.pop(_bookmark_snap_cache_key(dataset_id, title or ""), None)
 
     def _bookmark_merge_channels(restored, all_channels_list):
         """Merge snapshot channels with all dataset channels so user can add new channels in bookmark view."""
@@ -148,24 +168,139 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             _refs["view"].update()
 
     def bookmark_camera_animation_tick():
-        """Run each frame: deferred re-apply of bookmark camera, or smooth animation (20 steps) from current to JSON camera."""
+        """Progressively load channels, reveal one-by-one in channel list, then animate camera in 6 steps."""
         import time
         streamer = _refs.get("streamer")
         if not streamer or not streamer.renderer:
             return
+
+        pending = _refs.get("bookmark_streamer_pending") or []
+        _refs["bookmark_streamer_pending"] = pending
+        high_pending = _refs.get("bookmark_high_pending") or []
+        _refs["bookmark_high_pending"] = high_pending
+        high_started = bool(_refs.get("bookmark_high_loading_started", False))
+
+        loaded_channels = _refs.get("bookmark_loaded_channels")
+        if loaded_channels is None:
+            loaded_channels = set()
+            _refs["bookmark_loaded_channels"] = loaded_channels
+
+        active_order = [int(x) for x in (getattr(state, "active_channels", []) or [])]
+        visible = list(getattr(state, "visible_channel_ids", []) or [])
+
+        # 1) Load next pending channel (one per tick)
+        if pending:
+            try:
+                item = pending.pop(0)
+            except (IndexError, TypeError):
+                item = None
+            if item:
+                ch_id, color_hex, comp_target, roi_d = item
+                ch_id = int(ch_id)
+                # Optional LOD bookmarks: (ch_id, color_hex, component, roi_dict)
+                # No-LOD bookmarks: we store (ch_id, color_hex, None, None) and use streamer.activate_channel()
+                if comp_target is None or roi_d is None:
+                    streamer.activate_channel(ch_id, color_hex)
+                else:
+                    streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi_d, reset_camera=False)
+                _apply_channel_tfs_to_streamer(streamer)
+                loaded_channels.add(ch_id)
+
+        # 2) Reveal exactly one next loaded channel in the channels list
+        revealed = False
+        for ch_id in active_order:
+            if ch_id in loaded_channels and ch_id not in visible:
+                visible.append(ch_id)
+                # Update histogram entry if already computed inside streamer
+                try:
+                    if hasattr(streamer, "_channel_histograms") and streamer._channel_histograms and ch_id in streamer._channel_histograms:
+                        existing = getattr(state, "channel_histograms", {}) or {}
+                        state.channel_histograms = {**existing, str(ch_id): streamer._channel_histograms[ch_id]}
+                except Exception:
+                    pass
+                state.visible_channel_ids = visible
+                try:
+                    state.flush()
+                except Exception:
+                    pass
+                if _refs.get("view"):
+                    _refs["view"].update()
+                revealed = True
+                break
+
+        # 3) When all channels are visible+loaded, start camera animation (15-step, 5s)
+        if _refs.get("bookmark_camera_pending_start"):
+            camera_end = _refs.get("bookmark_camera_target_end")
+            channels_done = (not pending) and (len(visible) >= len(active_order))
+            if channels_done:
+                if camera_end and isinstance(camera_end, dict):
+                    cam = streamer.renderer.GetActiveCamera()
+                    start_cam = {
+                        "position": list(cam.GetPosition()),
+                        "focalPoint": list(cam.GetFocalPoint()),
+                        "viewUp": list(cam.GetViewUp()),
+                    }
+                    _num_cam_steps = 15
+                    _cam_total_s = 5.0
+                    _refs["bookmark_camera_animate"] = {
+                        "start": start_cam,
+                        "end": camera_end,
+                        "num_steps": _num_cam_steps,
+                        "step_index": 0,
+                        "step_interval": _cam_total_s / float(max(1, _num_cam_steps - 1)),
+                        "last_step_at": 0.0,
+                    }
+                _refs["bookmark_camera_pending_start"] = False
+                _refs["bookmark_high_loading_started"] = True
+                if _refs.get("view"):
+                    _refs["view"].update()
+
+        # If camera animation is not running anymore, but high-res upgrades remain, keep upgrading one-by-one.
+        if high_started and high_pending and not _refs.get("bookmark_camera_animate"):
+            try:
+                ch_id, color_hex, comp_target, roi_d = high_pending.pop(0)
+                ch_id = int(ch_id)
+                streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi_d, reset_camera=False)
+                _apply_channel_tfs_to_streamer(streamer)
+                if _refs.get("view"):
+                    _refs["view"].update()
+            except Exception:
+                pass
+
+        # 4) Camera apply-once (after animation ends)
         once = _refs.get("bookmark_camera_apply_once")
         if once and (time.time() - once["set_at"]) > 0.4:
             _apply_camera(streamer, once["camera"])
             _refs.pop("bookmark_camera_apply_once", None)
             if _refs.get("view"):
                 _refs["view"].update()
+            # If high-res upgrades are also finished, finalize expensive UI once.
+            if high_started and not _refs.get("bookmark_high_pending"):
+                state.bookmark_progressive_loading = False
+                try:
+                    if hasattr(ctrl, "update_heatmap_combinations"):
+                        ctrl.update_heatmap_combinations()
+                    if hasattr(ctrl, "update_upset_data_local"):
+                        ctrl.update_upset_data_local()
+                    if hasattr(ctrl, "update_bar_data_local"):
+                        ctrl.update_bar_data_local()
+                    if hasattr(ctrl, "nov_recompute_scores_if_visible"):
+                        ctrl.nov_recompute_scores_if_visible()
+                except Exception:
+                    pass
             return
+
+        # 5) Camera animation steps
         anim = _refs.get("bookmark_camera_animate")
         if not anim:
             return
-        elapsed = time.time() - anim["start_time"]
-        duration = max(anim.get("duration", 20.0), 0.01)
-        if elapsed >= duration:
+        now = time.time()
+        n = max(1, int(anim.get("num_steps", 15)))
+        interval = max(0.05, float(anim.get("step_interval", 0.5)))
+        idx = int(anim.get("step_index", 0))
+        last = float(anim.get("last_step_at", 0.0))
+
+        if idx >= n:
             _apply_camera(streamer, anim["end"])
             _refs.pop("bookmark_camera_animate", None)
             if _refs.get("view"):
@@ -175,16 +310,39 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                     streamer.on_interaction_end()
                 except Exception:
                     pass
-            import time as _time
-            _refs["bookmark_camera_apply_once"] = {"camera": anim["end"], "set_at": _time.time()}
+            _refs["bookmark_camera_apply_once"] = {"camera": anim["end"], "set_at": time.time()}
             return
-        t = min(1.0, elapsed / duration)
+
+        if idx == 0:
+            idx = 1
+        else:
+            if now - last < interval:
+                return
+            idx = idx + 1
+
+        anim["step_index"] = idx
+        anim["last_step_at"] = now
+        t = idx / float(n)
         start = anim["start"]
         end = anim["end"]
         pos = [start["position"][i] + t * (end["position"][i] - start["position"][i]) for i in range(3)]
         focal = [start["focalPoint"][i] + t * (end["focalPoint"][i] - start["focalPoint"][i]) for i in range(3)]
         viewup = [start["viewUp"][i] + t * (end["viewUp"][i] - start["viewUp"][i]) for i in range(3)]
         _apply_camera(streamer, {"position": pos, "focalPoint": focal, "viewUp": viewup})
+        if _refs.get("view"):
+            _refs["view"].update()
+
+        # Upgrade one channel to exact bookmark LOD/ROI after each camera step.
+        if high_started and high_pending:
+            try:
+                ch_id, color_hex, comp_target, roi_d = high_pending.pop(0)
+                ch_id = int(ch_id)
+                streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi_d, reset_camera=False)
+                _apply_channel_tfs_to_streamer(streamer)
+                if _refs.get("view"):
+                    _refs["view"].update()
+            except Exception:
+                pass
 
     def _apply_nov_view(streamer, nov_data):
         """Apply NOV view: set lens, sync volumes, apply camera to nov_renderer, open popup."""
@@ -304,6 +462,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                 "channels_active_line": "Channels active: " + (channels_active if channels_active != "—" else "—"),
                 "description_line": "Description: " + (desc if desc else "—"),
             })
+            _bookmark_snap_cache_put(dataset_id, s)
         state.bookmark_list_items = items
 
     def bookmark_open_snapshot(name=None):
@@ -313,7 +472,11 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             print("[callbacks] Bookmark: no name selected")
             return
         dataset_id = _bookmark_dataset_id()
-        snap = load_snapshot_by_name(name, dataset_id)
+        snap = _bookmark_snap_cache_get(str(name).strip())
+        if not snap:
+            snap = load_snapshot_by_name(name, dataset_id)
+            if snap:
+                _bookmark_snap_cache_put(dataset_id, snap)
         if not snap:
             print(f"[callbacks] Bookmark: snapshot not found: {name}")
             return
@@ -333,68 +496,18 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             }]
         state.bookmark_current_view_index = 0
         v0 = views[0]
-        # 1) Load channels and colors first (state.channels, active_channels, visible)
+        # 1) Load channels and colors first (state.channels, active_channels, then progressively reveal)
+        state.bookmark_progressive_loading = True
+        state.channel_histograms = {}
+        target_active_channels = [int(x) for x in (v0.get("active_channels") or [])]
         restored = _normalize_channels(v0.get("channels"))
         state.channels = _bookmark_merge_channels(restored, all_channels_before)
-        state.active_channels = list(v0.get("active_channels") or [])
-        visible = list(getattr(state, "visible_channel_ids", []) or [])
-        for ch_id in state.active_channels:
-            if ch_id not in visible:
-                visible.append(ch_id)
-        state.visible_channel_ids = visible
+        state.active_channels = target_active_channels
+        state.visible_channel_ids = ([target_active_channels[0]] if target_active_channels else [])
         if v0.get("background"):
             state.bg_color = v0["background"]
             if hasattr(ctrl, "update_background_color"):
                 ctrl.update_background_color(v0["background"])
-        # 2) Load LOD (same comp/distance) and channel TF ranges (filter range) from bookmark
-        lod = v0.get("optional_LOD") or snap.get("optional_LOD") or {}
-        comp_target = lod.get("component")
-        roi = lod.get("roi")
-        has_lod = comp_target is not None and isinstance(roi, dict)
-        if streamer and has_lod and state.active_channels:
-            max_comp = getattr(streamer.cfg, "max_component", 6)
-            min_comp = getattr(streamer.cfg, "min_component", 0)
-            comp_target = max(min_comp, min(max_comp, int(comp_target)))
-            for ch_id in list(streamer.get_active_channels()):
-                streamer.deactivate_channel(ch_id)
-            for ch_id in state.active_channels:
-                ch_id = int(ch_id)
-                color_hex = "#FFFFFF"
-                for ch in state.channels:
-                    if ch.get("id") == ch_id:
-                        color_hex = ch.get("color") or color_hex
-                        break
-                streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi, reset_camera=False)
-            _apply_channel_tfs_to_streamer(streamer)
-        else:
-            if hasattr(ctrl, "update_active_channels"):
-                ctrl.update_active_channels(state.active_channels)
-            _apply_channel_tfs_to_streamer(streamer)
-        # 3) Go to camera position: animate from current (start) to JSON camera (end) in 20 steps, smooth
-        camera_data = v0.get("camera") or snap.get("camera") or {}
-        if v0.get("nov_view"):
-            _apply_nov_view(streamer, v0["nov_view"])
-        else:
-            if camera_data and (camera_data.get("position") or camera_data.get("focalPoint")):
-                import time as _time
-                cam = streamer.renderer.GetActiveCamera()
-                start_cam = {
-                    "position": list(cam.GetPosition()),
-                    "focalPoint": list(cam.GetFocalPoint()),
-                    "viewUp": list(cam.GetViewUp()),
-                }
-                end_cam = {
-                    "position": [float(x) for x in (camera_data.get("position") or start_cam["position"])[:3]],
-                    "focalPoint": [float(x) for x in (camera_data.get("focalPoint") or start_cam["focalPoint"])[:3]],
-                    "viewUp": [float(x) for x in (camera_data.get("viewUp") or start_cam["viewUp"])[:3]],
-                }
-                _refs["bookmark_camera_animate"] = {
-                    "start": start_cam,
-                    "end": end_cam,
-                    "start_time": _time.time(),
-                    "duration": 10.0,
-                    "num_steps": 10,
-                }
         state.bookmark_edit_title = snap.get("title") or ""
         state.bookmark_edit_category = (snap.get("category") or "").strip() or ""
         state.bookmark_edit_description = v0.get("notes") or ""
@@ -412,6 +525,117 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         }
         state.bookmark_display_snapshot = None
         state.bookmark_display_snapshot = disp
+        _refs["bookmark_streamer_pending"] = []
+        _refs["bookmark_loaded_channels"] = set()
+        _refs["bookmark_camera_pending_start"] = False
+        _refs["bookmark_camera_target_end"] = None
+        _refs.pop("bookmark_camera_animate", None)
+        _refs.pop("bookmark_camera_apply_once", None)
+        try:
+            state.flush()
+        except Exception:
+            pass
+        if _refs.get("view"):
+            _refs["view"].update()
+
+        # 2) Streamer: drop channels not in bookmark; progressively load remaining channels (one per animation tick)
+        lod = v0.get("optional_LOD") or snap.get("optional_LOD") or {}
+        comp_target = lod.get("component")
+        roi = lod.get("roi")
+        has_lod = comp_target is not None and isinstance(roi, dict)
+        if streamer and state.active_channels:
+            if has_lod:
+                max_comp = getattr(streamer.cfg, "max_component", 6)
+                min_comp = getattr(streamer.cfg, "min_component", 0)
+                comp_target = max(min_comp, min(max_comp, int(comp_target)))
+                roi_d = roi
+            else:
+                comp_target = None
+                roi_d = None
+
+            target_ids = {int(x) for x in state.active_channels}
+            for ch_id in list(streamer.get_active_channels()):
+                if ch_id not in target_ids:
+                    streamer.deactivate_channel(ch_id)
+
+            active_order = [int(x) for x in (state.active_channels or [])]
+            first_id = active_order[0] if active_order else None
+
+            def _color_for(ch_id: int) -> str:
+                for ch in state.channels:
+                    if ch.get("id") == ch_id:
+                        return ch.get("color") or "#FFFFFF"
+                return "#FFFFFF"
+
+            # Phase A (fast): activate channels one-by-one (low-res) and reveal them in list.
+            # Phase B (after low phase): upgrade each channel to exact LOD/ROI using load_channel_at_lod.
+            low_loaded = set()
+            low_pending = []
+            high_pending = []
+
+            # Ensure first visible channel is active immediately.
+            if first_id is not None:
+                if first_id in streamer.get_active_channels():
+                    low_loaded.add(first_id)
+                else:
+                    streamer.activate_channel(first_id, _color_for(first_id))
+                    low_loaded.add(first_id)
+
+            # Prepare remaining channels.
+            for ch_id in active_order:
+                color_hex = _color_for(ch_id)
+
+                if has_lod:
+                    # Upgrade only if channel is not already at the exact LOD/ROI.
+                    if not streamer.channel_same_lod_roi(ch_id, comp_target, roi_d):
+                        high_pending.append((ch_id, color_hex, comp_target, roi_d))
+
+                # Low-res list phase: activate only those not currently active.
+                if ch_id not in streamer.get_active_channels():
+                    if ch_id != first_id:
+                        low_pending.append((ch_id, color_hex, None, None))
+                else:
+                    low_loaded.add(ch_id)
+
+            # Make sure TFs match bookmark (color + range) for whatever is already loaded.
+            _apply_channel_tfs_to_streamer(streamer)
+
+            _refs["bookmark_streamer_pending"] = low_pending
+            _refs["bookmark_loaded_channels"] = low_loaded
+            _refs["bookmark_high_pending"] = high_pending
+
+            # If the first visible channel already has histograms computed, show them immediately.
+            try:
+                if first_id is not None and hasattr(streamer, "_channel_histograms") and streamer._channel_histograms:
+                    if first_id in streamer._channel_histograms:
+                        state.channel_histograms = {str(first_id): streamer._channel_histograms[first_id]}
+            except Exception:
+                pass
+
+        # 3) Camera / NOV: postpone final camera move until all bookmark channels are revealed in the list
+        camera_data = v0.get("camera") or snap.get("camera") or {}
+        if v0.get("nov_view"):
+            _apply_nov_view(streamer, v0["nov_view"])
+        else:
+            # end camera is stored; start camera is computed later (after channels are revealed)
+            end_cam = None
+            if streamer and streamer.renderer and camera_data and (
+                    camera_data.get("position") or camera_data.get("focalPoint")):
+                cam = streamer.renderer.GetActiveCamera()
+                start_cam = {
+                    "position": list(cam.GetPosition()),
+                    "focalPoint": list(cam.GetFocalPoint()),
+                    "viewUp": list(cam.GetViewUp()),
+                }
+                end_cam = {
+                    "position": [float(x) for x in (camera_data.get("position") or start_cam["position"])[:3]],
+                    "focalPoint": [float(x) for x in (camera_data.get("focalPoint") or start_cam["focalPoint"])[:3]],
+                    "viewUp": [float(x) for x in (camera_data.get("viewUp") or start_cam["viewUp"])[:3]],
+                }
+            _refs["bookmark_camera_target_end"] = end_cam
+
+        # Activate progressive completion logic in tick loop
+        _refs["bookmark_camera_pending_start"] = True
         try:
             state.flush()
         except Exception:
@@ -1003,6 +1227,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             snap["views"] = views
             snap["updated"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             save_snapshot(snap, dataset_id)
+            _bookmark_snap_cache_put(dataset_id, snap)
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -1133,6 +1358,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             snapshot["nov_view"] = cap["nov_view"]
         dataset_id = _bookmark_dataset_id()
         save_snapshot(snapshot, dataset_id)
+        _bookmark_snap_cache_put(dataset_id, snapshot)
         # Capture thumbnail from current view and save in same category folder with same name
         streamer = _refs.get("streamer")
         if streamer:
@@ -1233,6 +1459,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if (old_title, old_category) != (new_title, new_category):
             delete_snapshot_in_category(old_title, dataset_id, old_category)
         save_snapshot(snap, dataset_id)
+        if new_title != old_title:
+            _bookmark_snap_cache_drop_title(dataset_id, old_title)
+        _bookmark_snap_cache_put(dataset_id, snap)
         # Update thumbnail from current view
         streamer = _refs.get("streamer")
         if streamer:
@@ -1300,6 +1529,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if getattr(state, "bookmark_flag_popup", None) and (getattr(state, "bookmark_flag_popup", {}) or {}).get("name") == title:
             bookmark_close_flag_popup()
 
+        _bookmark_snap_cache_drop_title(dataset_id, title)
         bookmark_refresh_names()
         bookmark_refresh_categories()
         bookmark_refresh_list()
@@ -1328,6 +1558,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         snap["views"] = views
         snap["comments"] = views[0].get("comments", [])
         save_snapshot(snap, dataset_id)
+        _bookmark_snap_cache_put(dataset_id, snap)
         state.bookmark_display_snapshot = {**disp, "comments": views[idx].get("comments", []), "updated": now,
                                            "views": views}
         state.bookmark_edit_comment = ""
