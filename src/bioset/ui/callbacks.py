@@ -5,8 +5,6 @@ import hashlib
 import os
 import tempfile
 
-import requests
-
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
@@ -829,6 +827,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             mapped_combinations.append({
                 "channels": combination.channels,
                 "iou": combination.iou,
+                "overlap_coeff": combination.overlap_coeff,
             })
 
         state.upset_data = mapped_combinations
@@ -882,6 +881,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 mapped_combinations.append({
                     "channels": combination.channels,
                     "iou": combination.iou,
+                    "overlap_coeff": combination.overlap_coeff,
                 })
 
             state.upset_data_local = mapped_combinations

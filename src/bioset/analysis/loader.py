@@ -5,9 +5,9 @@ import json
 import sqlite3
 import tempfile
 from dataclasses import dataclass, field
+from itertools import combinations as iter_combinations
 from pathlib import Path
 from typing import Optional
-from itertools import combinations as iter_combinations
 
 
 @dataclass
@@ -74,6 +74,8 @@ class AnalysisLoader:
         self.metadata: Optional[AnalysisMetadata] = None
         self._loaded = False
         self._total_tiles_cache: dict[int, int] = {}  # level -> total tile count
+        self._channel_totals_voxels_cache: dict[
+            tuple[str, float, int], int] = {}  # (channel, dilation, level) -> total voxels
     
     @property
     def is_loaded(self) -> bool:
@@ -836,6 +838,11 @@ class AnalysisLoader:
         """Get total voxels for a single channel across all tiles."""
         if not self.is_loaded:
             return 0
+
+        cache_entry = (channel, dilation, level)
+        if cache_entry in self._channel_totals_voxels_cache:
+            return self._channel_totals_voxels_cache[cache_entry]
+            
         try:
             cursor = self._conn.execute('''
                 SELECT SUM(voxel_count) as total
@@ -843,7 +850,10 @@ class AnalysisLoader:
                 WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
             ''', (channel, dilation, level))
             row = cursor.fetchone()
-            return row["total"] if row and row["total"] else 0
+            total = row["total"] if row and row["total"] else 0
+
+            self._channel_totals_voxels_cache[cache_entry] = total
+            return total
         except sqlite3.OperationalError as e:
             if "no such table: channel_stats" in str(e):
                 return 0
@@ -888,6 +898,7 @@ class AnalysisLoader:
         self._loaded = False
         self.metadata = None
         self._total_tiles_cache.clear()
+        self._channel_totals_voxels_cache.clear()
     
     def __del__(self):
         self.close()

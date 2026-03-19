@@ -143,6 +143,7 @@ def right_drawer(state, ctrl):
                                 :dataLocal="upset_data_local"
                                 :channelData="channels"
                                 :view-mode="upset_view_mode"
+                                :metric="upset_metric"
                                 :offset="upset_expanded_offset"
                                 :limit="upset_expanded_limit"
                                 :width="1200"
@@ -159,6 +160,28 @@ def right_drawer(state, ctrl):
                     vuetify.VDivider()
                     
                     with vuetify.VCardText():
+                        with html.Div(classes="mb-4 mt-2"):
+                            html.Div("Metric", classes="text-caption mb-2 text-left", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                vuetify.VBtn(
+                                    "IoU",
+                                    click="upset_metric = 'iou'",
+                                    color=("upset_metric === 'iou' ? 'white' : 'grey darken-3'",),
+                                    dark=("upset_metric !== 'iou'",),
+                                    title="Intersection over Union",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                                vuetify.VBtn(
+                                    "Overlap Coefficient",
+                                    click="upset_metric = 'overlap_coeff'",
+                                    color=("upset_metric === 'overlap_coeff' ? 'white' : 'grey darken-3'",),
+                                    dark=("upset_metric !== 'overlap_coeff'",),
+                                    title="Overlap Coefficient",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+
                         with html.Div(classes="mb-4 mt-2"):
                             html.Div("Minimum Number of Channels", classes="text-caption mb-2 text-left", style="color: white;")
                             with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
@@ -223,6 +246,7 @@ def right_drawer(state, ctrl):
                     :dataLocal="upset_data_local"
                     :channelData="channels"
                     :view-mode="upset_view_mode"
+                    :metric="upset_metric"
                     :offset="upset_offset"
                     :limit="upset_limit"
                     @click="upset_click = $event"

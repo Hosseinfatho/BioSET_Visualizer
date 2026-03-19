@@ -171,6 +171,7 @@ def init_state(state):
     state.setdefault("upset_filtered_channels", []) # Channels shown in filter list
     state.setdefault("upset_filter_dialog", False)
     state.setdefault("upset_expanded", False)
+    state.setdefault("upset_metric", "iou")  # one of ["iou", "overlap_coeff"]
     state.setdefault("upset_min_channels", 2)  # default minimum combination limit
 
     # Bar Plot filtering
@@ -473,6 +474,14 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] UpSet min channels changed: {upset_min_channels}")
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
+
+    @state.change("upset_metric")
+    def on_upset_metric_change(upset_metric, **kwargs):
+        print(f"[state] UpSet metric changed: {upset_metric}")
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data()
+        if hasattr(ctrl, 'update_upset_data_local'):
+            ctrl.update_upset_data_local()
 
     @state.change("bar_selected_channels")
     def on_bar_selected_channels_change(bar_selected_channels, **kwargs):
