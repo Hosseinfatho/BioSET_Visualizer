@@ -152,7 +152,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             })
         return out
 
-    def _apply_camera(streamer, c):
+    def _apply_camera(streamer, c, *, reset_clipping_range: bool = True, update_view: bool = True):
         """Apply camera dict (position, focalPoint, viewUp) to streamer and refresh view."""
         if not streamer or not getattr(streamer, "renderer", None) or not streamer.renderer or not c:
             return
@@ -163,8 +163,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             cam.SetFocalPoint(c["focalPoint"][:3])
         if c.get("viewUp") and len(c.get("viewUp", [])) >= 3:
             cam.SetViewUp(c["viewUp"][:3])
-        streamer.renderer.ResetCameraClippingRange()
-        if _refs.get("view"):
+        if reset_clipping_range:
+            streamer.renderer.ResetCameraClippingRange()
+        if update_view and _refs.get("view"):
             _refs["view"].update()
 
     def bookmark_camera_animation_tick():
@@ -255,7 +256,16 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                 if _refs.get("view"):
                     _refs["view"].update()
 
-        # If camera animation is not running anymore, but high-res upgrades remain, keep upgrading one-by-one.
+        # 4) Camera apply-once (after animation ends)
+        once = _refs.get("bookmark_camera_apply_once")
+        if once and (time.time() - once["set_at"]) > 0.4:
+            _apply_camera(streamer, once["camera"], reset_clipping_range=True, update_view=True)
+            _refs.pop("bookmark_camera_apply_once", None)
+            # After the final camera position is applied, start upgrading channels one-by-one.
+            return
+
+        # High-res upgrades: do them only after camera motion has finished,
+        # and do them one-by-one per tick to keep UI responsive.
         if high_started and high_pending and not _refs.get("bookmark_camera_animate"):
             try:
                 ch_id, color_hex, comp_target, roi_d = high_pending.pop(0)
@@ -267,14 +277,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             except Exception:
                 pass
 
-        # 4) Camera apply-once (after animation ends)
-        once = _refs.get("bookmark_camera_apply_once")
-        if once and (time.time() - once["set_at"]) > 0.4:
-            _apply_camera(streamer, once["camera"])
-            _refs.pop("bookmark_camera_apply_once", None)
-            if _refs.get("view"):
-                _refs["view"].update()
-            # If high-res upgrades are also finished, finalize expensive UI once.
             if high_started and not _refs.get("bookmark_high_pending"):
                 state.bookmark_progressive_loading = False
                 try:
@@ -288,6 +290,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                         ctrl.nov_recompute_scores_if_visible()
                 except Exception:
                     pass
+
             return
 
         # 5) Camera animation steps
@@ -301,10 +304,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         last = float(anim.get("last_step_at", 0.0))
 
         if idx >= n:
-            _apply_camera(streamer, anim["end"])
+            _apply_camera(streamer, anim["end"], reset_clipping_range=True, update_view=True)
             _refs.pop("bookmark_camera_animate", None)
-            if _refs.get("view"):
-                _refs["view"].update()
             if getattr(streamer, "on_interaction_end", None):
                 try:
                     streamer.on_interaction_end()
@@ -328,21 +329,55 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         pos = [start["position"][i] + t * (end["position"][i] - start["position"][i]) for i in range(3)]
         focal = [start["focalPoint"][i] + t * (end["focalPoint"][i] - start["focalPoint"][i]) for i in range(3)]
         viewup = [start["viewUp"][i] + t * (end["viewUp"][i] - start["viewUp"][i]) for i in range(3)]
-        _apply_camera(streamer, {"position": pos, "focalPoint": focal, "viewUp": viewup})
-        if _refs.get("view"):
-            _refs["view"].update()
+        _apply_camera(
+            streamer,
+            {"position": pos, "focalPoint": focal, "viewUp": viewup},
+            reset_clipping_range=True,
+            update_view=True,
+        )
 
-        # Upgrade one channel to exact bookmark LOD/ROI after each camera step.
-        if high_started and high_pending:
-            try:
-                ch_id, color_hex, comp_target, roi_d = high_pending.pop(0)
-                ch_id = int(ch_id)
-                streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi_d, reset_camera=False)
-                _apply_channel_tfs_to_streamer(streamer)
-                if _refs.get("view"):
-                    _refs["view"].update()
-            except Exception:
-                pass
+        # Background LOD upgrade scheduling (coarse→fine) during camera motion.
+        # This avoids blocking the UI tick loop while letting higher resolution appear as you zoom in.
+        try:
+            last_at = float(_refs.get("bookmark_last_bg_lod_schedule_at", 0.0) or 0.0)
+            if now - last_at > 0.6:
+                from bioset.streaming.lod import camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
+                from bioset.streaming.streamer import LoadRequest
+
+                ren = streamer.renderer
+                if ren:
+                    dist = camera_distance_to_focal(ren.GetActiveCamera())
+                    desired_comp = choose_component(
+                        dist,
+                        streamer.cfg.distance_rules,
+                        min_component=streamer.cfg.min_component,
+                        max_component=streamer.cfg.max_component,
+                    )
+                    spacing = streamer._spacing_for_component(desired_comp)
+                    zdim, ydim, xdim = streamer._dims_for_component(desired_comp)
+                    bounds = streamer._volume_bounds_world(desired_comp)
+                    roi = compute_visible_xy_roi_vox(
+                        streamer.renderer,
+                        bounds_world=bounds,
+                        sx=spacing.sx,
+                        sy=spacing.sy,
+                        x_dim=xdim,
+                        y_dim=ydim,
+                        margin_vox=streamer.cfg.roi_margin_vox,
+                    )
+                    req = LoadRequest(component=desired_comp, roi=roi, timestamp=time.time())
+                    streamer._schedule_load(req)
+                    _refs["bookmark_last_bg_lod_schedule_at"] = now
+        except Exception:
+            pass
+
+        # NOTE: high-res channel upgrades are intentionally NOT done during camera motion
+        # to avoid blocking the render/tick loop and freezing the camera.
+
+        # When camera motion is finished, the tick loop will naturally proceed to the
+        # `bookmark_camera_apply_once` branch, and the next tick can upgrade channels safely.
+
+        # (High-res upgrades block the tick loop, so they must be delayed until after camera animation.)
 
     def _apply_nov_view(streamer, nov_data):
         """Apply NOV view: set lens, sync volumes, apply camera to nov_renderer, open popup."""
