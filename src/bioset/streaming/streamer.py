@@ -429,6 +429,21 @@ class VolumeStreamer:
         self.renderer.ResetCameraClippingRange()
         self._render()
 
+    def channel_same_lod_roi(self, channel_id: int, component: int, roi_dict: dict) -> bool:
+        """True if this channel is already shown at the same component and XY ROI (bookmark restore fast path)."""
+        roi = ROI(
+            x0=int(roi_dict.get("x0", 0)),
+            x1=int(roi_dict.get("x1", 1)),
+            y0=int(roi_dict.get("y0", 0)),
+            y1=int(roi_dict.get("y1", 1)),
+        )
+        if channel_id not in self._active_channels:
+            return False
+        if channel_id not in self.state or channel_id not in self.volumes:
+            return False
+        st = self.state[channel_id]
+        return st.component == component and st.roi == roi
+
     def load_channel_at_lod(
             self,
             channel_id: int,
@@ -446,6 +461,10 @@ class VolumeStreamer:
         )
         self._channel_colors[channel_id] = self._hex_to_rgb(color_hex)
         self._active_channels.add(channel_id)
+        if self.channel_same_lod_roi(channel_id, component, roi_dict):
+            self.renderer.ResetCameraClippingRange()
+            self._render()
+            return
         self._load_and_display_channel(channel_id, component, roi, reset_camera=reset_camera)
 
     def get_active_channels(self) -> set[int]:

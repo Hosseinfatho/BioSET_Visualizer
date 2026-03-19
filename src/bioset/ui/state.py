@@ -54,6 +54,7 @@ def init_state(state):
     
     # Bookmark (saved views / snapshots: name, open, new form)
     state.setdefault("bookmark_open", False)
+    state.setdefault("bookmark_progressive_loading", False)  # when True: skip streamer activation from active_channels handler
     state.setdefault("bookmark_snapshot_names", [])
     state.setdefault("bookmark_selected_name", "Name")
     state.setdefault("bookmark_categories", [])
@@ -300,6 +301,12 @@ def register_state_change_handlers(state, ctrl):
     @state.change("active_channels")
     def on_active_channels_change(active_channels, **kwargs):
         print(f"[state] Active channels changed: {active_channels}")
+        # When loading a bookmark progressively, bookmark.py handles streamer loading itself.
+        # Skipping ctrl.update_active_channels avoids bulk channel loads that defeat the progressive UX.
+        if getattr(state, "bookmark_progressive_loading", False):
+            # Defer expensive UI recomputations until progressive loading completes.
+            return
+
         if hasattr(ctrl, 'update_active_channels'):
             ctrl.update_active_channels(active_channels)
         if hasattr(ctrl, 'update_heatmap_combinations'):

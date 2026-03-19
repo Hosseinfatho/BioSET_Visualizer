@@ -486,6 +486,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         currently_active = streamer.get_active_channels()
         new_active = set(active_channels)
+        was_empty_before = not currently_active
         
         to_deactivate = currently_active - new_active
         for channel_id in to_deactivate:
@@ -495,6 +496,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 mesh_mgr.deactivate_channel_mesh(channel_id)
 
         to_activate = new_active - currently_active
+        did_set_initial_cam_dist = False
+        desired_dist = 2237.6
         for channel_id in to_activate:
             color_hex = "#FFFFFF"
             for ch in state.channels:
@@ -503,6 +506,30 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
             print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
             streamer.activate_channel(channel_id, color_hex)
+
+            # After first-ever channel activation, adjust initial camera distance to improve first view.
+            # This affects the "select channels from list" flow (not bookmark flow).
+            if was_empty_before and (not did_set_initial_cam_dist) and getattr(streamer, "renderer", None):
+                try:
+                    cam = streamer.renderer.GetActiveCamera()
+                    pos = cam.GetPosition()
+                    fp = cam.GetFocalPoint()
+                    dx, dy, dz = (pos[0] - fp[0]), (pos[1] - fp[1]), (pos[2] - fp[2])
+                    cur = (dx * dx + dy * dy + dz * dz) ** 0.5
+                    if cur > 1e-9:
+                        s = desired_dist / cur
+                        new_pos = (fp[0] + dx * s, fp[1] + dy * s, fp[2] + dz * s)
+                        cam.SetPosition(new_pos[0], new_pos[1], new_pos[2])
+                        cam.Modified()
+                        streamer.renderer.ResetCameraClippingRange()
+                        # Keep streamer internal "initial camera" consistent for later reset.
+                        if getattr(streamer, "_initial_camera", None):
+                            streamer._initial_camera["position"] = list(new_pos)
+                    if _refs["view"]:
+                        _refs["view"].update()
+                    did_set_initial_cam_dist = True
+                except Exception:
+                    pass
             if (state.selected_tile and mesh_mgr and mesh_mgr.is_available
                     and channel_id not in state.surface_hidden_channels):
                 tile_x = state.selected_tile["tile_x"]
