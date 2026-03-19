@@ -53,6 +53,14 @@ def bookmark_form_panel(state, ctrl):
                 )
                 with html.Div(style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;"):
                     vuetify.VBtn("Cancel", text=True, x_small=True, click="bookmark_form_dialog = false", **_BTN)
+                    with vuetify.VBtn(
+                        icon=True,
+                        x_small=True,
+                        click=ctrl.chatbot_suggest_bookmark,
+                            disabled=("chatbot_loading || !chatbot_authenticated",),
+                            dark=True,
+                    ):
+                        vuetify.VIcon("mdi-comment-text-outline", x_small=True)
                     vuetify.VBtn(
                         "Save",
                         x_small=True,

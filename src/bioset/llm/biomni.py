@@ -231,3 +231,33 @@ class BiomniLocalClient:
         print(f"[biomni] POST /plot  type={plot_payload.get('type')}  view_mode={plot_payload.get('view_mode')}")
         resp = requests.post(f"{self.base_url}/plot", json=payload, timeout=300)
         return _check_response(resp)
+
+    def suggest_bookmark(
+        self,
+        markers: list[str],
+        mode: str = _DEFAULT_MODE,
+        image: Optional[str] = None,
+        channel_stats: Optional[dict] = None,
+    ) -> dict:
+        """Call POST /bookmark to suggest bookmark form text.
+
+        Args:
+            markers:       active marker list with colors
+            mode:          "minimal" | "db" | "full"
+            image:         optional base64-encoded screenshot
+            channel_stats: optional region statistics payload
+
+        Returns dict with keys "title", "category", and "description".
+        """
+        if not self.initialized:
+            raise RuntimeError("Client not initialised. Call init() first.")
+
+        payload: dict = {"markers": markers, "mode": mode}
+        if image:
+            payload["image"] = image
+        if channel_stats is not None:
+            payload["channel_stats"] = channel_stats
+
+        print(f"[biomni] POST /bookmark  markers={len(markers)}  image={bool(image)}")
+        resp = requests.post(f"{self.base_url}/bookmark", json=payload, timeout=300)
+        return _check_response(resp)

@@ -1338,6 +1338,67 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.chatbot_loading = False
 
+    def chatbot_suggest_bookmark():
+        """Suggest bookmark title/category/description and prefill the bookmark form."""
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot suggest bookmark - Biomni not initialised")
+            return
+
+        markers = _build_markers()
+        if not markers:
+            msg = "Please select channels first."
+            state.chatbot_messages = list(state.chatbot_messages) + [
+                {"role": "error", "content": msg}
+            ]
+            print(f"[callbacks] {msg}")
+            return
+
+        state.chatbot_panel_open = True
+        state.chatbot_messages = list(state.chatbot_messages) + [
+            {"role": "user", "content": "Suggest bookmark text"}
+        ]
+        state.chatbot_loading = True
+
+        try:
+            client = _get_biomni_client()
+            screenshot_base64 = capture_screenshot()
+            result = client.suggest_bookmark(
+                markers=markers,
+                mode=state.biomni_mode,
+                image=screenshot_base64,
+            )
+
+            suggested_title = (result.get("title") or "").strip()
+            suggested_category = (result.get("category") or "").strip() or "Uncategorized"
+            suggested_description = (result.get("description") or "").strip()
+
+            if hasattr(ctrl, "bookmark_open_new_form"):
+                ctrl.bookmark_open_new_form()
+            else:
+                state.bookmark_form_dialog = True
+
+            if suggested_title:
+                state.bookmark_form_name = suggested_title
+            state.bookmark_form_category = suggested_category
+            state.bookmark_form_description = suggested_description
+            state.bookmark_open = True
+
+            state.chatbot_messages = list(state.chatbot_messages) + [
+                {
+                    "role": "assistant",
+                    "content": f"Bookmark suggestion applied: {state.bookmark_form_name} ({suggested_category}).",
+                }
+            ]
+            print("[callbacks] Biomni bookmark suggestion applied to bookmark form")
+        except Exception as e:
+            error_msg = f"Error: {e}"
+            print(f"[callbacks] Biomni bookmark suggestion error: {error_msg}")
+            state.chatbot_messages = list(state.chatbot_messages) + [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+
     def chatbot_clear():
         """Clear the chatbot conversation history."""
         print("[callbacks] Clearing chatbot messages")
@@ -1501,7 +1562,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         setattr(interactor, "_bioset_right_click_picker_registered", True)
 
         picker = vtkPropPicker()
-
+        
         def _on_right_button_press(obj, event):
             click_pos = obj.GetEventPosition()
             heatmap = _refs.get("heatmap")
@@ -1939,6 +2000,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_suggest = chatbot_suggest
+    ctrl.chatbot_suggest_bookmark = chatbot_suggest_bookmark
     ctrl.chatbot_explain_upset = chatbot_explain_upset
     ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear
