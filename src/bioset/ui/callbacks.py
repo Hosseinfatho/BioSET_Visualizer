@@ -5,6 +5,8 @@ import hashlib
 import os
 import tempfile
 
+import requests
+
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
@@ -19,6 +21,7 @@ from ..report.content_sections.General import GeneralContent, General
 
 def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
+    from bioset.ui.utils.scale_bar import compute_scale_bar
 
     def _hex_to_rgb_tuple(color_hex: str):
         """Convert '#RRGGBB' to (r, g, b) floats in [0,1]."""
@@ -56,6 +59,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the streamer reference."""
         _refs["streamer"] = streamer
         print(f"[callbacks] Streamer set: {streamer}")
+        _attach_main_scale_bar_observer(streamer)
+        update_main_scale_bar()
 
     def set_heatmap(heatmap):
         """Set the heatmap renderer reference."""
@@ -79,6 +84,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     ctrl.set_interactor = set_interactor
 
+    def set_renderer(renderer):
+        """Set the main VTK renderer reference (used by label scene manager)."""
+        _refs["renderer"] = renderer
+
     def set_heatmap_lod_auto_mode(enabled: bool):
         """Set heatmap LOD auto mode (controlled by UI toggle)."""
         heatmap_lod = _refs.get("heatmap_lod")
@@ -88,10 +97,53 @@ def register_callbacks(ctrl, state, view, streamer=None):
     register_bookmark_callbacks(ctrl, state, _refs)
     register_nov_callbacks(ctrl, state, _refs)
 
-    def set_renderer(renderer):
-        """Set the VTK renderer reference (needed for label placement)."""
-        _refs["renderer"] = renderer
-        print(f"[callbacks] Renderer set for label system")
+    def update_main_scale_bar():
+        """Compute/update scale bar for the main (non-NOV) view. Uses current LOD (comp) from streamer for accurate µm per voxel."""
+        s = _refs.get("streamer")
+        if not s or not getattr(s, "renderer", None) or not getattr(s, "render_window", None):
+            state.main_scale_bar_label = ""
+            state.main_scale_bar_width_px = 0
+            return
+        # Current LOD: same comp that is printed in terminal when zoom/load updates
+        comp = getattr(s, "_last_component", None)
+        if comp is None and getattr(s, "state", None):
+            for ch in s.get_active_channels() if hasattr(s, "get_active_channels") else []:
+                st = s.state.get(ch)
+                if st is not None and hasattr(st, "component"):
+                    comp = st.component
+                    break
+        base_xy = getattr(state, "physical_size_x", None) or getattr(state, "physical_size_y", 0.14)
+        label, width_px = compute_scale_bar(
+            renderer=s.renderer,
+            render_window=s.render_window,
+            unit="µm",
+            component=comp,
+            base_spacing_xy=base_xy,
+        )
+        state.main_scale_bar_label = label
+        state.main_scale_bar_width_px = int(width_px or 0)
+
+    def _attach_main_scale_bar_observer(s):
+        """Attach a render observer once so main scale bar updates with zoom/render."""
+        if not s or not getattr(s, "render_window", None):
+            return
+        rw = s.render_window
+        if getattr(rw, "_bioset_main_scale_bar_observer", False):
+            return
+
+        def _on_render(_obj=None, _evt=None):
+            try:
+                update_main_scale_bar()
+            except Exception:
+                pass
+
+        try:
+            rw.AddObserver("RenderEvent", _on_render)
+            setattr(rw, "_bioset_main_scale_bar_observer", True)
+        except Exception:
+            pass
+
+    ctrl.update_main_scale_bar = update_main_scale_bar
 
     def load_data():
         """Load data from zarr_url and metadata_url."""
@@ -157,6 +209,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if streamer:
                 streamer.renderer.ResetCamera()
                 streamer.renderer.ResetCameraClippingRange()
+                update_main_scale_bar()
             if _refs["view"]:
                 _refs["view"].update()
             
@@ -641,7 +694,29 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            outline_only = getattr(state, "heatmap_outline_only", "filled") == "outline"
+            outline_only = getattr(state, "heatmap_outline_only", False)
+
+            # Configure "box" outlines: back outline + corner connectors.
+            # Uses analysis volume Z bounds (voxels) converted to world units via physical_size_z.
+            if outline_only:
+                bounds = getattr(state, "analysis_volume_bounds", {}) or {}
+                z0z1 = bounds.get("z", None)
+                if isinstance(z0z1, (list, tuple)) and len(z0z1) >= 2:
+                    z0_vox = float(z0z1[0])
+                    z1_vox = float(z0z1[1])
+                    z_depth_vox = max(0.0, z1_vox - z0_vox)
+                    sz = float(spacing[2]) if spacing and len(spacing) >= 3 else 1.0
+                    heatmap.config.outline_box_depth = z_depth_vox * sz
+                    # Front rectangle: in front of image (closer to camera). Back stays at heatmap position.
+                    volume_z_max = z1_vox * sz
+                    heatmap.config.outline_box_front_z = volume_z_max + 10.0
+                else:
+                    heatmap.config.outline_box_depth = 0.0
+                    heatmap.config.outline_box_front_z = 0.0
+            else:
+                heatmap.config.outline_box_depth = 0.0
+                heatmap.config.outline_box_front_z = 0.0
+
             heatmap.update_tiles(tiles, spacing=spacing, color=color, outline_only=outline_only)
             state.heatmap_tile_count = len(tiles)
         
@@ -659,7 +734,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         filtered_combinations = []
 
         for combo in combinations:
-            if all(ch in selected_channels for ch in combo.channels):
+            if any(ch in selected_channels for ch in combo.channels):
                 filtered_combinations.append(combo)
 
         return filtered_combinations
@@ -688,10 +763,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         )
         
         # Filter to selected channels
-        filtered_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
+        #all_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
 
         mapped_combinations = []
-        for combination in filtered_data:
+        for combination in combinations:
             mapped_combinations.append({
                 "channels": combination.channels,
                 "iou": combination.iou,
@@ -819,6 +894,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             else:
                 streamer.renderer.ResetCamera()
                 streamer.renderer.ResetCameraClippingRange()
+        update_main_scale_bar()
         if _refs.get("view"):
             _refs["view"].update()
     
@@ -968,7 +1044,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         nov_view = _refs.get("nov_view")
         if nov_view and hasattr(nov_view, "update"):
             nov_view.update()
-
+            
     _refs["biomni_client"] = None
     _refs["last_tile_channel_stats"] = None  # populated on right-click tile selection
 
@@ -1083,7 +1159,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot send message - Biomni not initialised")
             return
 
-        channel_stats = _refs.get("last_tile_channel_stats")  # Optional — None if no tile selected
+        channel_stats = _require_tile_stats()
+        if channel_stats is None:
+            return
 
         user_text = state.chatbot_input.strip()
         print(f"[callbacks] Biomni query: {user_text}")
@@ -1223,182 +1301,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.chatbot_loading = False
 
-
-    def chatbot_explain_upset():
-        """Explain the currently displayed UpSet plot via /plot."""
-        if not state.chatbot_authenticated:
-            print("[callbacks] Cannot explain plot - Biomni not initialised")
-            return
-
-        source_data = list(state.upset_data_local if state.upset_view_mode == "local" else state.upset_data)
-        offset = state.upset_offset
-        limit = state.upset_limit
-        visible_data = source_data[offset:offset + limit]
-
-        active_channel_names = [
-            ch["name"] for ch in (state.channels or [])
-            if ch["id"] in (state.active_channels or [])
-        ]
-
-        plot_payload = {
-            "type": "upset",
-            "view_mode": state.upset_view_mode,
-            "selected_channels": list(state.upset_selected_channels or []),
-            "active_channels": active_channel_names,
-            "filters": {
-                "offset": offset,
-                "limit": limit,
-                "selected_only": list(state.upset_selected_channels or []),
-                "min_channels": state.upset_min_channels,
-            },
-            "data": source_data,
-            "visible_data": visible_data,
-        }
-
-        state.chatbot_panel_open = True
-        state.chatbot_messages = list(state.chatbot_messages) + [
-            {"role": "user", "content": "Explain the UpSet plot"}
-        ]
-        state.chatbot_loading = True
-
-        try:
-            client = _get_biomni_client()
-            markers = _build_markers()
-            result = client.plot(plot_payload, markers=markers, mode=state.biomni_mode)
-            response_text = result.get("answer", str(result))
-            state.chatbot_messages = list(state.chatbot_messages) + [
-                {"role": "assistant", "content": response_text}
-            ]
-            print("[callbacks] Biomni explain upset response received")
-        except Exception as e:
-            error_msg = f"Error: {e}"
-            print(f"[callbacks] Biomni explain upset error: {error_msg}")
-            state.chatbot_messages = list(state.chatbot_messages) + [
-                {"role": "error", "content": error_msg}
-            ]
-        finally:
-            state.chatbot_loading = False
-
-    def chatbot_explain_bar():
-        """Explain the currently displayed bar chart via /plot."""
-        if not state.chatbot_authenticated:
-            print("[callbacks] Cannot explain plot - Biomni not initialised")
-            return
-
-        raw_data = list(state.bar_data_local if state.bar_view_mode == "local" else state.bar_data)
-        offset = state.bar_offset
-        limit = state.bar_limit
-        # normalise tuples/lists → dicts for the LLM
-        source_data = [
-            {"channel": e[0], "coverage_pct": e[1]} if isinstance(e, (list, tuple)) else e
-            for e in raw_data
-        ]
-        visible_data = source_data[offset:offset + limit]
-
-        active_channel_names = [
-            ch["name"] for ch in (state.channels or [])
-            if ch["id"] in (state.active_channels or [])
-        ]
-
-        plot_payload = {
-            "type": "bar",
-            "view_mode": state.bar_view_mode,
-            "selected_channels": list(state.bar_selected_channels or []),
-            "active_channels": active_channel_names,
-            "filters": {
-                "offset": offset,
-                "limit": limit,
-                "selected_only": list(state.bar_selected_channels or []),
-            },
-            "data": source_data,
-            "visible_data": visible_data,
-        }
-
-        state.chatbot_panel_open = True
-        state.chatbot_messages = list(state.chatbot_messages) + [
-            {"role": "user", "content": "Explain the bar chart"}
-        ]
-        state.chatbot_loading = True
-
-        try:
-            client = _get_biomni_client()
-            markers = _build_markers()
-            result = client.plot(plot_payload, markers=markers, mode=state.biomni_mode)
-            response_text = result.get("answer", str(result))
-            state.chatbot_messages = list(state.chatbot_messages) + [
-                {"role": "assistant", "content": response_text}
-            ]
-            print("[callbacks] Biomni explain bar response received")
-        except Exception as e:
-            error_msg = f"Error: {e}"
-            print(f"[callbacks] Biomni explain bar error: {error_msg}")
-            state.chatbot_messages = list(state.chatbot_messages) + [
-                {"role": "error", "content": error_msg}
-            ]
-        finally:
-            state.chatbot_loading = False
-
-    def chatbot_suggest_bookmark():
-        """Suggest bookmark title/category/description and prefill the bookmark form."""
-        if not state.chatbot_authenticated:
-            print("[callbacks] Cannot suggest bookmark - Biomni not initialised")
-            return
-
-        markers = _build_markers()
-        if not markers:
-            msg = "Please select channels first."
-            state.chatbot_messages = list(state.chatbot_messages) + [
-                {"role": "error", "content": msg}
-            ]
-            print(f"[callbacks] {msg}")
-            return
-
-        state.chatbot_panel_open = True
-        state.chatbot_messages = list(state.chatbot_messages) + [
-            {"role": "user", "content": "Suggest bookmark text"}
-        ]
-        state.chatbot_loading = True
-
-        try:
-            client = _get_biomni_client()
-            screenshot_base64 = capture_screenshot()
-            result = client.suggest_bookmark(
-                markers=markers,
-                mode=state.biomni_mode,
-                image=screenshot_base64,
-            )
-
-            suggested_title = (result.get("title") or "").strip()
-            suggested_category = (result.get("category") or "").strip() or "Uncategorized"
-            suggested_description = (result.get("description") or "").strip()
-
-            if hasattr(ctrl, "bookmark_open_new_form"):
-                ctrl.bookmark_open_new_form()
-            else:
-                state.bookmark_form_dialog = True
-
-            if suggested_title:
-                state.bookmark_form_name = suggested_title
-            state.bookmark_form_category = suggested_category
-            state.bookmark_form_description = suggested_description
-            state.bookmark_open = True
-
-            state.chatbot_messages = list(state.chatbot_messages) + [
-                {
-                    "role": "assistant",
-                    "content": f"Bookmark suggestion applied: {state.bookmark_form_name} ({suggested_category}).",
-                }
-            ]
-            print("[callbacks] Biomni bookmark suggestion applied to bookmark form")
-        except Exception as e:
-            error_msg = f"Error: {e}"
-            print(f"[callbacks] Biomni bookmark suggestion error: {error_msg}")
-            state.chatbot_messages = list(state.chatbot_messages) + [
-                {"role": "error", "content": error_msg}
-            ]
-        finally:
-            state.chatbot_loading = False
-
     def chatbot_clear():
         """Clear the chatbot conversation history."""
         print("[callbacks] Clearing chatbot messages")
@@ -1431,7 +1333,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             label_mgr.clear()
             _refs["label_manager"] = None
         state.selected_tile = None
-        _refs.pop("last_tile_channel_stats", None)
         state.chatbot_labels_generated = False
         state.anchor_labels = False
         v = _refs.get("view")
@@ -1562,7 +1463,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         setattr(interactor, "_bioset_right_click_picker_registered", True)
 
         picker = vtkPropPicker()
-        
+
         def _on_right_button_press(obj, event):
             click_pos = obj.GetEventPosition()
             heatmap = _refs.get("heatmap")
@@ -1613,10 +1514,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
             cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 6.0)
             cam.SetViewUp(0, 1, 0)
             streamer.renderer.ResetCameraClippingRange()
-            
+
             print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
                 f"extent={tile_extent:.1f}")
-            
+
             active_channels = list(state.active_channels)
             if mesh_mgr and mesh_mgr.is_available and active_channels:
                 vox_x = (tile.x0 + tile.x1) / 2.0 * 128
@@ -1789,9 +1690,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def setup_right_click_picker(interactor):
         """Register a VTK prop picker on right-click to select heatmap tiles."""
         from vtkmodules.vtkRenderingCore import vtkPropPicker
-        
+
         picker = vtkPropPicker()
-        
+
         def _on_right_button_press(obj, event):
             click_pos = obj.GetEventPosition()
             heatmap = _refs.get("heatmap")
@@ -2000,9 +1901,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_send_message = chatbot_send_message
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_suggest = chatbot_suggest
-    ctrl.chatbot_suggest_bookmark = chatbot_suggest_bookmark
-    ctrl.chatbot_explain_upset = chatbot_explain_upset
-    ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear
     ctrl.toggle_labels = toggle_labels
     ctrl.deselect_tile = deselect_tile

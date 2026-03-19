@@ -223,6 +223,9 @@ def init_state(state):
                      None)  # set by client when ticking a channel checkbox; server reads to toggle
     state.setdefault("nov_scale_bar_label", "")  # e.g. "10 µm" for scale bar in NOV popup
     state.setdefault("nov_scale_bar_width_px", 0)  # pixel width of scale bar (updates with zoom)
+    # Main view scale bar (separate from NOV; shown in main viewer overlay)
+    state.setdefault("main_scale_bar_label", "")
+    state.setdefault("main_scale_bar_width_px", 0)
     state.setdefault("nov_popup_width_px", 900)  # resizable NOV popup width (1.5x: 600→900)
     state.setdefault("nov_popup_height_px", 675)  # resizable NOV popup height (1.5x: 450→675)
     state.setdefault("nov_popup_size_str", "")  # "w,h" from client resize to update server
