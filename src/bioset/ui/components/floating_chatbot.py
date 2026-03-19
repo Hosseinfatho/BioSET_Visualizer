@@ -112,7 +112,31 @@ def floating_chatbot_section(state, ctrl):
                             with vuetify.VCard(classes="pa-2", color="#616161", dark=True, style="max-width:80%;"):
                                 html.Div("{{ message.content }}", classes="text-body-2")
 
-                        with html.Div(v_if="message.role === 'assistant'", classes="d-flex justify-start"):
+                        with html.Div(v_if="message.role === 'assistant' && message.format === 'json'", classes="d-flex justify-start"):
+                            with vuetify.VCard(classes="pa-2", color="#303030", dark=True, style="max-width:90%;"):
+                                html.Pre("{{ message.content }}", classes="text-body-2", style="white-space: pre-wrap; margin: 0;")
+
+                        with html.Div(v_if="message.role === 'assistant' && message.format === 'suggest'", classes="d-flex justify-start"):
+                            with vuetify.VCard(classes="pa-2", color="#303030", dark=True, style="max-width:90%; width:100%;"):
+                                html.Div("Suggested Channels", classes="text-caption font-weight-bold mb-1")
+                                with vuetify.VList(dense=True, dark=True, color="transparent", classes="pa-0"):
+                                    with vuetify.VListItem(
+                                        v_for="(s, si) in message.suggestions",
+                                        key="si",
+                                        classes="px-0",
+                                        style="min-height: 28px;",
+                                    ):
+                                        with vuetify.VListItemContent(classes="py-0"):
+                                            with html.Div(classes="d-flex align-center"):
+                                                html.Span("{{ s.channel }}", classes="text-body-2 font-weight-medium", style="flex: 1;")
+                                                html.Span(
+                                                    "{{ '●'.repeat(Math.max(1, Math.min(3, s.dots))) }}",
+                                                    classes="text-caption ml-2",
+                                                    style="letter-spacing: 2px; color: #aaa;",
+                                                )
+                                            html.Div("{{ s.reason }}", classes="text-caption grey--text", style="line-height: 1.2;")
+
+                        with html.Div(v_if="message.role === 'assistant' && !message.format", classes="d-flex justify-start"):
                             with vuetify.VCard(classes="pa-2", color="#303030", dark=True, style="max-width:80%;"):
                                 html.Div("{{ message.content }}", classes="text-body-2")
 
@@ -154,6 +178,17 @@ def floating_chatbot_section(state, ctrl):
                         "Label",
                         v_if="selected_tile",
                         click=ctrl.chatbot_label,
+                        x_small=True,
+                        outlined=True,
+                        color="white",
+                        disabled=("chatbot_loading",),
+                        classes="mr-1",
+                    )
+                    # Suggest Channels — tile-only
+                    vuetify.VBtn(
+                        "Suggest Channels",
+                        v_if="selected_tile",
+                        click=ctrl.chatbot_suggest,
                         x_small=True,
                         outlined=True,
                         color="white",

@@ -842,49 +842,63 @@ def register_nov_callbacks(ctrl, state, _refs):
         if not streamer or not getattr(streamer, "nov_renderer", None) or not getattr(streamer, "nov_render_window",
                                                                                       None):
             return
+        # Use the same scale bar util as Main for consistent behavior.
+        # For NOV, we prefer quantization based on the *actual* voxel spacing of the
+        # currently loaded NOV image (read from one mapper input).
+        from bioset.ui.utils.scale_bar import compute_scale_bar_for_camera
+
         ren = streamer.nov_renderer
         rw = streamer.nov_render_window
         cam = ren.GetActiveCamera()
-        w, h = rw.GetSize()
-        if w < 10 or h < 10:
-            state.nov_scale_bar_label = ""
-            state.nov_scale_bar_width_px = 0
-            return
-        pos = cam.GetPosition()
-        fp = cam.GetFocalPoint()
-        dist = math.sqrt(
-            (pos[0] - fp[0]) ** 2 + (pos[1] - fp[1]) ** 2 + (pos[2] - fp[2]) ** 2
+
+        voxel_um_xy = None
+        try:
+            nov_mappers = getattr(streamer, "nov_mappers", None) or {}
+            for m in nov_mappers.values():
+                img = m.GetInput() if hasattr(m, "GetInput") else None
+                if img and hasattr(img, "GetSpacing"):
+                    sp = img.GetSpacing()
+                    if sp and len(sp) >= 2 and float(sp[0]) > 0:
+                        voxel_um_xy = float(sp[0])  # sx in µm/voxel
+                        break
+        except Exception:
+            voxel_um_xy = None
+
+        label, width_px = compute_scale_bar_for_camera(
+            camera=cam,
+            render_window=rw,
+            unit="µm",
+            voxel_um_xy=voxel_um_xy,
         )
-        if dist < 1e-9:
-            state.nov_scale_bar_label = ""
-            state.nov_scale_bar_width_px = 0
-            return
-        view_angle_deg = cam.GetViewAngle()
-        view_angle_rad = math.radians(view_angle_deg)
-        world_height_um = 2.0 * dist * math.tan(view_angle_rad / 2.0)
-        um_per_pixel = world_height_um / float(h)
-        if um_per_pixel <= 0:
-            state.nov_scale_bar_label = ""
-            state.nov_scale_bar_width_px = 0
-            return
-        target_px = 90
-        raw_um = target_px * um_per_pixel
-        nice = (0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500)
-        scale_um = min(nice, key=lambda x: abs(x - raw_um))
-        if raw_um < 0.25:
-            scale_um = 0.5
-        elif raw_um > 400:
-            scale_um = 500
-        bar_width_px = scale_um / um_per_pixel
-        state.nov_scale_bar_label = (
-            f"{scale_um:.0f} µm" if scale_um >= 1 else f"{scale_um} µm"
-        )
-        state.nov_scale_bar_width_px = int(round(min(bar_width_px, 400)))
+        state.nov_scale_bar_label = label
+        state.nov_scale_bar_width_px = int(width_px or 0)
+        # Push changes quickly (important when we update during InteractionEvent)
+        if hasattr(state, "flush"):
+            try:
+                state.flush()
+            except Exception:
+                pass
 
     _s = _refs.get("streamer")
     if _s is not None and getattr(_s, "nov_render_callback", None) is None:
         _s.nov_render_callback = update_nov_scale_bar
     ctrl.update_nov_scale_bar = update_nov_scale_bar
+
+    # Update scale bar during interaction (zoom/pan) by listening to NOV render events.
+    # This makes it responsive like the main scene scale bar.
+    try:
+        if _s is not None and getattr(_s, "nov_render_window", None) is not None:
+            rw = _s.nov_render_window
+            if not getattr(rw, "_bioset_nov_scale_bar_render_observer", False):
+                def _on_nov_render_scale_bar(_obj=None, _evt=None):
+                    try:
+                        update_nov_scale_bar()
+                    except Exception:
+                        pass
+                rw.AddObserver("RenderEvent", _on_nov_render_scale_bar)
+                setattr(rw, "_bioset_nov_scale_bar_render_observer", True)
+    except Exception:
+        pass
 
     def display_to_display_coords(renderer, x: float, y: float):
         """Convert client (x,y) 0-1 to VTK display coords (origin bottom-left)."""

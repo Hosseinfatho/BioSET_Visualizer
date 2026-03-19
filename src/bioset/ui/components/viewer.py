@@ -109,6 +109,32 @@ def viewer(ctrl, render_window):
                     attrs={"id": "nov-rect-drag-end", "aria-hidden": "true", "tabindex": "-1"},
                     style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
                 )
+            # Main view scale bar: bottom-right overlay (independent from NOV popup)
+            with html.Div(
+                    v_show=("main_scale_bar_width_px > 0", False),
+                    style="position: absolute; right: 15%; bottom: 6px; left: auto; z-index: 12; "
+                          "display: flex; flex-direction: column; align-items: flex-end; gap: 1px; "
+                          "background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; "
+                          "color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: none;",
+            ):
+                with html.Div(style="display: flex; align-items: center; height: 5px;"):
+                    html.Div(
+                        style="width: 1px; height: 20px; min-width: 1px; background: rgba(255,255,255,0.95);"
+                              " border-radius: 0;"
+                    )
+                    html.Div(
+                        style=(
+                            "'width: ' + main_scale_bar_width_px + 'px; height: 1.5px; min-width: 2px; "
+                            "background: rgba(255,255,255,0.95); border-radius: 0;'",
+                            "width: 50px; height: 1.5px; background: rgba(255,255,255,0.95);",
+                        ),
+                    )
+                    html.Div(
+                        style="width: 1px; height: 20px; min-width: 1px; background: rgba(255,255,255,0.95);"
+                              " border-radius: 0;"
+                    )
+                # Make the label 3x larger for readability (keep line size unchanged)
+                html.Span("{{ main_scale_bar_label }}", style="font-size: 1.65rem; line-height: 2;")
             # Flag popup: position absolute so it appears near the flag (same coord system as VTK render window)
             with html.Div(
                     v_show=("bookmark_flag_popup", False),

@@ -142,7 +142,7 @@ class BiomniLocalClient:
         self,
         markers: list[str],
         question: str,
-        channel_stats: dict,
+        channel_stats: Optional[dict] = None,
         mode: str = _DEFAULT_MODE,
         image: Optional[str] = None,
     ) -> dict:
@@ -151,7 +151,7 @@ class BiomniLocalClient:
         Args:
             markers:       e.g. ["CD3:#00FF00", "FOXP3:#FF00FF"]
             question:      Free-form question about the markers / image
-            channel_stats: full stats dict for the selected tile (all channels)
+            channel_stats: Optional stats dict for the selected tile; omitted if None
             mode:          "minimal" | "db" | "full"
             image:         Optional base64-encoded JPEG screenshot
 
@@ -163,9 +163,10 @@ class BiomniLocalClient:
         payload: dict = {
             "markers": markers,
             "query": question,
-            "channel_stats": channel_stats,
             "mode": mode,
         }
+        if channel_stats:
+            payload["channel_stats"] = channel_stats
         if image:
             payload["image"] = image
 
