@@ -57,8 +57,8 @@ def bookmark_form_panel(state, ctrl):
                         icon=True,
                         x_small=True,
                         click=ctrl.chatbot_suggest_bookmark,
-                        disabled=("chatbot_loading",),
-                        **_BTN,
+                            disabled=("chatbot_loading || !chatbot_authenticated",),
+                            dark=True,
                     ):
                         vuetify.VIcon("mdi-comment-text-outline", x_small=True)
                     vuetify.VBtn(
