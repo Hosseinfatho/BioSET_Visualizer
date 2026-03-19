@@ -437,6 +437,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             # Initialize plot channel selections with all channels
             state.upset_selected_channels = [ch for ch in state.analysis_channels]
             state.bar_selected_channels = [ch for ch in state.analysis_channels]
+            state.dilation_selected_channels = [ch for ch in state.analysis_channels]
             
             state.analysis_loaded = True
             state.right_drawer_open = True  
@@ -448,6 +449,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             update_heatmap_combinations()
             update_upset_data()
             update_bar_data()
+            update_dilation_data()
             
             if _refs["view"]:
                 _refs["view"].update()
@@ -943,6 +945,57 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         state.bar_data_local = local_bar_data
         print(f"[callbacks] Bar local data updated: {len(local_bar_data)} channels")
+
+    def update_dilation_data():
+        """Update dilation curve data for the line plot."""
+        loader = _refs.get("analysis_loader")
+        if not loader or not loader.is_loaded:
+            print("[callbacks] Cannot update dilation data - loader not ready")
+            state.dilation_data = {}
+            return
+
+        print(
+            f"[callbacks] Updating dilation data: mode={state.dilation_view_mode}, level={state.current_hierarchy_level}")
+
+        active_ids = state.active_channels or []
+        if not active_ids:
+            state.dilation_data = {}
+            print("[callbacks] Dilation data cleared (no channels selected)")
+            return
+
+        channels_list = state.channels or []
+        id_to_name = {ch["id"]: ch["name"] for ch in channels_list}
+        selected = [id_to_name[ch_id] for ch_id in active_ids if ch_id in id_to_name]
+
+        if not selected:
+            state.dilation_data = {}
+            return
+
+        view_mode = getattr(state, "dilation_view_mode", "single")
+        level = getattr(state, "current_hierarchy_level", 0)
+
+        if view_mode == "single":
+            result = {}
+            for ch_name in selected:
+                ch_curves = loader.get_subcombination_dilation_curves([ch_name], hierarchy_level=level)
+                if ch_name in ch_curves:
+                    result[ch_name] = ch_curves[ch_name]
+            state.dilation_data = result
+
+        else:
+            result = {}
+            if len(selected) > 1:
+                channel_order = loader.metadata.channels if loader.metadata else []
+                sorted_channels = sorted(selected, key=lambda c: channel_order.index(c) if c in channel_order else 999)
+                combo_key = "|".join(sorted_channels)
+
+                combo_curve = loader._get_multi_channel_dilation_curve_full(sorted_channels, hierarchy_level=level)
+                if combo_curve:
+                    result[combo_key] = combo_curve
+
+            state.dilation_data = result
+
+        print(f"[callbacks] Dilation data updated: keys={list(state.dilation_data.keys())}")
     
     def reset_camera():
         """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
@@ -1955,6 +2008,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_upset_data_local = update_upset_data_local
     ctrl.update_bar_data = update_bar_data
     ctrl.update_bar_data_local = update_bar_data_local
+    ctrl.update_dilation_data = update_dilation_data
     ctrl.chatbot_login = chatbot_login
     ctrl.biomni_add_data = biomni_add_data
     ctrl.biomni_upload_file = biomni_upload_file

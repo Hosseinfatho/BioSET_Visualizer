@@ -444,3 +444,87 @@ def right_drawer(state, ctrl):
                 />
                 """
             )
+
+        vuetify.VDivider()
+
+        with html.Div(classes="px-4 py-3"):
+            html.Div("Dilation Curves", classes="text-overline mb-2 text-center", style="color: white;")
+
+            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                with vuetify.VBtnToggle(
+                        v_model=("dilation_view_mode", "single"),
+                        mandatory=True,
+                        dense=True,
+                        classes="mr-2",
+                        style="background: transparent;",
+                ):
+                    vuetify.VBtn("Single", value="single", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Multiple", value="multiple", small=True, classes="text-capitalize", outlined=True)
+
+                # Filter button
+                with vuetify.VBtn(icon=True, small=True, v_show="dilation_view_mode === 'multiple'",
+                                  click="dilation_filter_dialog = true"):
+                    vuetify.VIcon("mdi-filter-variant", small=True)
+
+            with vuetify.VDialog(v_model=("dilation_filter_dialog",), max_width="900px", scrollable=True):
+                with vuetify.VCard(classes="grey darken-4 white--text"):
+                    vuetify.VCardTitle("Settings - Dilation Plot", classes="headline grey darken-3")
+                    vuetify.VDivider()
+
+                    with vuetify.VCardText():
+                        with html.Div(v_show="dilation_view_mode === 'multiple'", classes="mb-4"):
+                            html.Div("Intersection Metric", classes="text-overline mb-1", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                vuetify.VBtn(
+                                    "IoU",
+                                    click="dilation_metric = 'iou'",
+                                    color=("dilation_metric === 'iou' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric !== 'iou'",),
+                                    title="Intersection over Union",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                                vuetify.VBtn(
+                                    "Overlap Coefficient",
+                                    click="dilation_metric = 'overlap_coeff'",
+                                    color=("dilation_metric === 'overlap_coeff' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric !== 'overlap_coeff'",),
+                                    title="Overlap Coefficient",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                                vuetify.VBtn(
+                                    "Density",
+                                    click="dilation_metric = 'density'",
+                                    color=("dilation_metric === 'density' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric !== 'density'",),
+                                    title="Density",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                                vuetify.VBtn(
+                                    "Count",
+                                    click="dilation_metric = 'count'",
+                                    color=("dilation_metric === 'count' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric !== 'count'",),
+                                    title="Count",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+
+                    vuetify.VDivider()
+                    with vuetify.VCardActions(classes="grey darken-3"):
+                        vuetify.VSpacer()
+                        vuetify.VBtn("Close", color="surface-variant", click="dilation_filter_dialog = false")
+
+            # Vue component for Line plot
+            vuetify.Template(
+                """
+                <linechart
+                    :data="dilation_data"
+                    :channelData="channels"
+                    :view-mode="dilation_view_mode"
+                    :metric="dilation_metric"
+                />
+                """
+            )

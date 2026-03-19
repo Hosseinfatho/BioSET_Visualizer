@@ -112,6 +112,12 @@ def init_state(state):
     state.setdefault("bar_offset", 0)
     state.setdefault("bar_limit", 10)
 
+    # Dilation Lineplot
+    state.setdefault("dilation_data", {})
+    state.setdefault("dilation_view_mode", "single")  # one of: ["single", "multiple"]
+    state.setdefault("dilation_metric", "density")  # one of: ["iou", "overlap_coeff", "count", "density"]
+    state.setdefault("dilation_filter_dialog", False)
+
     # Expanded View States
     state.setdefault("upset_expanded_offset", 0)
     state.setdefault("upset_expanded_limit", 40)
@@ -318,6 +324,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_bar_data_local()
         if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
             ctrl.nov_recompute_scores_if_visible()
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
 
     @state.change("channels")
     def on_channels_change(channels, **kwargs):
@@ -438,6 +446,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
 
     @state.change("upset_data")
     def on_upset_data_change(upset_data, **kwargs):
@@ -462,6 +472,17 @@ def register_state_change_handlers(state, ctrl):
     def on_bar_view_mode_change(bar_view_mode, **kwargs):
         state.bar_offset = 0
         state.bar_expanded_offset = 0
+
+    @state.change("dilation_view_mode")
+    def on_dilation_view_mode_change(dilation_view_mode, **kwargs):
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
+
+    @state.change("dilation_selected_channels")
+    def on_dilation_selected_channels_change(dilation_selected_channels, **kwargs):
+        print(f"[state] Dilation selected channels changed: {len(dilation_selected_channels)} channels")
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
 
     @state.change("upset_selected_channels")
     def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
@@ -548,6 +569,7 @@ def register_state_change_handlers(state, ctrl):
         # Reset filtered lists when analysis changes
         state.upset_filtered_channels = list(analysis_channels)
         state.bar_filtered_channels = list(analysis_channels)
+        # state.dilation_filtered_channels = _filter_channels(state.channels, state.dilation_search)
         state.upset_search = ""
         state.bar_search = ""
-        
+        #state.dilation_search = ""
