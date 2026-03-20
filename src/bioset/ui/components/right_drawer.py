@@ -466,7 +466,7 @@ def right_drawer(state, ctrl):
                                   click="dilation_filter_dialog = true"):
                     vuetify.VIcon("mdi-filter-variant", small=True)
 
-            with vuetify.VDialog(v_model=("dilation_filter_dialog",), max_width="600px", scrollable=True):
+            with vuetify.VDialog(v_model=("dilation_filter_dialog",), max_width="600px"):
                 with vuetify.VCard(classes="grey darken-4 white--text"):
                     vuetify.VCardTitle("Settings - Dilation Plot", classes="headline grey darken-3")
                     vuetify.VDivider()
@@ -518,7 +518,7 @@ def right_drawer(state, ctrl):
 
                         vuetify.VDivider(classes="mb-2")
 
-                        with html.Div(style="max-height: 400px; overflow-y: auto;"):
+                        with html.Div():
                             vuetify.VCheckbox(
                                 v_for=("option in dilation_filter_options",),
                                 key="option",
