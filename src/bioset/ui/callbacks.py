@@ -952,6 +952,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if not loader or not loader.is_loaded:
             print("[callbacks] Cannot update dilation data - loader not ready")
             state.dilation_data = {}
+            state.dilation_filter_options = []
             return
 
         print(
@@ -960,6 +961,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         active_ids = state.active_channels or []
         if not active_ids:
             state.dilation_data = {}
+            state.dilation_filter_options = []
             print("[callbacks] Dilation data cleared (no channels selected)")
             return
 
@@ -969,6 +971,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         if not selected:
             state.dilation_data = {}
+            state.dilation_filter_options = []
             return
 
         view_mode = getattr(state, "dilation_view_mode", "single")
@@ -976,19 +979,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         dilation_curves = loader.get_subcombination_dilation_curves(selected, hierarchy_level=level)
 
-        result = {}
+        # Collect all available keys for this mode
         if view_mode == "single":
-            for curve_key in dilation_curves:
-                if "|" not in curve_key:
-                    result[curve_key] = dilation_curves[curve_key]
-
+            all_keys = sorted(k for k in dilation_curves if "|" not in k)
         else:
-            for curve_key in dilation_curves:
-                if "|" in curve_key:
-                    result[curve_key] = dilation_curves[curve_key]
+            all_keys = sorted(k for k in dilation_curves if "|" in k)
+
+        prev_options = set(getattr(state, "dilation_filter_options", []) or [])
+        state.dilation_filter_options = all_keys
+
+        # Auto-select all when the available options changed (new channels activated, mode switched)
+        if set(all_keys) != prev_options:
+            state.dilation_selected_channels = list(all_keys)
+            dilation_selected = set(all_keys)
+        else:
+            dilation_selected = set(getattr(state, "dilation_selected_channels", []) or [])
+
+        result = {k: dilation_curves[k] for k in all_keys if k in dilation_selected}
         state.dilation_data = result
 
-        print(f"[callbacks] Dilation data updated: keys={list(state.dilation_data.keys())}")
+        print(f"[callbacks] Dilation data updated: {len(result)}/{len(all_keys)} curves shown")
     
     def reset_camera():
         """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""

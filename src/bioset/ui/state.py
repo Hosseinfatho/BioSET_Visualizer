@@ -118,6 +118,7 @@ def init_state(state):
     state.setdefault("dilation_metric_single", "density")  # always fixed to density
     state.setdefault("dilation_metric_multiple", "iou")  # one of: ["iou", "overlap_coeff", "count", "density"]
     state.setdefault("dilation_filter_dialog", False)
+    state.setdefault("dilation_filter_options", [])  # Available curve keys for current mode
 
     # Expanded View States
     state.setdefault("upset_expanded_offset", 0)
@@ -476,6 +477,9 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("dilation_view_mode")
     def on_dilation_view_mode_change(dilation_view_mode, **kwargs):
+        # Reset filter selection when switching single/multiple — new options will be populated
+        state.dilation_selected_channels = []
+        state.dilation_filter_options = []
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
 

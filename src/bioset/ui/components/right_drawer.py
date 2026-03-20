@@ -462,16 +462,17 @@ def right_drawer(state, ctrl):
                     vuetify.VBtn("Multiple", value="multiple", small=True, classes="text-capitalize", outlined=True)
 
                 # Filter button
-                with vuetify.VBtn(icon=True, small=True, v_show="dilation_view_mode === 'multiple'",
+                with vuetify.VBtn(icon=True, small=True,
                                   click="dilation_filter_dialog = true"):
                     vuetify.VIcon("mdi-filter-variant", small=True)
 
-            with vuetify.VDialog(v_model=("dilation_filter_dialog",), max_width="900px", scrollable=True):
+            with vuetify.VDialog(v_model=("dilation_filter_dialog",), max_width="600px", scrollable=True):
                 with vuetify.VCard(classes="grey darken-4 white--text"):
                     vuetify.VCardTitle("Settings - Dilation Plot", classes="headline grey darken-3")
                     vuetify.VDivider()
 
                     with vuetify.VCardText():
+                        # Intersection metric (multiple mode only)
                         with html.Div(v_show="dilation_view_mode === 'multiple'", classes="mb-4"):
                             html.Div("Intersection Metric", classes="text-overline mb-1", style="color: white;")
                             with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
@@ -502,6 +503,32 @@ def right_drawer(state, ctrl):
                                     class_="flex-grow-1 rounded px-4",
                                     style="flex: 1;"
                                 )
+                            vuetify.VDivider(classes="mt-3")
+
+                        # Filter curves
+                        html.Div(
+                            "{{ dilation_view_mode === 'single' ? 'Filter Channels' : 'Filter Combinations' }}",
+                            classes="text-overline mb-1", style="color: white;",
+                        )
+                        with html.Div(classes="d-flex justify-end my-2", style="gap: 4px;"):
+                            vuetify.VBtn("Select All", text=True, color="white", classes="ma-1",
+                                click="dilation_selected_channels = [...dilation_filter_options]")
+                            vuetify.VBtn("Deselect All", text=True, color="white", classes="ma-1",
+                                click="dilation_selected_channels = []")
+
+                        vuetify.VDivider(classes="mb-2")
+
+                        with html.Div(style="max-height: 400px; overflow-y: auto;"):
+                            vuetify.VCheckbox(
+                                v_for=("option in dilation_filter_options",),
+                                key="option",
+                                v_model=("dilation_selected_channels",),
+                                label=("option",),
+                                value=("option",),
+                                dense=True,
+                                hide_details=True,
+                                dark=True,
+                            )
 
                     vuetify.VDivider()
                     with vuetify.VCardActions(classes="grey darken-3"):
