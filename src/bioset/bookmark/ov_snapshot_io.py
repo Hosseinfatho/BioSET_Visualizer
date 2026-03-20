@@ -188,6 +188,28 @@ def ov_save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET
         json.dump(out, f, indent=2, ensure_ascii=False)
 
 
+def ov_thumbnail_path(category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> Path:
+    """Path to OV thumbnail: recordings/<category>/ov_<title>.png."""
+    rec = ov__recordings_dir(dataset_id)
+    folder = rec / _ov_safe_folder_name(category)
+    base = ov__safe_filename(title).replace(".json", "")
+    return folder / (base + ".png")
+
+
+def ov_save_thumbnail(png_bytes: bytes, category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> Path:
+    """Save OV thumbnail PNG. Returns path."""
+    path = ov_thumbnail_path(category, title, dataset_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png_bytes)
+    return path
+
+
+def ov_thumbnail_path_or_fallback(category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> Optional[Path]:
+    """Return OV thumbnail path if it exists, else None."""
+    path = ov_thumbnail_path(category, title, dataset_id)
+    return path if path.exists() else None
+
+
 def ov_snapshot_names(dataset_id: str = DEFAULT_DATASET, category: Optional[str] = None) -> List[str]:
     """OV snapshot names for dropdown. If category given, only names in that category."""
     if category is not None:

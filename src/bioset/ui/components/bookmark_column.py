@@ -21,16 +21,23 @@ def bookmark_column(state, ctrl):
             vuetify.VDivider()
             # Top: Category dropdown, Show, New
             with html.Div(style="padding: 10px 8px; flex: 0 0 auto; border-bottom: 1px solid rgba(255,255,255,0.1);"):
-                vuetify.VSelect(
-                    v_model=("bookmark_selected_category", "Uncategorized"),
-                    items=("bookmark_categories", []),
-                    dense=True,
-                    hide_details=True,
-                    placeholder="Category",
-                    label="Category",
-                    dark=True,
-                    style="min-width: 0; font-size: 0.8rem;",
-                )
+                with html.Div(style="display: flex; align-items: center; gap: 4px;"):
+                    vuetify.VSelect(
+                        v_model=("bookmark_selected_category", "Uncategorized"),
+                        items=("bookmark_categories", []),
+                        dense=True,
+                        hide_details=True,
+                        placeholder="Category",
+                        label="Category",
+                        dark=True,
+                        style="min-width: 0; font-size: 0.8rem; flex: 1;",
+                    )
+                    with vuetify.VBtn(
+                            icon=True, x_small=True,
+                            click=ctrl.bookmark_delete_category,
+                            title="Delete this category and all its bookmarks",
+                    ):
+                        vuetify.VIcon("mdi-delete-outline", x_small=True, color="grey")
                 with html.Div(style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;"):
                     with vuetify.VBtn(
                             v_show=("!bookmark_flags_visible", True),

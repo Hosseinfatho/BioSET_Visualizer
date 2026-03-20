@@ -5,8 +5,6 @@ import hashlib
 import os
 import tempfile
 
-import requests
-
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
 from bioset.llm import BiomniLocalClient
@@ -429,7 +427,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.analysis_volume_bounds = metadata.volume_bounds
             
             if metadata.dilation_amounts:
-                state.current_dilation = metadata.dilation_amounts[0]
+                mid = len(metadata.dilation_amounts) // 2
+                state.current_dilation = metadata.dilation_amounts[mid]
             
             if metadata.hierarchy_levels:
                 state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
@@ -438,6 +437,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             # Initialize plot channel selections with all channels
             state.upset_selected_channels = [ch for ch in state.analysis_channels]
             state.bar_selected_channels = [ch for ch in state.analysis_channels]
+            state.dilation_selected_channels = [ch for ch in state.analysis_channels]
             
             state.analysis_loaded = True
             state.right_drawer_open = True  
@@ -449,6 +449,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             update_heatmap_combinations()
             update_upset_data()
             update_bar_data()
+            update_dilation_data()
             
             if _refs["view"]:
                 _refs["view"].update()
@@ -721,7 +722,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            outline_only = getattr(state, "heatmap_outline_only", False)
+            outline_only = getattr(state, "heatmap_outline_only", "filled") == "outline"
 
             # Configure "box" outlines: back outline + corner connectors.
             # Uses analysis volume Z bounds (voxels) converted to world units via physical_size_z.
@@ -750,6 +751,37 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
     
+    def print_dilation_curve():
+        """Print dilation curves for all subcombinations of the selected channels."""
+        loader = _refs.get("analysis_loader")
+        if not loader or not loader.is_loaded:
+            return
+
+        channels = state.heatmap_combination or []
+        if not channels:
+            return
+
+        level = state.current_hierarchy_level
+        curves = loader.get_subcombination_dilation_curves(channels, level)
+        if not curves:
+            print(f"[dilation-curve] No data for {channels}")
+            return
+
+        print(f"[dilation-curve] Subcombination curves for {' | '.join(channels)}  (hierarchy_level={level})")
+        for combo_key, curve in curves.items():
+            is_single = "|" not in combo_key
+            print(f"\n  --- {combo_key} ---")
+            if is_single:
+                print(f"  {'Dilation':>10}  {'Voxels':>12}  {'Density':>10}")
+                print(f"  {'-'*10}  {'-'*12}  {'-'*10}")
+                for pt in curve:
+                    print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt.get('density', 0):>10.6f}")
+            else:
+                print(f"  {'Dilation':>10}  {'Intersection':>12}  {'IoU':>10}  {'Overlap':>10}")
+                print(f"  {'-'*10}  {'-'*12}  {'-'*10}  {'-'*10}")
+                for pt in curve:
+                    print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt['iou']:>10.6f}  {pt.get('overlap_coeff', 0):>10.6f}")
+
     def _filter_combinations_by_channel_selection(combinations, selected_channels):
         """
         Filter combinations to only include those whose channels are all
@@ -797,6 +829,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             mapped_combinations.append({
                 "channels": combination.channels,
                 "iou": combination.iou,
+                "overlap_coeff": combination.overlap_coeff,
             })
 
         state.upset_data = mapped_combinations
@@ -850,6 +883,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 mapped_combinations.append({
                     "channels": combination.channels,
                     "iou": combination.iou,
+                    "overlap_coeff": combination.overlap_coeff,
                 })
 
             state.upset_data_local = mapped_combinations
@@ -911,6 +945,60 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         state.bar_data_local = local_bar_data
         print(f"[callbacks] Bar local data updated: {len(local_bar_data)} channels")
+
+    def update_dilation_data():
+        """Update dilation curve data for the line plot."""
+        loader = _refs.get("analysis_loader")
+        if not loader or not loader.is_loaded:
+            print("[callbacks] Cannot update dilation data - loader not ready")
+            state.dilation_data = {}
+            state.dilation_filter_options = []
+            return
+
+        print(
+            f"[callbacks] Updating dilation data: mode={state.dilation_view_mode}, level={state.current_hierarchy_level}")
+
+        active_ids = state.active_channels or []
+        if not active_ids:
+            state.dilation_data = {}
+            state.dilation_filter_options = []
+            print("[callbacks] Dilation data cleared (no channels selected)")
+            return
+
+        channels_list = state.channels or []
+        id_to_name = {ch["id"]: ch["name"] for ch in channels_list}
+        selected = [id_to_name[ch_id] for ch_id in active_ids if ch_id in id_to_name]
+
+        if not selected:
+            state.dilation_data = {}
+            state.dilation_filter_options = []
+            return
+
+        view_mode = getattr(state, "dilation_view_mode", "single")
+        level = getattr(state, "current_hierarchy_level", 0)
+
+        dilation_curves = loader.get_subcombination_dilation_curves(selected, hierarchy_level=level)
+
+        # Collect all available keys for this mode
+        if view_mode == "single":
+            all_keys = sorted(k for k in dilation_curves if "|" not in k)
+        else:
+            all_keys = sorted(k for k in dilation_curves if "|" in k)
+
+        prev_options = set(getattr(state, "dilation_filter_options", []) or [])
+        state.dilation_filter_options = all_keys
+
+        # Auto-select all when the available options changed (new channels activated, mode switched)
+        if set(all_keys) != prev_options:
+            state.dilation_selected_channels = list(all_keys)
+            dilation_selected = set(all_keys)
+        else:
+            dilation_selected = set(getattr(state, "dilation_selected_channels", []) or [])
+
+        result = {k: dilation_curves[k] for k in all_keys if k in dilation_selected}
+        state.dilation_data = result
+
+        print(f"[callbacks] Dilation data updated: {len(result)}/{len(all_keys)} curves shown")
     
     def reset_camera():
         """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
@@ -1908,6 +1996,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.load_analysis_file = load_analysis_file
     ctrl.update_heatmap = update_heatmap
     ctrl.update_heatmap_combinations = update_heatmap_combinations
+    ctrl.print_dilation_curve = print_dilation_curve
     ctrl.toggle_channel = toggle_channel
     ctrl.update_active_channels = update_active_channels
     ctrl.reset_camera = reset_camera
@@ -1922,6 +2011,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.update_upset_data_local = update_upset_data_local
     ctrl.update_bar_data = update_bar_data
     ctrl.update_bar_data_local = update_bar_data_local
+    ctrl.update_dilation_data = update_dilation_data
     ctrl.chatbot_login = chatbot_login
     ctrl.biomni_add_data = biomni_add_data
     ctrl.biomni_upload_file = biomni_upload_file

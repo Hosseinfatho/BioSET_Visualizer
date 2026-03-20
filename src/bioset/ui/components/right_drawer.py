@@ -143,6 +143,7 @@ def right_drawer(state, ctrl):
                                 :dataLocal="upset_data_local"
                                 :channelData="channels"
                                 :view-mode="upset_view_mode"
+                                :metric="upset_metric"
                                 :offset="upset_expanded_offset"
                                 :limit="upset_expanded_limit"
                                 :width="1200"
@@ -159,6 +160,28 @@ def right_drawer(state, ctrl):
                     vuetify.VDivider()
                     
                     with vuetify.VCardText():
+                        with html.Div(classes="mb-4 mt-2"):
+                            html.Div("Metric", classes="text-caption mb-2 text-left", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                vuetify.VBtn(
+                                    "IoU",
+                                    click="upset_metric = 'iou'",
+                                    color=("upset_metric === 'iou' ? 'white' : 'grey darken-3'",),
+                                    dark=("upset_metric !== 'iou'",),
+                                    title="Intersection over Union",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                                vuetify.VBtn(
+                                    "Overlap Coefficient",
+                                    click="upset_metric = 'overlap_coeff'",
+                                    color=("upset_metric === 'overlap_coeff' ? 'white' : 'grey darken-3'",),
+                                    dark=("upset_metric !== 'overlap_coeff'",),
+                                    title="Overlap Coefficient",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+
                         with html.Div(classes="mb-4 mt-2"):
                             html.Div("Minimum Number of Channels", classes="text-caption mb-2 text-left", style="color: white;")
                             with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
@@ -223,6 +246,7 @@ def right_drawer(state, ctrl):
                     :dataLocal="upset_data_local"
                     :channelData="channels"
                     :view-mode="upset_view_mode"
+                    :metric="upset_metric"
                     :offset="upset_offset"
                     :limit="upset_limit"
                     @click="upset_click = $event"
@@ -417,6 +441,108 @@ def right_drawer(state, ctrl):
                     :offset="bar_offset"
                     :limit="bar_limit"
                     @click="trigger('bar_click', $event)"
+                />
+                """
+            )
+
+        vuetify.VDivider()
+
+        with html.Div(classes="px-4 py-3"):
+            html.Div("Dilation Curves", classes="text-overline mb-2 text-center", style="color: white;")
+
+            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+                with vuetify.VBtnToggle(
+                        v_model=("dilation_view_mode", "single"),
+                        mandatory=True,
+                        dense=True,
+                        classes="mr-2",
+                        style="background: transparent;",
+                ):
+                    vuetify.VBtn("Single", value="single", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Multiple", value="multiple", small=True, classes="text-capitalize", outlined=True)
+
+                # Filter button
+                with vuetify.VBtn(icon=True, small=True,
+                                  click="dilation_filter_dialog = true"):
+                    vuetify.VIcon("mdi-filter-variant", small=True)
+
+            with vuetify.VDialog(v_model=("dilation_filter_dialog",), max_width="600px"):
+                with vuetify.VCard(classes="grey darken-4 white--text"):
+                    vuetify.VCardTitle("Settings - Dilation Plot", classes="headline grey darken-3")
+                    vuetify.VDivider()
+
+                    with vuetify.VCardText():
+                        # Intersection metric (multiple mode only)
+                        with html.Div(v_show="dilation_view_mode === 'multiple'", classes="mb-4"):
+                            html.Div("Intersection Metric", classes="text-overline mb-1", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                vuetify.VBtn(
+                                    "IoU",
+                                    click="dilation_metric_multiple = 'iou'",
+                                    color=("dilation_metric_multiple === 'iou' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric_multiple !== 'iou'",),
+                                    title="Intersection over Union",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                                vuetify.VBtn(
+                                    "Overlap Coefficient",
+                                    click="dilation_metric_multiple = 'overlap_coeff'",
+                                    color=("dilation_metric_multiple === 'overlap_coeff' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric_multiple !== 'overlap_coeff'",),
+                                    title="Overlap Coefficient",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                                vuetify.VBtn(
+                                    "Count",
+                                    click="dilation_metric_multiple = 'count'",
+                                    color=("dilation_metric_multiple === 'count' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric_multiple !== 'count'",),
+                                    title="Count",
+                                    class_="flex-grow-1 rounded px-4",
+                                    style="flex: 1;"
+                                )
+                            vuetify.VDivider(classes="mt-3")
+
+                        # Filter curves
+                        html.Div(
+                            "{{ dilation_view_mode === 'single' ? 'Filter Channels' : 'Filter Combinations' }}",
+                            classes="text-overline mb-1", style="color: white;",
+                        )
+                        with html.Div(classes="d-flex justify-end my-2", style="gap: 4px;"):
+                            vuetify.VBtn("Select All", text=True, color="white", classes="ma-1",
+                                click="dilation_selected_channels = [...dilation_filter_options]")
+                            vuetify.VBtn("Deselect All", text=True, color="white", classes="ma-1",
+                                click="dilation_selected_channels = []")
+
+                        vuetify.VDivider(classes="mb-2")
+
+                        with html.Div():
+                            vuetify.VCheckbox(
+                                v_for=("option in dilation_filter_options",),
+                                key="option",
+                                v_model=("dilation_selected_channels",),
+                                label=("option",),
+                                value=("option",),
+                                dense=True,
+                                hide_details=True,
+                                dark=True,
+                            )
+
+                    vuetify.VDivider()
+                    with vuetify.VCardActions(classes="grey darken-3"):
+                        vuetify.VSpacer()
+                        vuetify.VBtn("Close", color="surface-variant", click="dilation_filter_dialog = false")
+
+            # Vue component for Line plot
+            vuetify.Template(
+                """
+                <linechart
+                    :data="dilation_data"
+                    :channelData="channels"
+                    :view-mode="dilation_view_mode"
+                    :metric="dilation_view_mode === 'single' ? dilation_metric_single : dilation_metric_multiple"
                 />
                 """
             )
