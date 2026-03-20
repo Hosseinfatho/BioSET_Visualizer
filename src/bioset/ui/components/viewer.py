@@ -117,12 +117,13 @@ def viewer(ctrl, render_window):
                         "+ 'right: ' + (right_drawer_open ? '460px' : '110px') + '; '"
                         "+ 'display: flex; flex-direction: column; align-items: flex-end; gap: 1px; '"
                         "+ 'background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; '"
-                        "+ 'color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: none;'",
+                        "+ 'color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: auto; cursor: ew-resize; user-select: none;'",
                         "position: absolute; right: 82px; bottom: 26px; z-index: 12; "
                         "display: flex; flex-direction: column; align-items: flex-end; gap: 1px; "
                         "background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; "
-                        "color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: none;",
+                        "color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: auto; cursor: ew-resize; user-select: none;",
                     ),
+                    mousedown="if(window.mainScaleBarZoomStart){ window.mainScaleBarZoomStart($event); }",
             ):
                 with html.Div(style="display: flex; align-items: center; height: 5px;"):
                     html.Div(
