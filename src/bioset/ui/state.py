@@ -112,6 +112,14 @@ def init_state(state):
     state.setdefault("bar_offset", 0)
     state.setdefault("bar_limit", 10)
 
+    # Dilation Lineplot
+    state.setdefault("dilation_data", {})
+    state.setdefault("dilation_view_mode", "single")  # one of: ["single", "multiple"]
+    state.setdefault("dilation_metric_single", "density")  # always fixed to density
+    state.setdefault("dilation_metric_multiple", "iou")  # one of: ["iou", "overlap_coeff", "count", "density"]
+    state.setdefault("dilation_filter_dialog", False)
+    state.setdefault("dilation_filter_options", [])  # Available curve keys for current mode
+
     # Expanded View States
     state.setdefault("upset_expanded_offset", 0)
     state.setdefault("upset_expanded_limit", 40)
@@ -161,7 +169,7 @@ def init_state(state):
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", "auto")  # "auto" or "manual" LOD level selection
-    state.setdefault("heatmap_outline_only", "filled")  # "filled" or "outline" tile display mode
+    state.setdefault("heatmap_outline_only", "outline")  # "filled" or "outline" tile display mode
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
@@ -171,6 +179,7 @@ def init_state(state):
     state.setdefault("upset_filtered_channels", []) # Channels shown in filter list
     state.setdefault("upset_filter_dialog", False)
     state.setdefault("upset_expanded", False)
+    state.setdefault("upset_metric", "iou")  # one of ["iou", "overlap_coeff"]
     state.setdefault("upset_min_channels", 2)  # default minimum combination limit
 
     # Bar Plot filtering
@@ -317,6 +326,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_bar_data_local()
         if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
             ctrl.nov_recompute_scores_if_visible()
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
 
     @state.change("channels")
     def on_channels_change(channels, **kwargs):
@@ -398,6 +409,8 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Heatmap combination changed: {heatmap_combination}")
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
+        if hasattr(ctrl, 'print_dilation_curve'):
+            ctrl.print_dilation_curve()
 
     @state.change("heatmap_outline_only")
     def on_heatmap_outline_only_change(heatmap_outline_only, **kwargs):
@@ -435,6 +448,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
 
     @state.change("upset_data")
     def on_upset_data_change(upset_data, **kwargs):
@@ -460,6 +475,20 @@ def register_state_change_handlers(state, ctrl):
         state.bar_offset = 0
         state.bar_expanded_offset = 0
 
+    @state.change("dilation_view_mode")
+    def on_dilation_view_mode_change(dilation_view_mode, **kwargs):
+        # Reset filter selection when switching single/multiple — new options will be populated
+        state.dilation_selected_channels = []
+        state.dilation_filter_options = []
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
+
+    @state.change("dilation_selected_channels")
+    def on_dilation_selected_channels_change(dilation_selected_channels, **kwargs):
+        print(f"[state] Dilation selected channels changed: {len(dilation_selected_channels)} channels")
+        if hasattr(ctrl, 'update_dilation_data'):
+            ctrl.update_dilation_data()
+
     @state.change("upset_selected_channels")
     def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
         print(f"[state] UpSet selected channels changed: {len(upset_selected_channels)} channels")
@@ -471,6 +500,14 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] UpSet min channels changed: {upset_min_channels}")
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
+
+    @state.change("upset_metric")
+    def on_upset_metric_change(upset_metric, **kwargs):
+        print(f"[state] UpSet metric changed: {upset_metric}")
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data()
+        if hasattr(ctrl, 'update_upset_data_local'):
+            ctrl.update_upset_data_local()
 
     @state.change("bar_selected_channels")
     def on_bar_selected_channels_change(bar_selected_channels, **kwargs):
@@ -539,4 +576,3 @@ def register_state_change_handlers(state, ctrl):
         state.bar_filtered_channels = list(analysis_channels)
         state.upset_search = ""
         state.bar_search = ""
-        

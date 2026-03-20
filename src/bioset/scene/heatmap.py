@@ -26,9 +26,9 @@ class HeatmapConfig:
     edge_color: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     edge_opacity: float = 1.0
     edge_width: float = 1.0
-    percentile_cutoff: float = 0.7  # Only show tiles above this active_fraction percentile
+    percentile_cutoff: float = 0.01  # Only show tiles above this active_fraction percentile
     opacity_scale: str = 'exponential'  # 'linear' or 'exponential'
-    gamma: float = 8.0  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
+    gamma: float = 0.5  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
     outline_only: bool = False  # If True, draw only tile outlines (wireframe); brightness = gray→white by value, same thickness
     outline_line_width: float = 5.0  # Fixed line width for all outline tiles
     # If >0 in outline_only mode, also draw a matching outline behind the volume (back)

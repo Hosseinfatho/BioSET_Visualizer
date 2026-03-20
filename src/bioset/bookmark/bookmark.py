@@ -12,6 +12,7 @@ from datetime import datetime
 from bioset.scene.volumes import build_tf_with_range
 from .ov_snapshot_io import (
     ov_save_snapshot,
+    ov_save_thumbnail as ov_save_thumbnail_io,
     ov_snapshot_names,
     ov_snapshot_categories,
     ov_load_snapshot_by_name,
@@ -24,6 +25,7 @@ from .snapshot_io import (
     snapshot_categories,
     load_snapshots_by_category,
     delete_snapshot_in_category,
+    delete_category,
     save_screenshot,
     delete_thumbnail_in_category,
     thumbnail_path_or_fallback,
@@ -40,6 +42,33 @@ def capture_screenshot_png_bytes(streamer):
         if not streamer or not hasattr(streamer, "renderer"):
             return None
         rw = streamer.renderer.GetRenderWindow()
+        rw.Render()
+        w2i = vtk.vtkWindowToImageFilter()
+        w2i.SetInput(rw)
+        w2i.SetScale(1)
+        w2i.SetInputBufferTypeToRGB()
+        w2i.ReadFrontBufferOff()
+        w2i.Update()
+        writer = vtk.vtkPNGWriter()
+        writer.SetWriteToMemory(True)
+        writer.SetInputConnection(w2i.GetOutputPort())
+        writer.Write()
+        result = writer.GetResult()
+        if result and result.GetNumberOfTuples() > 0:
+            return vtk_to_numpy(result).tobytes()
+        return None
+    except Exception:
+        return None
+
+
+def capture_nov_screenshot_png_bytes(streamer):
+    """Capture NOV render window as PNG bytes. Returns bytes or None."""
+    try:
+        import vtk
+        from vtk.util.numpy_support import vtk_to_numpy
+        rw = getattr(streamer, "nov_render_window", None) if streamer else None
+        if not rw:
+            return None
         rw.Render()
         w2i = vtk.vtkWindowToImageFilter()
         w2i.SetInput(rw)
@@ -723,11 +752,11 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     # === OV bookmark model (Optimal View-only bookmarks) ===
 
     def ov_bookmark_refresh_categories():
-        """Load OV category list into dropdown."""
+        """Load OV category list into dropdown. Preserves user-typed category."""
         dataset_id = _bookmark_dataset_id()
         state.ov_bookmark_categories = ov_snapshot_categories(dataset_id) or ["Uncategorized"]
-        if not getattr(state, "ov_bookmark_selected_category", None) or state.ov_bookmark_selected_category not in (
-                state.ov_bookmark_categories or []):
+        current = getattr(state, "ov_bookmark_selected_category", None)
+        if not current:
             state.ov_bookmark_selected_category = (state.ov_bookmark_categories or ["Uncategorized"])[0]
 
     def ov_bookmark_refresh_names():
@@ -794,6 +823,12 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             ]
         dataset_id = _bookmark_dataset_id()
         ov_save_snapshot(snapshot, dataset_id)
+        # Capture NOV screenshot as thumbnail
+        streamer = _refs.get("streamer")
+        if streamer:
+            png_bytes = capture_nov_screenshot_png_bytes(streamer)
+            if png_bytes:
+                ov_save_thumbnail_io(png_bytes, category, title, dataset_id)
         ov_bookmark_refresh_categories()
         ov_bookmark_refresh_names()
         state.ov_bookmark_selected_name = title
@@ -1571,6 +1606,29 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def bookmark_delete_category():
+        """Delete the currently selected bookmark category and all its contents."""
+        cat = (getattr(state, "bookmark_selected_category", None) or "").strip()
+        if not cat:
+            return
+        dataset_id = _bookmark_dataset_id()
+        count = delete_category(cat, dataset_id)
+        print(f"[bookmark] Deleted category '{cat}': {count} files removed")
+        # Clear any displayed snapshot that belonged to this category
+        disp = getattr(state, "bookmark_display_snapshot", None)
+        if disp and (disp.get("category") or "").strip() == cat:
+            state.bookmark_display_snapshot = None
+            state.bookmark_form_minimized = False
+        # Hide flags if they were showing for this category
+        if getattr(state, "bookmark_flags_visible", False) and hasattr(ctrl, "bookmark_hide_flags"):
+            ctrl.bookmark_hide_flags()
+        _snapshot_cache.clear()
+        bookmark_refresh_categories()
+        bookmark_refresh_names()
+        bookmark_refresh_list()
+        if _refs.get("view"):
+            _refs["view"].update()
+
     def bookmark_comment():
         """Append current comment to the current view and save."""
         disp = getattr(state, "bookmark_display_snapshot", None)
@@ -1650,6 +1708,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     ctrl.bookmark_comment = bookmark_comment
     ctrl.bookmark_update_snapshot = bookmark_update_snapshot
     ctrl.bookmark_delete_snapshot = bookmark_delete_snapshot
+    ctrl.bookmark_delete_category = bookmark_delete_category
     # OV-specific controls (Optimal View-only bookmarks)
     ctrl.ov_bookmark_refresh_categories = ov_bookmark_refresh_categories
     ctrl.ov_bookmark_refresh_names = ov_bookmark_refresh_names

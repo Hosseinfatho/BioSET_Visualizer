@@ -1,11 +1,13 @@
-
-// UpSet Plot Component
 Vue.component('upset-plot', {
   props: {
     data: Array,
     dataLocal: Array,
     channelData: Array,
     viewMode: String,
+    metric: {
+      type: String,
+      default: 'iou'
+    },
     offset: {
       type: Number,
       default: 0
@@ -28,6 +30,7 @@ Vue.component('upset-plot', {
     data: 'render',
     dataLocal: 'render',
     viewMode: 'render',
+    metric: 'render',
     offset: 'render',
     limit: 'render',
     channelData: {
@@ -47,7 +50,11 @@ Vue.component('upset-plot', {
             return;
         }
 
-      const maxIou = sourceData.length > 0 ? Math.max(...sourceData.map(d => d.iou)) : 0;
+      let maxMetricValue = 0;
+      if (sourceData.length > 0) {
+        const values = sourceData.map(d => d[this.metric]);
+        maxMetricValue = Math.max(...values);
+      }
 
       const start = this.offset;
       const end = start + this.limit;
@@ -55,7 +62,7 @@ Vue.component('upset-plot', {
 
       const mappedData = renderData.map(item => ({
         sets: item.channels,
-        cardinality: item.iou
+        cardinality: item[this.metric]
       }));
 
       const { sets, combinations } = UpSetJS.extractFromExpression(mappedData);
@@ -107,7 +114,7 @@ Vue.component('upset-plot', {
         widthRatios: [0, 0.35],
         heightRatios: [0.4],
         exportButtons: false,
-        yDomain: [0, maxIou],
+        yDomain: [0, maxMetricValue],
         onClick: (clickedItem) => {
           setTimeout(() => {
             if (!clickedItem) {
