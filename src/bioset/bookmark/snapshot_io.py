@@ -122,16 +122,32 @@ def load_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> Optio
 
 
 def delete_snapshot_in_category(name: str, dataset_id: str, category: str) -> bool:
-    """Remove snapshot file at recordings/<dataset_id>/<category>/<name>.json. Returns True if deleted."""
+    """Remove snapshot file at recordings/<category>/<name>.json or recordings/<name>.json. Returns True if deleted."""
     rec = _recordings_dir(dataset_id)
     if not rec.exists():
         return False
-    folder = rec / _safe_folder_name(category)
     safe = _safe_filename(name)
+    # Try category subfolder first
+    folder = rec / _safe_folder_name(category)
     path = folder / safe
     if path.exists():
         path.unlink()
         return True
+    # Fall back to root recordings directory (for legacy/root-level snapshots)
+    root_path = rec / safe
+    if root_path.exists():
+        root_path.unlink()
+        return True
+    # Last resort: search by title/id match across all snapshot files
+    for p in _iter_snapshot_paths(rec):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("title") == name or data.get("id") == name:
+                p.unlink()
+                return True
+        except Exception:
+            continue
     return False
 
 
@@ -161,7 +177,7 @@ def delete_snapshot_by_name(name: str, dataset_id: str = DEFAULT_DATASET) -> boo
 
 
 def delete_thumbnail_in_category(category: str, title: str, dataset_id: str = DEFAULT_DATASET) -> bool:
-    """Remove thumbnail PNG for a bookmark: recordings/<category>/<safe_title>.png.
+    """Remove thumbnail PNG for a bookmark: recordings/<category>/<safe_title>.png or recordings/<safe_title>.png.
 
     Note: we intentionally do NOT delete any fallback thumbnail (e.g., <category>.png).
     Returns True if the specific thumbnail file was deleted.
@@ -171,9 +187,36 @@ def delete_thumbnail_in_category(category: str, title: str, dataset_id: str = DE
         if path.exists():
             path.unlink()
             return True
+        # Fall back to root recordings directory
+        rec = _recordings_dir(dataset_id)
+        base = _safe_filename((title or "").strip() or "unnamed").replace(".json", "").strip(".")
+        root_path = rec / (base + ".png")
+        if root_path.exists():
+            root_path.unlink()
+            return True
     except Exception:
         return False
     return False
+
+
+def delete_category(category: str, dataset_id: str = DEFAULT_DATASET) -> int:
+    """Delete all snapshots and thumbnails in a category folder, then remove the folder.
+    Returns the number of files deleted."""
+    rec = _recordings_dir(dataset_id)
+    folder = rec / _safe_folder_name(category)
+    if not folder.exists() or not folder.is_dir():
+        return 0
+    count = 0
+    for p in list(folder.iterdir()):
+        if p.is_file():
+            p.unlink()
+            count += 1
+    # Remove the now-empty folder
+    try:
+        folder.rmdir()
+    except OSError:
+        pass  # folder not empty (unexpected nested dirs) — leave it
+    return count
 
 
 def save_snapshot(snapshot: Dict[str, Any], dataset_id: str = DEFAULT_DATASET) -> None:

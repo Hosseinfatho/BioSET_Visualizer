@@ -122,6 +122,8 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                     color="#ffffff",
                     style="max-width: 120px; font-size: 0.72rem; color: #fff !important;",
                     classes="ov-bookmark-input",
+                    __events=["update:search-input"],
+                    update_searchInput="ov_bookmark_selected_category = $event || ov_bookmark_selected_category",
                 )
                 vuetify.VCombobox(
                     v_model=("ov_bookmark_selected_name", ""),
@@ -136,6 +138,8 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                     color="#ffffff",
                     style="max-width: 140px; font-size: 0.72rem; color: #fff !important;",
                     classes="ov-bookmark-input",
+                    __events=["update:search-input"],
+                    update_searchInput="ov_bookmark_selected_name = $event || ov_bookmark_selected_name",
                 )
                 with vuetify.VBtn(icon=True, x_small=True, dense=True, click=ctrl.ov_bookmark_open_selected,
                                   style=_BTN_STYLE):
