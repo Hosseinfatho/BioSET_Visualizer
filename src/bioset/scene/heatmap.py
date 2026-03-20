@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass
 
@@ -15,9 +16,8 @@ class HeatmapConfig:
     base_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)  
     min_opacity: float = 0.1
     max_opacity: float = 0.8
-    # Outline opacity is independent from filled-tile opacity.
-    # In outline mode we encode tile value via opacity (and grayscale brightness),
-    # while keeping line thickness fixed.
+    # Outline / filled: one strength scalar per tile drives both opacity and brightness
+    # (same numeric value: min heatmap → min of both, max → max of both).
     outline_min_opacity: float = 0.05
     outline_max_opacity: float = 0.95
     z_height: float = 1.0  # todo, data and meta data decide?
@@ -27,8 +27,9 @@ class HeatmapConfig:
     edge_opacity: float = 1.0
     edge_width: float = 1.0
     percentile_cutoff: float = 0.7  # Only show tiles above this active_fraction percentile
-    opacity_scale: str = 'exponential'  # 'linear' or 'exponential'
-    gamma: float = 8.0  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
+    # After normalizing active_fraction to [0, 1] within the current tile batch (min→0, max→1):
+    # 'linear' | 'sqrt' | 'exponential' (exponential uses fixed (e^n-1)/(e-1), no extra parameters)
+    value_scale: str = 'exponential'
     outline_only: bool = False  # If True, draw only tile outlines (wireframe); brightness = gray→white by value, same thickness
     outline_line_width: float = 5.0  # Fixed line width for all outline tiles
     # If >0 in outline_only mode, also draw a matching outline behind the volume (back)
@@ -62,6 +63,18 @@ class HeatmapRenderer:
         self._current_spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
         
         self._actor_to_tile: Dict[vtkActor, TileData] = {}
+
+    def _map_normalized_value(self, normalized: float, scale: str) -> float:
+        """Map normalized [0..1] to [0..1] for opacity/brightness."""
+        n = max(0.0, min(1.0, float(normalized)))
+        if scale == 'linear':
+            return n
+        if scale == 'sqrt':
+            return math.sqrt(n)
+        if scale == 'exponential':
+            # Fixed exponential curve: 0→0, 1→1, convex upward (emphasizes higher values).
+            return (math.exp(n) - 1.0) / (math.e - 1.0)
+        return n
     
     def update_tiles(
         self,
@@ -104,22 +117,26 @@ class HeatmapRenderer:
             x_size = (tile.x1 - tile.x0) * sx
             y_size = (tile.y1 - tile.y0) * sy
             z_size = self.config.z_height
-            
-            # Outline mode: only brightness (gray→white by value); same line width for all.
+
+            # Normalize batch to [0, 1]: lowest active_fraction → 0, highest → 1
+            normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 1.0
+            mapped = self._map_normalized_value(normalized, self.config.value_scale)
+
             if self.config.outline_only:
-                normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 1.0
-                value_0_10 = max(0.0, min(10.0, normalized * 10.0))
-                tile_color = (value_0_10 / 10.0, value_0_10 / 10.0, value_0_10 / 10.0)  # 0=black, 10=white
-                opacity = self.config.outline_min_opacity + normalized * (self.config.outline_max_opacity - self.config.outline_min_opacity)
-            elif self.config.opacity_scale == 'linear':
-                normalized = tile.active_fraction / scale
+                # Same scalar for grayscale RGB and opacity (per tile).
+                s = self.config.outline_min_opacity + mapped * (
+                    self.config.outline_max_opacity - self.config.outline_min_opacity
+                )
+                tile_color = (s, s, s)
+                opacity = s
             else:
-                normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 0.0
-                normalized = normalized ** self.config.gamma
-            
-            if not self.config.outline_only:
-                opacity = self.config.min_opacity + normalized * (self.config.max_opacity - self.config.min_opacity)
-                tile_color = base_color
+                s = self.config.min_opacity + mapped * (
+                    self.config.max_opacity - self.config.min_opacity
+                )
+                opacity = s
+                br, bg, bb = base_color
+                # Same strength scales each channel (with white base, color matches opacity).
+                tile_color = (br * s, bg * s, bb * s)
 
             tile_key = (tile.x0, tile.y0)
 
