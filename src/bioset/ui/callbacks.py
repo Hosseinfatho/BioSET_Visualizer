@@ -429,7 +429,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.analysis_volume_bounds = metadata.volume_bounds
             
             if metadata.dilation_amounts:
-                state.current_dilation = metadata.dilation_amounts[0]
+                mid = len(metadata.dilation_amounts) // 2
+                state.current_dilation = metadata.dilation_amounts[mid]
             
             if metadata.hierarchy_levels:
                 state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
