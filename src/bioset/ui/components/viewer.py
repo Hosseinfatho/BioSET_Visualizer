@@ -114,7 +114,7 @@ def viewer(ctrl, render_window):
                     v_show=("main_scale_bar_width_px > 0", False),
                     style=(
                         "'position: absolute; bottom: 12px; z-index: 12; '"
-                        "+ 'right: ' + (right_drawer_open ? '460px' : '82px') + '; '"
+                        "+ 'right: ' + (right_drawer_open ? '460px' : '110px') + '; '"
                         "+ 'display: flex; flex-direction: column; align-items: flex-end; gap: 1px; '"
                         "+ 'background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; '"
                         "+ 'color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: none;'",
