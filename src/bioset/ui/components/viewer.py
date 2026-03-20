@@ -109,13 +109,20 @@ def viewer(ctrl, render_window):
                     attrs={"id": "nov-rect-drag-end", "aria-hidden": "true", "tabindex": "-1"},
                     style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;",
                 )
-            # Main view scale bar: bottom-right overlay (independent from NOV popup)
+            # Main view scale bar: left of chatbot FAB, shifts with right drawer
             with html.Div(
                     v_show=("main_scale_bar_width_px > 0", False),
-                    style="position: absolute; right: 15%; bottom: 6px; left: auto; z-index: 12; "
-                          "display: flex; flex-direction: column; align-items: flex-end; gap: 1px; "
-                          "background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; "
-                          "color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: none;",
+                    style=(
+                        "'position: absolute; bottom: 12px; z-index: 12; '"
+                        "+ 'right: ' + (right_drawer_open ? '460px' : '82px') + '; '"
+                        "+ 'display: flex; flex-direction: column; align-items: flex-end; gap: 1px; '"
+                        "+ 'background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; '"
+                        "+ 'color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: none;'",
+                        "position: absolute; right: 82px; bottom: 26px; z-index: 12; "
+                        "display: flex; flex-direction: column; align-items: flex-end; gap: 1px; "
+                        "background: rgba(0,0,0,0.35); border-radius: 3px; padding: 2px 4px; "
+                        "color: rgba(255,255,255,0.92); font-size: 0.55rem; pointer-events: none;",
+                    ),
             ):
                 with html.Div(style="display: flex; align-items: center; height: 5px;"):
                     html.Div(
