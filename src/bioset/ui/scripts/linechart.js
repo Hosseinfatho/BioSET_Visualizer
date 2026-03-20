@@ -39,7 +39,6 @@ Vue.component('linechart', {
             const height = this.height;
             const marginTop = 30;
             const marginBottom = 50;
-            const marginLeft = 50;
 
             const svg = d3.select(container)
                 .append("svg")
@@ -100,6 +99,16 @@ Vue.component('linechart', {
             const padding = (yMax - yMin) * 0.1 || (yMax * 0.1) || 0.1;
             const yDomain = [Math.max(0, yMin - padding), yMax + padding];
 
+            const tickFormat = d => {
+                if(d >= 1000) {
+                    return (d/1000).toFixed(0) + "k";
+                }
+                return d.toString();
+            };
+            const sampleTicks = d3.ticks(yDomain[0], yDomain[1], 5);
+            const maxTickLabelLength = d3.max(sampleTicks, d => tickFormat(d).length) || 0;
+            const marginLeft = Math.max(50, maxTickLabelLength * 7 + 25);
+
             const x = d3.scaleLinear()
                 .domain(xDomain)
                 .range([marginLeft, width - marginRight]);
@@ -132,10 +141,7 @@ Vue.component('linechart', {
 
             svg.append("g")
                 .attr("transform", `translate(${marginLeft},0)`)
-                .call(d3.axisLeft(y).ticks(5).tickFormat(d => {
-                    if(d >= 1000) return (d/1000).toFixed(1) + "k";
-                    return d;
-                }))
+                .call(d3.axisLeft(y).ticks(5).tickFormat(tickFormat))
                 .call(g => g.select(".domain").remove())
                 .selectAll("text")
                 .attr("fill", "white")
@@ -143,7 +149,7 @@ Vue.component('linechart', {
 
             svg.append("text")
                 .attr("x", -marginTop - (height - marginTop - marginBottom) / 2)
-                .attr("y", 15)
+                .attr("y", Math.max(12, marginLeft - (maxTickLabelLength * 7) - 20))
                 .attr("transform", "rotate(-90)")
                 .attr("text-anchor", "middle")
                 .style("fill", "white")

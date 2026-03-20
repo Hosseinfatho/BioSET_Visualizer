@@ -494,15 +494,6 @@ def right_drawer(state, ctrl):
                                     style="flex: 1;"
                                 )
                                 vuetify.VBtn(
-                                    "Density",
-                                    click="dilation_metric_multiple = 'density'",
-                                    color=("dilation_metric_multiple === 'density' ? 'white' : 'grey darken-3'",),
-                                    dark=("dilation_metric_multiple !== 'density'",),
-                                    title="Density",
-                                    class_="flex-grow-1 rounded px-4",
-                                    style="flex: 1;"
-                                )
-                                vuetify.VBtn(
                                     "Count",
                                     click="dilation_metric_multiple = 'count'",
                                     color=("dilation_metric_multiple === 'count' ? 'white' : 'grey darken-3'",),
