@@ -7,7 +7,7 @@ from trame.widgets import html, vtk, vuetify
 
 # Base style: position from nov_popup_pos when set; else default. Sizes 1.5x.
 _POS_DEFAULT = "left: 50%; transform: translateX(-50%); bottom: 1%; "
-_POS_DEFAULT_MIN = "left: 50%; transform: translateX(-50%); bottom: 0; "
+_POS_DEFAULT_MIN = "left: 50%; transform: translateX(-50%); top: 0; "
 _STYLE_BASE_FULL = (
     "position: fixed; "
     "min-width: 630px; max-width: 1620px; min-height: 450px; max-height: 945px; "
@@ -18,8 +18,8 @@ _STYLE_BASE_FULL = (
 _STYLE_BASE_MIN = (
     "position: fixed; "
     "width: 900px; height: auto; min-height: 36px; max-height: 36px; "
-    "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; "
-    "box-shadow: 0 -2px 12px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); border-bottom: none; "
+    "z-index: 300; border-radius: 0 0 8px 8px; overflow: hidden; "
+    "box-shadow: 0 2px 12px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); border-top: none; "
     "display: flex; flex-direction: column;"
 )
 
@@ -36,7 +36,7 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
     _pos_css = (
         "((function(){ var s = nov_popup_pos; if (s == null || typeof s !== 'string') return (nov_popup_minimized ? nov_popup_pos_default_min : nov_popup_pos_default); "
         "var p = s.split(','); if (p.length < 2) return (nov_popup_minimized ? nov_popup_pos_default_min : nov_popup_pos_default); "
-        "var a = (p && p.length >= 2) ? p[0] : null; var b = (p && p.length >= 2) ? p[1] : null; if (a == null || b == null) return (nov_popup_minimized ? nov_popup_pos_default_min : nov_popup_pos_default); return nov_popup_minimized ? ('left: ' + a + 'px; bottom: 0; transform: none; ') : ('left: ' + a + 'px; bottom: ' + b + 'px; transform: none; '); })())"
+        "var a = (p && p.length >= 2) ? p[0] : null; var b = (p && p.length >= 2) ? p[1] : null; if (a == null || b == null) return (nov_popup_minimized ? nov_popup_pos_default_min : nov_popup_pos_default); return nov_popup_minimized ? ('left: ' + a + 'px; top: 0; transform: none; ') : ('left: ' + a + 'px; bottom: ' + b + 'px; transform: none; '); })())"
     )
     _full_style = (
             "'position: fixed; ' + " + _pos_css + " + "
