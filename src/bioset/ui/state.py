@@ -161,7 +161,7 @@ def init_state(state):
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", "auto")  # "auto" or "manual" LOD level selection
-    state.setdefault("heatmap_outline_only", "filled")  # "filled" or "outline" tile display mode
+    state.setdefault("heatmap_outline_only", "outline")  # "filled" or "outline" tile display mode
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile

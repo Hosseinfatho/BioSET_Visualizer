@@ -721,7 +721,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            outline_only = getattr(state, "heatmap_outline_only", False)
+            outline_only = getattr(state, "heatmap_outline_only", "filled") == "outline"
 
             # Configure "box" outlines: back outline + corner connectors.
             # Uses analysis volume Z bounds (voxels) converted to world units via physical_size_z.
