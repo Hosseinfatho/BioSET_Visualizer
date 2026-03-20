@@ -115,7 +115,8 @@ def init_state(state):
     # Dilation Lineplot
     state.setdefault("dilation_data", {})
     state.setdefault("dilation_view_mode", "single")  # one of: ["single", "multiple"]
-    state.setdefault("dilation_metric", "density")  # one of: ["iou", "overlap_coeff", "count", "density"]
+    state.setdefault("dilation_metric_single", "density")  # always fixed to density
+    state.setdefault("dilation_metric_multiple", "iou")  # one of: ["iou", "overlap_coeff", "count", "density"]
     state.setdefault("dilation_filter_dialog", False)
 
     # Expanded View States
@@ -569,7 +570,5 @@ def register_state_change_handlers(state, ctrl):
         # Reset filtered lists when analysis changes
         state.upset_filtered_channels = list(analysis_channels)
         state.bar_filtered_channels = list(analysis_channels)
-        # state.dilation_filtered_channels = _filter_channels(state.channels, state.dilation_search)
         state.upset_search = ""
         state.bar_search = ""
-        #state.dilation_search = ""

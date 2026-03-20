@@ -31,14 +31,13 @@ Vue.component('linechart', {
             d3.select(container).selectAll("*").remove();
 
             if (!this.data || Object.keys(this.data).length === 0) {
-                container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px; text-align: center;">Select a channel to see<br>dilation curve</div>';
+                container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px; text-align: center; margin-top: 20px;">Select a channel to see the dilation plot</div>';
                 return;
             }
 
             const width = this.width;
             const height = this.height;
             const marginTop = 30;
-            const marginRight = 70;
             const marginBottom = 50;
             const marginLeft = 50;
 
@@ -59,6 +58,17 @@ Vue.component('linechart', {
                     y: d[this.metric] !== undefined ? d[this.metric] : null
                 })).filter(d => d.y !== null && !isNaN(d.y));
                 
+                let displayLabel = key;
+                const isCombo = key.includes('|');
+                if (isCombo) {
+                    const channelNames = key.split('|');
+                    if (channelNames.length > 3) {
+                        displayLabel = `[${channelNames.slice(0, 3).join(', ')}, ...]`;
+                    } else {
+                        displayLabel = `[${channelNames.join(', ')}]`;
+                    }
+                }
+
                 points.forEach(p => {
                     allDilations.push(p.x);
                     allValues.push(p.y);
@@ -66,15 +76,18 @@ Vue.component('linechart', {
                 
                 return {
                     key: key,
+                    displayLabel: displayLabel,
                     points: points,
-                    isCombo: key.includes('|')
+                    isCombo: isCombo
                 };
             });
-            
+
             if (allDilations.length === 0) {
-                container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No data available for this metric</div>';
                 return;
             }
+
+            const maxLabelLength = d3.max(lines, d => d.displayLabel.length);
+            const marginRight = Math.max(15, maxLabelLength * 6.5);
 
             const xDomain = d3.extent(allDilations);
             if (xDomain[0] === xDomain[1]) {
@@ -112,7 +125,7 @@ Vue.component('linechart', {
 
             const metricLabels = {
                 "iou": "IoU",
-                "overlap_coeff": "Overlap Coeff",
+                "overlap_coeff": "Overlap Coefficient",
                 "density": "Density",
                 "count": "Voxel Count"
             };
@@ -135,7 +148,7 @@ Vue.component('linechart', {
                 .attr("text-anchor", "middle")
                 .style("fill", "white")
                 .style("font-size", "12px")
-                .text(metricLabels[this.metric] || this.metric);
+                .text(metricLabels[this.metric]);
 
             svg.selectAll(".domain").attr("stroke", "white");
             svg.selectAll(".tick line").attr("stroke", "#444");
@@ -148,21 +161,9 @@ Vue.component('linechart', {
                 let color = "#FFFFFF";
                 let strokeWidth = 2;
 
-                let displayLabel = lineObj.key;
-                if (lineObj.isCombo) {
-                    color = "#FFFFFF";
-                    strokeWidth = 3;
-                    const channelNames = lineObj.key.split('|');
-                    if (channelNames.length > 3) {
-                        displayLabel = `[${channelNames.slice(0, 3).join(', ')}, ...]`;
-                    } else {
-                        displayLabel = `[${channelNames.join(', ')}]`;
-                    }
-                } else if (this.channelData) {
-                    const ch = this.channelData.find(c => c.name === lineObj.key);
-                    if (ch) {
-                        color = ch.color;
-                    }
+                const ch = this.channelData.find(c => c.name === lineObj.key);
+                if (ch) {
+                    color = ch.color;
                 }
 
                 svg.append("path")
@@ -181,20 +182,16 @@ Vue.component('linechart', {
                         .attr("fill", color)
                         .style("font-size", "10px")
                         .style("font-weight", lineObj.isCombo ? "bold" : "normal")
-                        .text(displayLabel);
+                        .text(lineObj.displayLabel);
                 }
 
-                svg.selectAll(`.point-${lineObj.key.replace(/[^a-zA-Z0-9]/g, "_")}`)
-                    .data(lineObj.points)
-                    .enter()
-                    .append("circle")
-                    .attr("class", `point-${lineObj.key.replace(/[^a-zA-Z0-9]/g, "_")}`)
-                    .attr("cx", d => x(d.x))
-                    .attr("cy", d => y(d.y))
-                    .attr("r", 4)
-                    .attr("fill", color)
-                    .append("title")
-                    .text(d => `${displayLabel}: ${d.y.toFixed(4)} at dilation ${d.x}`);
+                lineObj.points.forEach(p => {
+                    svg.append("circle")
+                        .attr("cx", x(p.x))
+                        .attr("cy", y(p.y))
+                        .attr("r", 4)
+                        .attr("fill", color);
+                });
             });
         }
     }

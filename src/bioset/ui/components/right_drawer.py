@@ -477,36 +477,36 @@ def right_drawer(state, ctrl):
                             with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
                                 vuetify.VBtn(
                                     "IoU",
-                                    click="dilation_metric = 'iou'",
-                                    color=("dilation_metric === 'iou' ? 'white' : 'grey darken-3'",),
-                                    dark=("dilation_metric !== 'iou'",),
+                                    click="dilation_metric_multiple = 'iou'",
+                                    color=("dilation_metric_multiple === 'iou' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric_multiple !== 'iou'",),
                                     title="Intersection over Union",
                                     class_="flex-grow-1 rounded px-4",
                                     style="flex: 1;"
                                 )
                                 vuetify.VBtn(
                                     "Overlap Coefficient",
-                                    click="dilation_metric = 'overlap_coeff'",
-                                    color=("dilation_metric === 'overlap_coeff' ? 'white' : 'grey darken-3'",),
-                                    dark=("dilation_metric !== 'overlap_coeff'",),
+                                    click="dilation_metric_multiple = 'overlap_coeff'",
+                                    color=("dilation_metric_multiple === 'overlap_coeff' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric_multiple !== 'overlap_coeff'",),
                                     title="Overlap Coefficient",
                                     class_="flex-grow-1 rounded px-4",
                                     style="flex: 1;"
                                 )
                                 vuetify.VBtn(
                                     "Density",
-                                    click="dilation_metric = 'density'",
-                                    color=("dilation_metric === 'density' ? 'white' : 'grey darken-3'",),
-                                    dark=("dilation_metric !== 'density'",),
+                                    click="dilation_metric_multiple = 'density'",
+                                    color=("dilation_metric_multiple === 'density' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric_multiple !== 'density'",),
                                     title="Density",
                                     class_="flex-grow-1 rounded px-4",
                                     style="flex: 1;"
                                 )
                                 vuetify.VBtn(
                                     "Count",
-                                    click="dilation_metric = 'count'",
-                                    color=("dilation_metric === 'count' ? 'white' : 'grey darken-3'",),
-                                    dark=("dilation_metric !== 'count'",),
+                                    click="dilation_metric_multiple = 'count'",
+                                    color=("dilation_metric_multiple === 'count' ? 'white' : 'grey darken-3'",),
+                                    dark=("dilation_metric_multiple !== 'count'",),
                                     title="Count",
                                     class_="flex-grow-1 rounded px-4",
                                     style="flex: 1;"
@@ -524,7 +524,7 @@ def right_drawer(state, ctrl):
                     :data="dilation_data"
                     :channelData="channels"
                     :view-mode="dilation_view_mode"
-                    :metric="dilation_metric"
+                    :metric="dilation_view_mode === 'single' ? dilation_metric_single : dilation_metric_multiple"
                 />
                 """
             )

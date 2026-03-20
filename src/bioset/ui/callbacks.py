@@ -974,26 +974,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
         view_mode = getattr(state, "dilation_view_mode", "single")
         level = getattr(state, "current_hierarchy_level", 0)
 
+        dilation_curves = loader.get_subcombination_dilation_curves(selected, hierarchy_level=level)
+
+        result = {}
         if view_mode == "single":
-            result = {}
-            for ch_name in selected:
-                ch_curves = loader.get_subcombination_dilation_curves([ch_name], hierarchy_level=level)
-                if ch_name in ch_curves:
-                    result[ch_name] = ch_curves[ch_name]
-            state.dilation_data = result
+            for curve_key in dilation_curves:
+                if "|" not in curve_key:
+                    result[curve_key] = dilation_curves[curve_key]
 
         else:
-            result = {}
-            if len(selected) > 1:
-                channel_order = loader.metadata.channels if loader.metadata else []
-                sorted_channels = sorted(selected, key=lambda c: channel_order.index(c) if c in channel_order else 999)
-                combo_key = "|".join(sorted_channels)
-
-                combo_curve = loader._get_multi_channel_dilation_curve_full(sorted_channels, hierarchy_level=level)
-                if combo_curve:
-                    result[combo_key] = combo_curve
-
-            state.dilation_data = result
+            for curve_key in dilation_curves:
+                if "|" in curve_key:
+                    result[curve_key] = dilation_curves[curve_key]
+        state.dilation_data = result
 
         print(f"[callbacks] Dilation data updated: keys={list(state.dilation_data.keys())}")
     
