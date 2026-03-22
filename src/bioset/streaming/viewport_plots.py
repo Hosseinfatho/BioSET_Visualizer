@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import queue
 import sqlite3
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -209,15 +208,25 @@ def _viewport_multi_curve(conn, channels, channel_order, tile_filter, tile_param
 
 
 class ViewportPlotComputer:
-    """Async viewport-local plot computation with debounce + thread pool."""
+    """Async viewport-local plot computation with debounce + thread pool.
 
-    DEBOUNCE_DELAY = 0.30
+    Debouncing is driven by the main-thread poll loop (check_and_apply is
+    called every ~100 ms).  on_camera_moved() just stores the latest request
+    with a timestamp — no threads are spawned.  When check_and_apply() sees
+    a pending request that has been quiet for DEBOUNCE_SECONDS, it submits
+    the work to the executor.  This keeps the VTK interactor callback
+    completely lightweight so interaction is never blocked.
+    """
+
+    DEBOUNCE_SECONDS = 0.80  # wait 800 ms of quiet before computing
 
     def __init__(self):
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viewport_plots")
         self._queue: queue.Queue[ViewportPlotResult] = queue.Queue()
-        self._debounce_lock = threading.Lock()
+
+        # Pending request (set by on_camera_moved, consumed by check_and_apply)
         self._pending: Optional[ViewportPlotRequest] = None
+        self._computing: bool = False  # True while a bg job is running
 
         self._db_path: Optional[Path] = None
         self._channel_order: List[str] = []
@@ -254,16 +263,17 @@ class ViewportPlotComputer:
     def update_min_channels(self, min_ch: int):
         self._min_channels = min_ch
 
-    # ── Camera move trigger ──
+    # ── Camera move trigger (lightweight — no threads) ──
 
     def on_camera_moved(self, tile_x_range: tuple[int, int], tile_y_range: tuple[int, int]):
-        """Called from main thread on EndInteractionEvent."""
+        """Called from main thread on EndInteractionEvent.  Just stores the
+        request; the poll loop will submit it after the debounce period."""
         if not self._enabled or not self._channels or self._db_path is None:
             return
         if tile_x_range[1] <= tile_x_range[0] or tile_y_range[1] <= tile_y_range[0]:
             return
 
-        req = ViewportPlotRequest(
+        self._pending = ViewportPlotRequest(
             tile_x_range=tile_x_range,
             tile_y_range=tile_y_range,
             db_path=self._db_path,
@@ -274,18 +284,6 @@ class ViewportPlotComputer:
             z_depth=self._z_depth,
             timestamp=time.monotonic(),
         )
-
-        with self._debounce_lock:
-            self._pending = req
-
-        threading.Thread(target=self._debounce_cb, args=(req,), daemon=True).start()
-
-    def _debounce_cb(self, req: ViewportPlotRequest):
-        time.sleep(self.DEBOUNCE_DELAY)
-        with self._debounce_lock:
-            if self._pending and self._pending.timestamp == req.timestamp:
-                self._pending = None
-                self._executor.submit(self._bg_compute, req)
 
     def _bg_compute(self, req: ViewportPlotRequest):
         """Worker thread: open own DB connection, compute, enqueue result."""
@@ -304,11 +302,29 @@ class ViewportPlotComputer:
             import traceback
             print(f"[viewport_plots] Error: {e}")
             traceback.print_exc()
+        finally:
+            self._computing = False
 
-    # ── Main thread: apply results ──
+    # ── Main thread: debounce + apply results ──
 
     def check_and_apply(self, state) -> bool:
-        """Drain queue and update state. Returns True if anything applied."""
+        """Called every ~100 ms from the poll loop.
+
+        1. If a pending request has been sitting for ≥ DEBOUNCE_SECONDS
+           (meaning no new camera events replaced it), submit it for
+           background computation.
+        2. Drain the result queue and push to trame state.
+        """
+        # --- submit pending request if debounce period elapsed ---
+        req = self._pending
+        if req is not None and not self._computing:
+            age = time.monotonic() - req.timestamp
+            if age >= self.DEBOUNCE_SECONDS:
+                self._pending = None
+                self._computing = True
+                self._executor.submit(self._bg_compute, req)
+
+        # --- drain results ---
         result = None
         while True:
             try:
