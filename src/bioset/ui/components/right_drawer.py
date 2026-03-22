@@ -27,17 +27,24 @@ def right_drawer(state, ctrl):
         with html.Div(classes="px-4 py-3"):
             html.Div("Marker Combinations", classes="text-overline mb-2 text-center", style="color: white;")
  
-            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+            with html.Div(classes="d-flex justify-center mb-2 align-center flex-wrap", style="gap: 4px;"):
                 with vuetify.VBtnToggle(
-                    v_model=("upset_view_mode", "global"),
+                    v_model=("upset_scope_mode", "global"),
                     mandatory=True,
                     dense=True,
-                    classes="mr-2",
                     style="background: transparent;",
                 ):
-                    vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
-                    vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
-                    vuetify.VBtn("View", value="viewport", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Global", value="global", x_small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Local", value="local", x_small=True, classes="text-capitalize", outlined=True)
+
+                with vuetify.VBtnToggle(
+                    v_model=("upset_channel_mode", "all"),
+                    mandatory=True,
+                    dense=True,
+                    style="background: transparent;",
+                ):
+                    vuetify.VBtn("All", value="all", x_small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Selected", value="selected", x_small=True, classes="text-capitalize", outlined=True)
 
                 # UpSet Filter button
                 with vuetify.VBtn(icon=True, small=True, click="upset_filter_dialog = true"):
@@ -75,7 +82,7 @@ def right_drawer(state, ctrl):
                     vuetify.VIcon("mdi-chevron-left", small=True)
 
                 html.Span(
-                    "{{ upset_offset + 1 }} - {{ Math.min(upset_offset + upset_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)) }}",
+                    "{{ upset_offset + 1 }} - {{ Math.min(upset_offset + upset_limit, ((upset_scope_mode === 'local' ? (upset_channel_mode === 'selected' ? upset_data_viewport_selected.length : upset_data_viewport.length) : (upset_channel_mode === 'selected' ? upset_data_local.length : upset_data.length)))) }}",
                     classes="text-caption mx-2",
                     style="color: white; min-width: 50px; text-align: center;"
                 )
@@ -84,7 +91,7 @@ def right_drawer(state, ctrl):
                         icon=True,
                         small=True,
                         disabled=(
-                                "upset_offset + upset_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)",),
+                                "upset_offset + upset_limit >= ((upset_scope_mode === 'local' ? (upset_channel_mode === 'selected' ? upset_data_viewport_selected.length : upset_data_viewport.length) : (upset_channel_mode === 'selected' ? upset_data_local.length : upset_data.length)))",),
                         click="upset_offset = upset_offset + 1"
                 ):
                     vuetify.VIcon("mdi-chevron-right", small=True)
@@ -121,7 +128,7 @@ def right_drawer(state, ctrl):
                                 vuetify.VIcon("mdi-chevron-left", small=True)
 
                             html.Span(
-                                "{{ upset_expanded_offset + 1 }} - {{ Math.min(upset_expanded_offset + upset_expanded_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)) }}",
+                                "{{ upset_expanded_offset + 1 }} - {{ Math.min(upset_expanded_offset + upset_expanded_limit, ((upset_scope_mode === 'local' ? (upset_channel_mode === 'selected' ? upset_data_viewport_selected.length : upset_data_viewport.length) : (upset_channel_mode === 'selected' ? upset_data_local.length : upset_data.length)))) }}",
                                 classes="text-caption mx-2",
                                 style="color: white; min-width: 50px; text-align: center;"
                             )
@@ -132,7 +139,7 @@ def right_drawer(state, ctrl):
                                     color="white",
                                     dark=True,
                                     disabled=(
-                                            "upset_expanded_offset + upset_expanded_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)",),
+                                            "upset_expanded_offset + upset_expanded_limit >= ((upset_scope_mode === 'local' ? (upset_channel_mode === 'selected' ? upset_data_viewport_selected.length : upset_data_viewport.length) : (upset_channel_mode === 'selected' ? upset_data_local.length : upset_data.length)))",),
                                     click="upset_expanded_offset = upset_expanded_offset + 1"
                             ):
                                 vuetify.VIcon("mdi-chevron-right", small=True)
@@ -143,8 +150,10 @@ def right_drawer(state, ctrl):
                                 :data="upset_data"
                                 :dataLocal="upset_data_local"
                                 :dataViewport="upset_data_viewport"
+                                :dataViewportSelected="upset_data_viewport_selected"
                                 :channelData="channels"
-                                :view-mode="upset_view_mode"
+                                :scope-mode="upset_scope_mode"
+                                :channel-mode="upset_channel_mode"
                                 :metric="upset_metric"
                                 :offset="upset_expanded_offset"
                                 :limit="upset_expanded_limit"
@@ -247,8 +256,10 @@ def right_drawer(state, ctrl):
                     :data="upset_data"
                     :dataLocal="upset_data_local"
                     :dataViewport="upset_data_viewport"
+                    :dataViewportSelected="upset_data_viewport_selected"
                     :channelData="channels"
-                    :view-mode="upset_view_mode"
+                    :scope-mode="upset_scope_mode"
+                    :channel-mode="upset_channel_mode"
                     :metric="upset_metric"
                     :offset="upset_offset"
                     :limit="upset_limit"
@@ -263,17 +274,24 @@ def right_drawer(state, ctrl):
         with html.Div(classes="px-4 py-3"):
             html.Div("Marker Coverage", classes="text-overline mb-2 text-center", style="color: white;")
   
-            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+            with html.Div(classes="d-flex justify-center mb-2 align-center flex-wrap", style="gap: 4px;"):
                 with vuetify.VBtnToggle(
-                    v_model=("bar_view_mode", "global"),
+                    v_model=("bar_scope_mode", "global"),
                     mandatory=True,
                     dense=True,
-                    classes="mr-2",
                     style="background: transparent;",
                 ):
-                    vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
-                    vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
-                    vuetify.VBtn("View", value="viewport", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Global", value="global", x_small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Local", value="local", x_small=True, classes="text-capitalize", outlined=True)
+
+                with vuetify.VBtnToggle(
+                    v_model=("bar_channel_mode", "all"),
+                    mandatory=True,
+                    dense=True,
+                    style="background: transparent;",
+                ):
+                    vuetify.VBtn("All", value="all", x_small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Selected", value="selected", x_small=True, classes="text-capitalize", outlined=True)
 
                 # Bar Filter button
                 with vuetify.VBtn(icon=True, small=True, click="bar_filter_dialog = true"):
@@ -311,7 +329,7 @@ def right_drawer(state, ctrl):
                     vuetify.VIcon("mdi-chevron-left", small=True)
 
                 html.Span(
-                    "{{ bar_offset + 1 }} - {{ Math.min(bar_offset + bar_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)) }}",
+                    "{{ bar_offset + 1 }} - {{ Math.min(bar_offset + bar_limit, ((bar_scope_mode === 'local' ? (bar_channel_mode === 'selected' ? bar_data_viewport_selected.length : bar_data_viewport.length) : (bar_channel_mode === 'selected' ? bar_data_local.length : bar_data.length)))) }}",
                     classes="text-caption mx-2",
                     style="color: white; min-width: 50px; text-align: center;"
                 )
@@ -320,7 +338,7 @@ def right_drawer(state, ctrl):
                         icon=True,
                         small=True,
                         disabled=(
-                                "bar_offset + bar_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)",),
+                                "bar_offset + bar_limit >= ((bar_scope_mode === 'local' ? (bar_channel_mode === 'selected' ? bar_data_viewport_selected.length : bar_data_viewport.length) : (bar_channel_mode === 'selected' ? bar_data_local.length : bar_data.length)))",),
                         click="bar_offset = bar_offset + 1"
                 ):
                     vuetify.VIcon("mdi-chevron-right", small=True)
@@ -357,7 +375,7 @@ def right_drawer(state, ctrl):
                                 vuetify.VIcon("mdi-chevron-left", small=True)
 
                             html.Span(
-                                "{{ bar_expanded_offset + 1 }} - {{ Math.min(bar_expanded_offset + bar_expanded_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)) }}",
+                                "{{ bar_expanded_offset + 1 }} - {{ Math.min(bar_expanded_offset + bar_expanded_limit, ((bar_scope_mode === 'local' ? (bar_channel_mode === 'selected' ? bar_data_viewport_selected.length : bar_data_viewport.length) : (bar_channel_mode === 'selected' ? bar_data_local.length : bar_data.length)))) }}",
                                 classes="text-caption mx-2",
                                 style="color: white; min-width: 50px; text-align: center;"
                             )
@@ -368,7 +386,7 @@ def right_drawer(state, ctrl):
                                     color="white",
                                     dark=True,
                                     disabled=(
-                                            "bar_expanded_offset + bar_expanded_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)",),
+                                            "bar_expanded_offset + bar_expanded_limit >= ((bar_scope_mode === 'local' ? (bar_channel_mode === 'selected' ? bar_data_viewport_selected.length : bar_data_viewport.length) : (bar_channel_mode === 'selected' ? bar_data_local.length : bar_data.length)))",),
                                     click="bar_expanded_offset = bar_expanded_offset + 1"
                             ):
                                 vuetify.VIcon("mdi-chevron-right", small=True)
@@ -379,8 +397,10 @@ def right_drawer(state, ctrl):
                                 :data="bar_data"
                                 :dataLocal="bar_data_local"
                                 :dataViewport="bar_data_viewport"
+                                :dataViewportSelected="bar_data_viewport_selected"
                                 :channelData="channels"
-                                :view-mode="bar_view_mode"
+                                :scope-mode="bar_scope_mode"
+                                :channel-mode="bar_channel_mode"
                                 :offset="bar_expanded_offset"
                                 :limit="bar_expanded_limit"
                                 :width="1200"
@@ -442,8 +462,10 @@ def right_drawer(state, ctrl):
                     :data="bar_data"
                     :dataLocal="bar_data_local"
                     :dataViewport="bar_data_viewport"
+                    :dataViewportSelected="bar_data_viewport_selected"
                     :channelData="channels"
-                    :view-mode="bar_view_mode"
+                    :scope-mode="bar_scope_mode"
+                    :channel-mode="bar_channel_mode"
                     :offset="bar_offset"
                     :limit="bar_limit"
                     @click="trigger('bar_click', $event)"
@@ -456,16 +478,24 @@ def right_drawer(state, ctrl):
         with html.Div(classes="px-4 py-3"):
             html.Div("Dilation Curves", classes="text-overline mb-2 text-center", style="color: white;")
 
-            with html.Div(classes="d-flex justify-center mb-2 align-center"):
+            with html.Div(classes="d-flex justify-center mb-2 align-center flex-wrap", style="gap: 4px;"):
+                with vuetify.VBtnToggle(
+                        v_model=("dilation_scope_mode", "global"),
+                        mandatory=True,
+                        dense=True,
+                        style="background: transparent;",
+                ):
+                    vuetify.VBtn("Global", value="global", x_small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Local", value="local", x_small=True, classes="text-capitalize", outlined=True)
+
                 with vuetify.VBtnToggle(
                         v_model=("dilation_view_mode", "single"),
                         mandatory=True,
                         dense=True,
-                        classes="mr-2",
                         style="background: transparent;",
                 ):
-                    vuetify.VBtn("Single", value="single", small=True, classes="text-capitalize", outlined=True)
-                    vuetify.VBtn("Multiple", value="multiple", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Single", value="single", x_small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("Multiple", value="multiple", x_small=True, classes="text-capitalize", outlined=True)
 
                 # Filter button
                 with vuetify.VBtn(icon=True, small=True,
@@ -545,7 +575,7 @@ def right_drawer(state, ctrl):
             vuetify.Template(
                 """
                 <linechart
-                    :data="dilation_data"
+                    :data="dilation_scope_mode === 'local' ? dilation_data_viewport : dilation_data"
                     :channelData="channels"
                     :view-mode="dilation_view_mode"
                     :metric="dilation_view_mode === 'single' ? dilation_metric_single : dilation_metric_multiple"

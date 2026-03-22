@@ -116,6 +116,7 @@ def init_state(state):
     # Dilation Lineplot
     state.setdefault("dilation_data", {})
     state.setdefault("dilation_view_mode", "single")  # one of: ["single", "multiple"]
+    state.setdefault("dilation_scope_mode", "global")  # "global" (all tiles) or "local" (viewport tiles)
     state.setdefault("dilation_metric_single", "density")  # always fixed to density
     state.setdefault("dilation_metric_multiple", "iou")  # one of: ["iou", "overlap_coeff", "count", "density"]
     state.setdefault("dilation_filter_dialog", False)
@@ -127,13 +128,18 @@ def init_state(state):
     state.setdefault("bar_expanded_offset", 0)
     state.setdefault("bar_expanded_limit", 50)
     
-    # View mode toggles ("global", "local", or "viewport")
-    state.setdefault("upset_view_mode", "global")
-    state.setdefault("bar_view_mode", "global")
+    # Scope toggles: "global" (all tiles) vs "local" (viewport tiles only)
+    state.setdefault("upset_scope_mode", "global")
+    state.setdefault("bar_scope_mode", "global")
+    # Channel toggles: "all" (all channels in data) vs "selected" (active channels only)
+    state.setdefault("upset_channel_mode", "all")
+    state.setdefault("bar_channel_mode", "all")
 
     # Viewport-local plot data (computed from visible tiles only)
-    state.setdefault("upset_data_viewport", [])
-    state.setdefault("bar_data_viewport", [])
+    state.setdefault("upset_data_viewport", [])       # all channels, viewport tiles
+    state.setdefault("upset_data_viewport_selected", [])  # active channels, viewport tiles
+    state.setdefault("bar_data_viewport", [])          # all channels, viewport tiles
+    state.setdefault("bar_data_viewport_selected", []) # active channels, viewport tiles
     state.setdefault("dilation_data_viewport", {})
     
     # Channels - all channels
@@ -470,12 +476,17 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_upset_data_local'):
             ctrl.update_upset_data_local()
 
-    @state.change("upset_view_mode")
-    def on_upset_view_mode_change(upset_view_mode, **kwargs):
+    @state.change("upset_scope_mode")
+    def on_upset_scope_mode_change(upset_scope_mode, **kwargs):
         state.upset_offset = 0
         state.upset_expanded_offset = 0
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
+
+    @state.change("upset_channel_mode")
+    def on_upset_channel_mode_change(upset_channel_mode, **kwargs):
+        state.upset_offset = 0
+        state.upset_expanded_offset = 0
 
     @state.change("bar_data")
     def on_bar_data_change(bar_data, **kwargs):
@@ -484,10 +495,20 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
 
-    @state.change("bar_view_mode")
-    def on_bar_view_mode_change(bar_view_mode, **kwargs):
+    @state.change("bar_scope_mode")
+    def on_bar_scope_mode_change(bar_scope_mode, **kwargs):
         state.bar_offset = 0
         state.bar_expanded_offset = 0
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
+
+    @state.change("bar_channel_mode")
+    def on_bar_channel_mode_change(bar_channel_mode, **kwargs):
+        state.bar_offset = 0
+        state.bar_expanded_offset = 0
+
+    @state.change("dilation_scope_mode")
+    def on_dilation_scope_mode_change(dilation_scope_mode, **kwargs):
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 

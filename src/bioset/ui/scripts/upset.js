@@ -3,8 +3,10 @@ Vue.component('upset-plot', {
     data: Array,
     dataLocal: Array,
     dataViewport: Array,
+    dataViewportSelected: Array,
     channelData: Array,
-    viewMode: String,
+    scopeMode: String,
+    channelMode: String,
     metric: {
       type: String,
       default: 'iou'
@@ -31,7 +33,9 @@ Vue.component('upset-plot', {
     data: 'render',
     dataLocal: 'render',
     dataViewport: 'render',
-    viewMode: 'render',
+    dataViewportSelected: 'render',
+    scopeMode: 'render',
+    channelMode: 'render',
     metric: 'render',
     offset: 'render',
     limit: 'render',
@@ -46,7 +50,9 @@ Vue.component('upset-plot', {
   methods: {
     render() {
       if (!this.$refs.container || !window.UpSetJS) return;
-      const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : this.viewMode === 'viewport' ? (this.dataViewport || []) : (this.data || []);
+      const sourceData = this.scopeMode === 'local'
+        ? (this.channelMode === 'selected' ? (this.dataViewportSelected || []) : (this.dataViewport || []))
+        : (this.channelMode === 'selected' ? (this.dataLocal || []) : (this.data || []));
       if (sourceData.length === 0) {
             this.$refs.container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel is selected</div>';
             return;

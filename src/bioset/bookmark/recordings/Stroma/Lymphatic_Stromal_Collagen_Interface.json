@@ -1,0 +1,154 @@
+{
+  "id": "3a9eb866-6c2e-45c5-a8af-46ac52739770",
+  "title": "Lymphatic-Stromal Collagen Interface",
+  "category": "Stroma",
+  "created": "2026-03-22T20:06:30Z",
+  "updated": "2026-03-22T20:08:42Z",
+  "notes": "This region displays a spatially stratified pattern with dense, branching fibrillar collagen (SHG) concentrated at the upper stromal boundary and diffuse Podoplanin signal dominating the mid and lower tissue compartments. The collagen network forms a structured extracellular matrix layer consistent with desmoplastic stroma, while the broad Podoplanin coverage indicates abundant cancer-associated fibroblasts or lymphatic endothelium throughout the region. The spatial separation of these two signals marks a distinct stromal-lymphatic interface, suggesting active stromal remodeling at the tumor periphery.",
+  "description": "This region displays a spatially stratified pattern with dense, branching fibrillar collagen (SHG) concentrated at the upper stromal boundary and diffuse Podoplanin signal dominating the mid and lower tissue compartments. The collagen network forms a structured extracellular matrix layer consistent with desmoplastic stroma, while the broad Podoplanin coverage indicates abundant cancer-associated fibroblasts or lymphatic endothelium throughout the region. The spatial separation of these two signals marks a distinct stromal-lymphatic interface, suggesting active stromal remodeling at the tumor periphery.",
+  "camera": {
+    "position": [
+      1324.0365176282482,
+      87.8115702412441,
+      573.4399999999998
+    ],
+    "focalPoint": [
+      1324.0365176282482,
+      87.8115702412441,
+      0.0
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 56,
+      "name": "Podoplanin",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 69,
+      "name": "Collagen (SHG)",
+      "color": "#0000FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    56,
+    69
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1600,
+    "height": 812
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          1324.0365176282482,
+          87.8115702412441,
+          573.4399999999998
+        ],
+        "focalPoint": [
+          1324.0365176282482,
+          87.8115702412441,
+          0.0
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "This region displays a spatially stratified pattern with dense, branching fibrillar collagen (SHG) concentrated at the upper stromal boundary and diffuse Podoplanin signal dominating the mid and lower tissue compartments. The collagen network forms a structured extracellular matrix layer consistent with desmoplastic stroma, while the broad Podoplanin coverage indicates abundant cancer-associated fibroblasts or lymphatic endothelium throughout the region. The spatial separation of these two signals marks a distinct stromal-lymphatic interface, suggesting active stromal remodeling at the tumor periphery.",
+      "comments": [],
+      "channels": [
+        {
+          "id": 56,
+          "name": "Podoplanin",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 69,
+          "name": "Collagen (SHG)",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        56,
+        69
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1600,
+        "height": 812
+      },
+      "optional_LOD": {
+        "component": 2,
+        "roi": {
+          "x0": 1807,
+          "x1": 2727,
+          "y0": 0,
+          "y1": 447
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Label: Podoplanin, Collagen (SHG)"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"Collagen (SHG)\": [\n      \"fibrillar ECM scaffold\"\n    ],\n    \"Collagen (SHG)+Podoplanin\": [\n      \"desmoplastic stromal niche\"\n    ],\n    \"Collagen (SHG)/Podoplanin\": [\n      \"stromal remodeling front\"\n    ],\n    \"Podoplanin\": [\n      \"lymphatic/CAF stroma\"\n    ]\n  },\n  \"overall\": [\n    \"desmoplastic tumor stroma\"\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Suggest channels to add alongside: Podoplanin, Collagen (SHG)"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"suggestions\": [\n    {\n      \"channel\": \"pMLC2\",\n      \"priority\": \"high\",\n      \"reason\": \"Highest mean intensity among named markers (1003.6); marks actomyosin contractility in myofibroblasts/CAFs, directly reporting active stromal remodeling co-localised with podoplanin-positive CAFs and fibrillar collagen.\"\n    },\n    {\n      \"channel\": \"S100B\",\n      \"priority\": \"high\",\n      \"reason\": \"Broad coverage (7.84% of voxels); distinguishes neural-crest-derived melanoma cells and Schwann cells from podoplanin-positive CAFs, clarifying cellular identity within the desmoplastic stromal niche.\"\n    },\n    {\n      \"channel\": \"SOX9\",\n      \"priority\": \"medium\",\n      \"reason\": \"CAF/progenitor transcription factor; marks the desmoplastic fibroblast subpopulation driving ECM deposition alongside collagen SHG signal, helping define the fibrillar ECM scaffold origin.\"\n    },\n    {\n      \"channel\": \"CD163\",\n      \"priority\": \"medium\",\n      \"reason\": \"Good coverage (4.82%) and strong mean intensity (332.2); identifies M2-polarised tumour-associated macrophages co-residing in the desmoplastic stromal niche around lymphatic/CAF stroma.\"\n    },\n    {\n      \"channel\": \"MART1\",\n      \"priority\": \"medium\",\n      \"reason\": \"Melanoma-specific marker; confirms or excludes tumour cell presence within the podoplanin-rich stromal zone, essential for interpreting the stromal remodeling front in a melanoma context.\"\n    },\n    {\n      \"channel\": \"GranzymeB\",\n      \"priority\": \"medium\",\n      \"reason\": \"High mean intensity (507.9) in a spatially restricted population; reveals cytotoxic immune activity at the stromal remodeling front, contextualising immune exclusion by the desmoplastic niche.\"\n    }\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Suggest bookmark text"
+    },
+    {
+      "role": "assistant",
+      "content": "Bookmark suggestion applied: Lymphatic-Stromal Collagen Interface (Stroma)."
+    }
+  ],
+  "chat_history_updated": "2026-03-22T20:08:42Z",
+  "optional_LOD": {
+    "component": 2,
+    "roi": {
+      "x0": 1807,
+      "x1": 2727,
+      "y0": 0,
+      "y1": 447
+    }
+  }
+}

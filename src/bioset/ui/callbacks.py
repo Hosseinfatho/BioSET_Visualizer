@@ -1043,23 +1043,24 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return None
 
     def sync_viewport_plots_enabled():
-        """Enable/disable viewport plot computation based on whether any plot uses viewport mode."""
+        """Enable/disable viewport plot computation based on whether any plot uses local scope."""
         vp = _refs.get("viewport_plots")
         if not vp:
             return
-        any_viewport = (
-            getattr(state, "upset_view_mode", "global") == "viewport"
-            or getattr(state, "bar_view_mode", "global") == "viewport"
+        any_local_scope = (
+            getattr(state, "upset_scope_mode", "global") == "local"
+            or getattr(state, "bar_scope_mode", "global") == "local"
+            or getattr(state, "dilation_scope_mode", "global") == "local"
         )
-        vp.set_enabled(any_viewport)
+        vp.set_enabled(any_local_scope)
 
-        if any_viewport:
-            # Sync current params
+        if any_local_scope:
+            # Sync active channel names for filtering viewport results
             active_ids = state.active_channels or []
             channels_list = state.channels or []
             id_to_name = {ch["id"]: ch["name"] for ch in channels_list}
-            channel_names = [id_to_name[ch_id] for ch_id in active_ids if ch_id in id_to_name]
-            vp.update_channels(channel_names)
+            active_names = [id_to_name[ch_id] for ch_id in active_ids if ch_id in id_to_name]
+            vp.update_active_channels(active_names)
             vp.update_dilation(getattr(state, "current_dilation", 0.0))
             vp.update_min_channels(int(getattr(state, "upset_min_channels", 2)))
 
@@ -1489,7 +1490,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot explain plot - Biomni not initialised")
             return
 
-        source_data = list(state.upset_data_local if state.upset_view_mode == "local" else state.upset_data)
+        # Pick the data source matching current scope + channel toggles
+        if state.upset_scope_mode == "local":
+            source_data = list(state.upset_data_viewport_selected if state.upset_channel_mode == "selected" else state.upset_data_viewport)
+        else:
+            source_data = list(state.upset_data_local if state.upset_channel_mode == "selected" else state.upset_data)
         offset = state.upset_offset
         limit = state.upset_limit
         visible_data = source_data[offset:offset + limit]
@@ -1501,7 +1506,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         plot_payload = {
             "type": "upset",
-            "view_mode": state.upset_view_mode,
+            "scope_mode": state.upset_scope_mode,
+            "channel_mode": state.upset_channel_mode,
             "selected_channels": list(state.upset_selected_channels or []),
             "active_channels": active_channel_names,
             "filters": {
@@ -1544,7 +1550,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot explain plot - Biomni not initialised")
             return
 
-        raw_data = list(state.bar_data_local if state.bar_view_mode == "local" else state.bar_data)
+        # Pick the data source matching current scope + channel toggles
+        if state.bar_scope_mode == "local":
+            raw_data = list(state.bar_data_viewport_selected if state.bar_channel_mode == "selected" else state.bar_data_viewport)
+        else:
+            raw_data = list(state.bar_data_local if state.bar_channel_mode == "selected" else state.bar_data)
         offset = state.bar_offset
         limit = state.bar_limit
         source_data = [
@@ -1560,7 +1570,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         plot_payload = {
             "type": "bar",
-            "view_mode": state.bar_view_mode,
+            "scope_mode": state.bar_scope_mode,
+            "channel_mode": state.bar_channel_mode,
             "selected_channels": list(state.bar_selected_channels or []),
             "active_channels": active_channel_names,
             "filters": {

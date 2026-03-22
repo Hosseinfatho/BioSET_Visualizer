@@ -248,7 +248,8 @@ class ViewportPlotComputer:
         self._channel_order: List[str] = []
         self._z_depth: int = 1
 
-        self._channels: List[str] = []
+        self._channels: List[str] = []          # active channels (for dilation curves + filtering)
+        self._active_channels: List[str] = []   # active channel names (for filtering viewport results)
         self._dilation: float = 0.0
         self._min_channels: int = 2
         self._enabled: bool = False
@@ -264,6 +265,7 @@ class ViewportPlotComputer:
         """Called when analysis is cleared."""
         self._db_path = None
         self._channels = []
+        self._active_channels = []
         self._channel_order = []
 
     def set_enabled(self, enabled: bool):
@@ -271,6 +273,11 @@ class ViewportPlotComputer:
         print(f"[viewport_plots] Enabled: {enabled}")
 
     def update_channels(self, channel_names: List[str]):
+        self._channels = list(channel_names)
+
+    def update_active_channels(self, channel_names: List[str]):
+        """Set active channel names used for dilation curves and filtering viewport results."""
+        self._active_channels = list(channel_names)
         self._channels = list(channel_names)
 
     def update_dilation(self, dilation: float):
@@ -284,7 +291,7 @@ class ViewportPlotComputer:
     def on_camera_moved(self, tile_x_range: tuple[int, int], tile_y_range: tuple[int, int]):
         """Called from main thread on EndInteractionEvent.  Just stores the
         request; the poll loop will submit it after the debounce period."""
-        if not self._enabled or not self._channels or self._db_path is None:
+        if not self._enabled or self._db_path is None:
             return
         if tile_x_range[1] <= tile_x_range[0] or tile_y_range[1] <= tile_y_range[0]:
             return
@@ -351,13 +358,30 @@ class ViewportPlotComputer:
         if result is None:
             return False
 
+        # Full viewport data (all channels)
         state.bar_data_viewport = result.bar_data
         state.upset_data_viewport = result.upset_data
         state.dilation_data_viewport = result.dilation_data
+
+        # Filtered viewport data (active/selected channels only)
+        active_set = set(self._active_channels)
+        state.bar_data_viewport_selected = [
+            item for item in result.bar_data if item[0] in active_set
+        ] if active_set else []
+        state.upset_data_viewport_selected = [
+            item for item in result.upset_data
+            if all(ch in active_set for ch in item["channels"])
+        ] if active_set else []
+
         try:
-            state.dirty("bar_data_viewport", "upset_data_viewport", "dilation_data_viewport")
+            state.dirty(
+                "bar_data_viewport", "upset_data_viewport", "dilation_data_viewport",
+                "bar_data_viewport_selected", "upset_data_viewport_selected",
+            )
         except Exception:
             pass
         print(f"[viewport_plots] Applied to state: bar={len(result.bar_data)}, "
-              f"upset={len(result.upset_data)}, dilation={len(result.dilation_data)}")
+              f"upset={len(result.upset_data)}, dilation={len(result.dilation_data)}, "
+              f"bar_selected={len(state.bar_data_viewport_selected)}, "
+              f"upset_selected={len(state.upset_data_viewport_selected)}")
         return True
