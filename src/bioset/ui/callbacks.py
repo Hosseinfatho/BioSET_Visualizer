@@ -36,6 +36,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "heatmap": None,
         "mesh_manager": None,
         "heatmap_lod": None,
+        "viewport_plots": None,
         "renderer": None,
         "label_manager": None,
         "biomni_client": None,
@@ -75,6 +76,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the heatmap LOD renderer reference."""
         _refs["heatmap_lod"] = heatmap_lod
         print(f"[callbacks] Heatmap LOD set: {heatmap_lod}")
+
+    def set_viewport_plots(viewport_plots):
+        """Set the viewport plot computer reference."""
+        _refs["viewport_plots"] = viewport_plots
+        print(f"[callbacks] Viewport plots set: {viewport_plots}")
 
     def set_interactor(interactor):
         """Set the main VTK interactor for bookmark flag picking."""
@@ -407,14 +413,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
             loader = _refs["analysis_loader"]
             metadata = loader.load_from_bytes(file_bytes)
 
-            # Notify HeatmapLOD of new analysis context
+            # Notify HeatmapLOD and ViewportPlotComputer of new analysis context
+            z_depth = 1
+            bounds = metadata.volume_bounds
+            if bounds and "z" in bounds:
+                z_depth = max(1, bounds["z"][1] - bounds["z"][0])
+
             heatmap_lod = _refs.get("heatmap_lod")
             if heatmap_lod and loader.db_path:
-                z_depth = 1
-                bounds = metadata.volume_bounds
-                if bounds and "z" in bounds:
-                    z_depth = max(1, bounds["z"][1] - bounds["z"][0])
                 heatmap_lod.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
+            vp = _refs.get("viewport_plots")
+            if vp and loader.db_path:
+                vp.set_analysis(
                     db_path=loader.db_path,
                     channel_order=list(metadata.channels),
                     z_depth=z_depth,
@@ -1000,6 +1015,59 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         print(f"[callbacks] Dilation data updated: {len(result)}/{len(all_keys)} curves shown")
     
+    def _compute_current_tile_ranges():
+        """Compute tile grid ranges for the current viewport. Returns ((gx0, gx1), (gy0, gy1)) or None."""
+        streamer = _refs.get("streamer")
+        renderer = _refs.get("renderer")
+        vp = _refs.get("viewport_plots")
+        if not streamer or not renderer or not vp:
+            return None
+        try:
+            from bioset.streaming.lod import compute_visible_xy_roi_vox
+            bounds = streamer._volume_bounds_world(0)
+            sp = streamer._spacing_for_component(0)
+            _, ydim, xdim = streamer._dims_for_component(0)
+            roi = compute_visible_xy_roi_vox(
+                renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
+                x_dim=xdim, y_dim=ydim, margin_vox=0,
+            )
+            # DB tile coords are always in level-0 grid units (128 voxels)
+            BASE_TILE = 128
+            gx0 = roi.x0 // BASE_TILE
+            gx1 = (roi.x1 + BASE_TILE - 1) // BASE_TILE
+            gy0 = roi.y0 // BASE_TILE
+            gy1 = (roi.y1 + BASE_TILE - 1) // BASE_TILE
+            return (gx0, gx1), (gy0, gy1)
+        except Exception as e:
+            print(f"[viewport_plots] ROI computation error: {e}")
+            return None
+
+    def sync_viewport_plots_enabled():
+        """Enable/disable viewport plot computation based on whether any plot uses viewport mode."""
+        vp = _refs.get("viewport_plots")
+        if not vp:
+            return
+        any_viewport = (
+            getattr(state, "upset_view_mode", "global") == "viewport"
+            or getattr(state, "bar_view_mode", "global") == "viewport"
+        )
+        vp.set_enabled(any_viewport)
+
+        if any_viewport:
+            # Sync current params
+            active_ids = state.active_channels or []
+            channels_list = state.channels or []
+            id_to_name = {ch["id"]: ch["name"] for ch in channels_list}
+            channel_names = [id_to_name[ch_id] for ch_id in active_ids if ch_id in id_to_name]
+            vp.update_channels(channel_names)
+            vp.update_dilation(getattr(state, "current_dilation", 0.0))
+            vp.update_min_channels(int(getattr(state, "upset_min_channels", 2)))
+
+            # Trigger immediate computation with current viewport
+            ranges = _compute_current_tile_ranges()
+            if ranges:
+                vp.on_camera_moved(ranges[0], ranges[1])
+
     def reset_camera():
         """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
         streamer = _refs.get("streamer")
@@ -2201,6 +2269,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
+    ctrl.set_viewport_plots = set_viewport_plots
+    ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
     ctrl.trigger("on_hover")(on_hover)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer

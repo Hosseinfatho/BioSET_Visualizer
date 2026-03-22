@@ -84,6 +84,9 @@ def main():
                         server_state = server.state
                         if scene.heatmap_lod.check_and_apply(scene.heatmap, server_state):
                             updated = True
+                    if scene.viewport_plots is not None:
+                        if scene.viewport_plots.check_and_apply(server.state):
+                            updated = True
                     ctrl.check_label_setup()
                     if updated:
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
@@ -129,6 +132,8 @@ def main():
         ctrl.setup_right_click_picker(scene.interactor)
     if scene.heatmap_lod is not None:
         ctrl.set_heatmap_lod(scene.heatmap_lod)
+    if scene.viewport_plots is not None:
+        ctrl.set_viewport_plots(scene.viewport_plots)
     if scene.mesh_manager is not None:
         ctrl.set_mesh_manager(scene.mesh_manager)
     if scene.heatmap_lod is not None:

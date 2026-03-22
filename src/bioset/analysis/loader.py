@@ -881,6 +881,258 @@ class AnalysisLoader:
         return [dict(row) for row in cursor.fetchall()]
 
     # ──────────────────────────────────────────────
+    # Viewport-local queries (metrics for selected tiles)
+    # ──────────────────────────────────────────────
+
+    @staticmethod
+    def _tile_filter_sql(tile_coords: list[tuple[int, int]], table_prefix: str = "") -> tuple[str, list]:
+        """Build SQL WHERE clause and params for filtering by (tile_x0, tile_y0) pairs.
+
+        Returns (clause_str, params_list) where clause_str is like
+        "(t.tile_x0 = ? AND t.tile_y0 = ?) OR (t.tile_x0 = ? AND t.tile_y0 = ?) ..."
+        """
+        prefix = f"{table_prefix}." if table_prefix else ""
+        clauses = []
+        params = []
+        for x0, y0 in tile_coords:
+            clauses.append(f"({prefix}tile_x0 = ? AND {prefix}tile_y0 = ?)")
+            params.extend([x0, y0])
+        return "(" + " OR ".join(clauses) + ")", params
+
+    def get_viewport_metrics(
+        self,
+        tile_coords: list[tuple[int, int]],
+        dilation: float,
+        hierarchy_level: int,
+        min_channels: int = 2,
+        limit: int = 50,
+    ) -> dict:
+        """Compute channel voxels and combination IoU/overlap_coeff for selected tiles.
+
+        Returns:
+            {
+                "channels": {channel_name: {"voxel_count": int, "density": float}, ...},
+                "combinations": [{"channels": [...], "iou": float, "overlap_coeff": float, "sum_inter": int}, ...],
+            }
+        """
+        if not self.is_loaded or not tile_coords:
+            return {"channels": {}, "combinations": []}
+
+        tile_filter, tile_params = self._tile_filter_sql(tile_coords)
+
+        # 1. Per-channel voxel counts for selected tiles
+        query_ch = f'''
+            SELECT channel, SUM(voxel_count) as total_voxels
+            FROM channel_stats
+            WHERE dilation = ? AND hierarchy_level = ?
+              AND {tile_filter}
+            GROUP BY channel
+        '''
+        params_ch = [dilation, hierarchy_level] + tile_params
+        cursor = self._conn.execute(query_ch, params_ch)
+        channel_voxels = {row["channel"]: row["total_voxels"] or 0 for row in cursor}
+
+        # Compute tile volume for density
+        tile_size = self.get_tile_size(hierarchy_level)
+        z_depth = self._get_z_depth()
+        tile_volume = len(tile_coords) * tile_size * tile_size * z_depth
+
+        channel_data = {}
+        for ch, voxels in channel_voxels.items():
+            density = (voxels / tile_volume * 100) if tile_volume > 0 else 0.0
+            channel_data[ch] = {"voxel_count": voxels, "density": density}
+
+        # 2. Combination metrics using tiles.union_count for exact IoU
+        tile_filter_t, tile_params_t = self._tile_filter_sql(tile_coords, table_prefix="t")
+        query_combo = f'''
+            SELECT c.channels, c.channel_count,
+                   SUM(t.inter_count) as sum_inter,
+                   SUM(t.union_count) as sum_union
+            FROM combinations c
+            JOIN tiles t ON c.id = t.combination_id
+            WHERE c.dilation = ? AND c.hierarchy_level = ? AND c.channel_count >= ?
+              AND {tile_filter_t}
+            GROUP BY c.channels
+            HAVING sum_union > 0
+            ORDER BY CAST(SUM(t.inter_count) AS REAL) / SUM(t.union_count) DESC
+            LIMIT ?
+        '''
+        params_combo = [dilation, hierarchy_level, min_channels] + tile_params_t + [limit * 2]
+        cursor = self._conn.execute(query_combo, params_combo)
+
+        combinations = []
+        for row in cursor:
+            channels_str = row["channels"]
+            channels = channels_str.split("|") if channels_str else []
+            if len(channels) != len(set(channels)):
+                continue
+
+            sum_inter = row["sum_inter"] or 0
+            sum_union = row["sum_union"] or 1
+            iou = sum_inter / sum_union if sum_union > 0 else 0.0
+
+            # Overlap coefficient from viewport channel voxels
+            ch_totals = [channel_voxels.get(ch, 0) for ch in channels]
+            min_voxels = min(ch_totals) if ch_totals else 0
+            overlap_coeff = sum_inter / min_voxels if min_voxels > 0 else 0.0
+
+            combinations.append({
+                "channels": channels,
+                "iou": iou,
+                "overlap_coeff": overlap_coeff,
+                "sum_inter": sum_inter,
+            })
+            if len(combinations) >= limit:
+                break
+
+        return {"channels": channel_data, "combinations": combinations}
+
+    def get_viewport_dilation_curves(
+        self,
+        tile_coords: list[tuple[int, int]],
+        channels: list[str],
+        hierarchy_level: int = 0,
+    ) -> dict[str, list[dict]]:
+        """Get dilation curves for subcombinations of channels, restricted to selected tiles.
+
+        Returns same format as get_subcombination_dilation_curves().
+        """
+        if not self.is_loaded or not tile_coords or not channels:
+            return {}
+
+        channel_order = self.metadata.channels if self.metadata else []
+
+        def sort_channels(ch_list):
+            return sorted(ch_list, key=lambda c: channel_order.index(c) if c in channel_order else 999)
+
+        def make_key(ch_list):
+            return "|".join(sort_channels(ch_list))
+
+        tile_filter, tile_params = self._tile_filter_sql(tile_coords)
+        tile_filter_t, tile_params_t = self._tile_filter_sql(tile_coords, table_prefix="t")
+
+        # Tile volume for density
+        tile_size = self.get_tile_size(hierarchy_level)
+        z_depth = self._get_z_depth()
+        tile_volume = len(tile_coords) * tile_size * tile_size * z_depth
+
+        results = {}
+        for size in range(1, len(channels) + 1):
+            for combo in iter_combinations(channels, size):
+                combo_list = list(combo)
+                combo_key = make_key(combo_list)
+
+                if size == 1:
+                    curve = self._viewport_single_channel_curve(
+                        combo_list[0], tile_filter, tile_params, hierarchy_level, tile_volume
+                    )
+                else:
+                    curve = self._viewport_multi_channel_curve(
+                        combo_list, tile_filter, tile_params, tile_filter_t, tile_params_t,
+                        hierarchy_level, tile_volume
+                    )
+
+                if curve:
+                    results[combo_key] = curve
+
+        return results
+
+    def _viewport_single_channel_curve(
+        self, channel, tile_filter, tile_params, hierarchy_level, tile_volume
+    ) -> list[dict]:
+        """Dilation curve for a single channel restricted to viewport tiles."""
+        query = f'''
+            SELECT dilation, SUM(voxel_count) as total_voxels
+            FROM channel_stats
+            WHERE channel = ? AND hierarchy_level = ?
+              AND {tile_filter}
+            GROUP BY dilation
+            ORDER BY dilation
+        '''
+        params = [channel, hierarchy_level] + tile_params
+        try:
+            cursor = self._conn.execute(query, params)
+        except sqlite3.OperationalError:
+            return []
+
+        results = []
+        for row in cursor:
+            total_voxels = row["total_voxels"] or 0
+            density = (total_voxels / tile_volume * 100) if tile_volume > 0 else 0.0
+            results.append({
+                "dilation": row["dilation"],
+                "count": total_voxels,
+                "iou": 1.0,
+                "overlap_coeff": 1.0,
+                "density": density,
+            })
+        return results
+
+    def _viewport_multi_channel_curve(
+        self, channels, tile_filter, tile_params, tile_filter_t, tile_params_t,
+        hierarchy_level, tile_volume
+    ) -> list[dict]:
+        """Dilation curve for a multi-channel combination restricted to viewport tiles."""
+        channel_order = self.metadata.channels if self.metadata else []
+        sorted_channels = sorted(
+            channels, key=lambda c: channel_order.index(c) if c in channel_order else 999
+        )
+        channels_str = "|".join(sorted_channels)
+
+        query = f'''
+            SELECT c.dilation,
+                   SUM(t.inter_count) as sum_inter,
+                   SUM(t.union_count) as sum_union
+            FROM combinations c
+            JOIN tiles t ON c.id = t.combination_id
+            WHERE c.channels = ? AND c.hierarchy_level = ?
+              AND {tile_filter_t}
+            GROUP BY c.dilation
+            ORDER BY c.dilation
+        '''
+        params = [channels_str, hierarchy_level] + tile_params_t
+        cursor = self._conn.execute(query, params)
+        rows = cursor.fetchall()
+
+        if not rows:
+            return []
+
+        results = []
+        for row in rows:
+            dilation_val = row["dilation"]
+            sum_inter = row["sum_inter"] or 0
+            sum_union = row["sum_union"] or 1
+            iou = sum_inter / sum_union if sum_union > 0 else 0.0
+
+            # Overlap coefficient: need per-channel voxels at this dilation for viewport tiles
+            ch_totals = []
+            for ch in channels:
+                ch_query = f'''
+                    SELECT SUM(voxel_count) as total
+                    FROM channel_stats
+                    WHERE channel = ? AND dilation = ? AND hierarchy_level = ?
+                      AND {tile_filter}
+                '''
+                ch_params = [ch, dilation_val, hierarchy_level] + tile_params
+                ch_cursor = self._conn.execute(ch_query, ch_params)
+                ch_row = ch_cursor.fetchone()
+                ch_totals.append(ch_row["total"] or 0 if ch_row else 0)
+
+            min_voxels = min(ch_totals) if ch_totals else 0
+            overlap_coeff = sum_inter / min_voxels if min_voxels > 0 else 0.0
+            density = (sum_inter / tile_volume * 100) if tile_volume > 0 else 0.0
+
+            results.append({
+                "dilation": dilation_val,
+                "count": sum_inter,
+                "iou": iou,
+                "overlap_coeff": overlap_coeff,
+                "density": density,
+            })
+
+        return results
+
+    # ──────────────────────────────────────────────
     # Cleanup
     # ──────────────────────────────────────────────
 

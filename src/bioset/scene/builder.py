@@ -31,6 +31,7 @@ from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, color_name_to_rgb
 from ..streaming import VolumeStreamer
 from ..streaming.heatmap_lod import HeatmapLOD
+from ..streaming.viewport_plots import ViewportPlotComputer
 from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
 from .meshes import MeshManager
@@ -140,9 +141,10 @@ class VtkScene:
     streamer: Optional[VolumeStreamer] = None
     heatmap: Optional[HeatmapRenderer] = None
     heatmap_lod: Optional[HeatmapLOD] = None
+    viewport_plots: Optional[ViewportPlotComputer] = None
     nov_renderer: Optional[vtkRenderer] = None
     nov_render_window: Optional[vtkRenderWindow] = None
-    mesh_manager: Optional[MeshManager] = None  
+    mesh_manager: Optional[MeshManager] = None
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -193,6 +195,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     nov_renderer: Optional[vtkRenderer] = None
     nov_render_window: Optional[vtkRenderWindow] = None
     _heatmap_lod_ref: list = [None]  # mutable so _on_end_interaction closure can access it
+    _viewport_plots_ref: list = [None]
 
     heatmap = HeatmapRenderer(heatmap_fill_renderer, outline_renderer=heatmap_outline_renderer)
 
@@ -234,12 +237,33 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             _create_nov_axis_renderer(nov_renderer, nov_render_window, streamer)
 
             def _on_end_interaction(obj, evt):
-                # Keep volume streamer + heatmap LOD in sync with camera zoom.
+                # Keep volume streamer + heatmap LOD + viewport plots in sync with camera zoom.
                 streamer.on_interaction_end()
-                from bioset.streaming.lod import camera_distance_to_focal
+                from bioset.streaming.lod import camera_distance_to_focal, compute_visible_xy_roi_vox
+                dist = camera_distance_to_focal(renderer.GetActiveCamera())
                 if _heatmap_lod_ref[0] is not None:
-                    dist = camera_distance_to_focal(renderer.GetActiveCamera())
                     _heatmap_lod_ref[0].on_camera_moved(dist)
+                vp = _viewport_plots_ref[0]
+                if vp is not None and vp._enabled:
+                    try:
+                        # Compute ROI at base resolution (component 0) for tile mapping
+                        bounds = streamer._volume_bounds_world(0)
+                        sp = streamer._spacing_for_component(0)
+                        _, ydim, xdim = streamer._dims_for_component(0)
+                        roi = compute_visible_xy_roi_vox(
+                            renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
+                            x_dim=xdim, y_dim=ydim, margin_vox=0,
+                        )
+                        # Convert ROI voxel coords to tile grid indices
+                        # DB tile coords are always in level-0 grid units (128 voxels)
+                        BASE_TILE = 128
+                        gx0 = roi.x0 // BASE_TILE
+                        gx1 = (roi.x1 + BASE_TILE - 1) // BASE_TILE
+                        gy0 = roi.y0 // BASE_TILE
+                        gy1 = (roi.y1 + BASE_TILE - 1) // BASE_TILE
+                        vp.on_camera_moved((gx0, gx1), (gy0, gy1))
+                    except Exception as e:
+                        print(f"[viewport_plots] ROI computation error: {e}")
 
             def _on_nov_end_interaction(obj, evt):
                 nov_render_window.Render()
@@ -311,6 +335,9 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules) if streamer is not None else None
     _heatmap_lod_ref[0] = heatmap_lod
 
+    viewport_plots: Optional[ViewportPlotComputer] = ViewportPlotComputer() if streamer is not None else None
+    _viewport_plots_ref[0] = viewport_plots
+
     return VtkScene(
         renderer=renderer,
         render_window=render_window,
@@ -318,6 +345,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         streamer=streamer,
         heatmap=heatmap,
         heatmap_lod=heatmap_lod,
+        viewport_plots=viewport_plots,
         nov_renderer=nov_renderer,
         nov_render_window=nov_render_window,
         mesh_manager=mesh_manager,

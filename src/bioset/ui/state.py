@@ -127,9 +127,14 @@ def init_state(state):
     state.setdefault("bar_expanded_offset", 0)
     state.setdefault("bar_expanded_limit", 50)
     
-    # View mode toggles
-    state.setdefault("upset_view_mode", "global")  # "global" or "local"
-    state.setdefault("bar_view_mode", "global")  # "global" or "local"
+    # View mode toggles ("global", "local", or "viewport")
+    state.setdefault("upset_view_mode", "global")
+    state.setdefault("bar_view_mode", "global")
+
+    # Viewport-local plot data (computed from visible tiles only)
+    state.setdefault("upset_data_viewport", [])
+    state.setdefault("bar_data_viewport", [])
+    state.setdefault("dilation_data_viewport", {})
     
     # Channels - all channels
     # {id: int, name: str, color: str}
@@ -329,6 +334,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.nov_recompute_scores_if_visible()
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("channels")
     def on_channels_change(channels, **kwargs):
@@ -427,6 +434,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("heatmap_auto_level")
     def on_heatmap_auto_level_change(heatmap_auto_level, **kwargs):
@@ -451,6 +460,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_bar_data()
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("upset_data")
     def on_upset_data_change(upset_data, **kwargs):
@@ -463,6 +474,8 @@ def register_state_change_handlers(state, ctrl):
     def on_upset_view_mode_change(upset_view_mode, **kwargs):
         state.upset_offset = 0
         state.upset_expanded_offset = 0
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("bar_data")
     def on_bar_data_change(bar_data, **kwargs):
@@ -475,6 +488,8 @@ def register_state_change_handlers(state, ctrl):
     def on_bar_view_mode_change(bar_view_mode, **kwargs):
         state.bar_offset = 0
         state.bar_expanded_offset = 0
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("dilation_view_mode")
     def on_dilation_view_mode_change(dilation_view_mode, **kwargs):

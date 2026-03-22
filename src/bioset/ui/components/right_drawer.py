@@ -37,7 +37,8 @@ def right_drawer(state, ctrl):
                 ):
                     vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
                     vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
-                
+                    vuetify.VBtn("View", value="viewport", small=True, classes="text-capitalize", outlined=True)
+
                 # UpSet Filter button
                 with vuetify.VBtn(icon=True, small=True, click="upset_filter_dialog = true"):
                     vuetify.VIcon("mdi-filter-variant", small=True)
@@ -74,7 +75,7 @@ def right_drawer(state, ctrl):
                     vuetify.VIcon("mdi-chevron-left", small=True)
 
                 html.Span(
-                    "{{ upset_offset + 1 }} - {{ Math.min(upset_offset + upset_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)) }}",
+                    "{{ upset_offset + 1 }} - {{ Math.min(upset_offset + upset_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)) }}",
                     classes="text-caption mx-2",
                     style="color: white; min-width: 50px; text-align: center;"
                 )
@@ -83,7 +84,7 @@ def right_drawer(state, ctrl):
                         icon=True,
                         small=True,
                         disabled=(
-                                "upset_offset + upset_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)",),
+                                "upset_offset + upset_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)",),
                         click="upset_offset = upset_offset + 1"
                 ):
                     vuetify.VIcon("mdi-chevron-right", small=True)
@@ -120,7 +121,7 @@ def right_drawer(state, ctrl):
                                 vuetify.VIcon("mdi-chevron-left", small=True)
 
                             html.Span(
-                                "{{ upset_expanded_offset + 1 }} - {{ Math.min(upset_expanded_offset + upset_expanded_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)) }}",
+                                "{{ upset_expanded_offset + 1 }} - {{ Math.min(upset_expanded_offset + upset_expanded_limit, (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)) }}",
                                 classes="text-caption mx-2",
                                 style="color: white; min-width: 50px; text-align: center;"
                             )
@@ -131,7 +132,7 @@ def right_drawer(state, ctrl):
                                     color="white",
                                     dark=True,
                                     disabled=(
-                                            "upset_expanded_offset + upset_expanded_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_data.length)",),
+                                            "upset_expanded_offset + upset_expanded_limit >= (upset_view_mode === 'local' ? upset_data_local.length : upset_view_mode === 'viewport' ? upset_data_viewport.length : upset_data.length)",),
                                     click="upset_expanded_offset = upset_expanded_offset + 1"
                             ):
                                 vuetify.VIcon("mdi-chevron-right", small=True)
@@ -141,6 +142,7 @@ def right_drawer(state, ctrl):
                             <upset-plot
                                 :data="upset_data"
                                 :dataLocal="upset_data_local"
+                                :dataViewport="upset_data_viewport"
                                 :channelData="channels"
                                 :view-mode="upset_view_mode"
                                 :metric="upset_metric"
@@ -244,6 +246,7 @@ def right_drawer(state, ctrl):
                 <upset-plot
                     :data="upset_data"
                     :dataLocal="upset_data_local"
+                    :dataViewport="upset_data_viewport"
                     :channelData="channels"
                     :view-mode="upset_view_mode"
                     :metric="upset_metric"
@@ -270,6 +273,7 @@ def right_drawer(state, ctrl):
                 ):
                     vuetify.VBtn("Global", value="global", small=True, classes="text-capitalize", outlined=True)
                     vuetify.VBtn("Local", value="local", small=True, classes="text-capitalize", outlined=True)
+                    vuetify.VBtn("View", value="viewport", small=True, classes="text-capitalize", outlined=True)
 
                 # Bar Filter button
                 with vuetify.VBtn(icon=True, small=True, click="bar_filter_dialog = true"):
@@ -307,7 +311,7 @@ def right_drawer(state, ctrl):
                     vuetify.VIcon("mdi-chevron-left", small=True)
 
                 html.Span(
-                    "{{ bar_offset + 1 }} - {{ Math.min(bar_offset + bar_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)) }}",
+                    "{{ bar_offset + 1 }} - {{ Math.min(bar_offset + bar_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)) }}",
                     classes="text-caption mx-2",
                     style="color: white; min-width: 50px; text-align: center;"
                 )
@@ -316,7 +320,7 @@ def right_drawer(state, ctrl):
                         icon=True,
                         small=True,
                         disabled=(
-                                "bar_offset + bar_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)",),
+                                "bar_offset + bar_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)",),
                         click="bar_offset = bar_offset + 1"
                 ):
                     vuetify.VIcon("mdi-chevron-right", small=True)
@@ -353,7 +357,7 @@ def right_drawer(state, ctrl):
                                 vuetify.VIcon("mdi-chevron-left", small=True)
 
                             html.Span(
-                                "{{ bar_expanded_offset + 1 }} - {{ Math.min(bar_expanded_offset + bar_expanded_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)) }}",
+                                "{{ bar_expanded_offset + 1 }} - {{ Math.min(bar_expanded_offset + bar_expanded_limit, (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)) }}",
                                 classes="text-caption mx-2",
                                 style="color: white; min-width: 50px; text-align: center;"
                             )
@@ -364,7 +368,7 @@ def right_drawer(state, ctrl):
                                     color="white",
                                     dark=True,
                                     disabled=(
-                                            "bar_expanded_offset + bar_expanded_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_data.length)",),
+                                            "bar_expanded_offset + bar_expanded_limit >= (bar_view_mode === 'local' ? bar_data_local.length : bar_view_mode === 'viewport' ? bar_data_viewport.length : bar_data.length)",),
                                     click="bar_expanded_offset = bar_expanded_offset + 1"
                             ):
                                 vuetify.VIcon("mdi-chevron-right", small=True)
@@ -374,6 +378,7 @@ def right_drawer(state, ctrl):
                             <bar-plot
                                 :data="bar_data"
                                 :dataLocal="bar_data_local"
+                                :dataViewport="bar_data_viewport"
                                 :channelData="channels"
                                 :view-mode="bar_view_mode"
                                 :offset="bar_expanded_offset"
@@ -436,6 +441,7 @@ def right_drawer(state, ctrl):
                 <bar-plot
                     :data="bar_data"
                     :dataLocal="bar_data_local"
+                    :dataViewport="bar_data_viewport"
                     :channelData="channels"
                     :view-mode="bar_view_mode"
                     :offset="bar_offset"

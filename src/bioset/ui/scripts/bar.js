@@ -4,6 +4,7 @@ Vue.component('bar-plot', {
     props: {
         data: Array,
         dataLocal: Array,
+        dataViewport: Array,
         channelData: Array,
         viewMode: String,
         offset: {
@@ -27,6 +28,7 @@ Vue.component('bar-plot', {
     watch: {
         data: 'render',
         dataLocal: 'render',
+        dataViewport: 'render',
         viewMode: 'render',
         offset: 'render',
         limit: 'render',
@@ -44,7 +46,7 @@ Vue.component('bar-plot', {
 
             const container = this.$refs.container;
             d3.select(container).selectAll("*").remove();
-            const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
+            const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : this.viewMode === 'viewport' ? (this.dataViewport || []) : (this.data || []);
 
             const maxCount = sourceData.length > 0 ? d3.max(sourceData, d => d[1]) : 0;
 
