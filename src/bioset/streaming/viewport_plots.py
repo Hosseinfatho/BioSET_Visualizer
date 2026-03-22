@@ -188,6 +188,25 @@ def _viewport_multi_curve(conn, channels, channel_order, tile_filter, tile_param
     if not rows:
         return []
 
+    # Batch-fetch channel voxels: one query per channel (all dilations),
+    # instead of one query per channel per dilation (N×M → N).
+    ch_voxels_by_dil: dict[float, dict[str, int]] = {}
+    for ch in channels:
+        cq = f'''
+            SELECT dilation, SUM(voxel_count) as total
+            FROM channel_stats
+            WHERE channel = ? AND hierarchy_level = {_QUERY_LEVEL} AND {tile_filter}
+            GROUP BY dilation
+        '''
+        try:
+            for cr in conn.execute(cq, [ch] + tile_params):
+                dil = cr["dilation"]
+                if dil not in ch_voxels_by_dil:
+                    ch_voxels_by_dil[dil] = {}
+                ch_voxels_by_dil[dil][ch] = cr["total"] or 0
+        except sqlite3.OperationalError:
+            pass
+
     results = []
     for row in rows:
         dil = row["dilation"]
@@ -195,11 +214,8 @@ def _viewport_multi_curve(conn, channels, channel_order, tile_filter, tile_param
         su = row["sum_union"] or 1
         iou = si / su if su > 0 else 0.0
 
-        ch_totals = []
-        for ch in channels:
-            cq = f"SELECT SUM(voxel_count) as total FROM channel_stats WHERE channel = ? AND dilation = ? AND hierarchy_level = {_QUERY_LEVEL} AND {tile_filter}"
-            cr = conn.execute(cq, [ch, dil] + tile_params).fetchone()
-            ch_totals.append(cr["total"] or 0 if cr else 0)
+        voxels_at_dil = ch_voxels_by_dil.get(dil, {})
+        ch_totals = [voxels_at_dil.get(ch, 0) for ch in channels]
         min_v = min(ch_totals) if ch_totals else 0
         oc = si / min_v if min_v > 0 else 0.0
         density = (si / tile_volume * 100) if tile_volume > 0 else 0.0
