@@ -64,6 +64,7 @@ def init_state(state):
     state.setdefault("bookmark_form_name", "")
     state.setdefault("bookmark_form_description", "")
     state.setdefault("bookmark_form_new_comment", "")
+    state.setdefault("bookmark_save_chat_history", True)
     state.setdefault("bookmark_display_snapshot", None)
     state.setdefault("bookmark_current_view_index", 0)
     state.setdefault("bookmark_form_minimized", False)

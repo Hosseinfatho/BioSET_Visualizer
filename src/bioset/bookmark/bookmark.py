@@ -148,6 +148,59 @@ def register_bookmark_callbacks(ctrl, state, _refs):
     def _bookmark_snap_cache_drop_title(dataset_id, title: str):
         _snapshot_cache.pop(_bookmark_snap_cache_key(dataset_id, title or ""), None)
 
+    def _normalize_chat_history(messages):
+        """Keep only serializable chat message fields for bookmark storage."""
+        out = []
+        for msg in messages or []:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role") or "assistant").strip() or "assistant"
+            content = msg.get("content")
+            if content is None:
+                content = ""
+            content = str(content)
+            item = {"role": role, "content": content}
+            ts = msg.get("ts")
+            if ts is not None:
+                item["ts"] = str(ts)
+            out.append(item)
+        return out
+
+    def _bookmark_current_chat_history():
+        return _normalize_chat_history(getattr(state, "chatbot_messages", []) or [])
+
+    def _bookmark_save_chat_history_for_displayed_snapshot():
+        """Persist floating chatbot history into the currently displayed bookmark JSON."""
+        disp = getattr(state, "bookmark_display_snapshot", None)
+        if not disp or not disp.get("title"):
+            return
+
+        dataset_id = _bookmark_dataset_id()
+        snap = load_snapshot_by_name(disp.get("title"), dataset_id)
+        if not snap:
+            return
+
+        save_chat_history = bool(getattr(state, "bookmark_save_chat_history", True))
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        snap["chat_history_enabled"] = save_chat_history
+        snap["chat_history"] = _bookmark_current_chat_history() if save_chat_history else []
+        snap["chat_history_updated"] = now if save_chat_history else None
+        snap["updated"] = now
+        save_snapshot(snap, dataset_id)
+
+    def _bookmark_load_chat_history_from_snapshot(snapshot):
+        """Load bookmark-level chat history into the floating chatbot panel."""
+        if not bool(getattr(state, "bookmark_save_chat_history", True)):
+            state.chatbot_messages = []
+            return
+
+        if not bool((snapshot or {}).get("chat_history_enabled", True)):
+            state.chatbot_messages = []
+            return
+
+        history = _normalize_chat_history((snapshot or {}).get("chat_history") or [])
+        state.chatbot_messages = history
+
     def _bookmark_merge_channels(restored, all_channels_list):
         """Merge snapshot channels with all dataset channels so user can add new channels in bookmark view."""
         from bioset.ui.state import get_channel_color
@@ -531,6 +584,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
 
     def bookmark_open_snapshot(name=None):
         """Open selected snapshot (or by name if given): restore camera, channels, colors, LOD, TF; show description/comment."""
+        # Save chat of the currently open bookmark before switching to another one.
+        _bookmark_save_chat_history_for_displayed_snapshot()
+
         name = name or getattr(state, "bookmark_selected_name", None) or "Name"
         if not name or not str(name).strip():
             print("[callbacks] Bookmark: no name selected")
@@ -576,6 +632,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         state.bookmark_edit_category = (snap.get("category") or "").strip() or ""
         state.bookmark_edit_description = v0.get("notes") or ""
         state.bookmark_edit_comment = ""
+        state.bookmark_save_chat_history = bool(snap.get("chat_history_enabled", True))
         state.bookmark_form_dialog = False
         state.bookmark_form_minimized = False
         disp = {
@@ -700,6 +757,8 @@ def register_bookmark_callbacks(ctrl, state, _refs):
 
         # Activate progressive completion logic in tick loop
         _refs["bookmark_camera_pending_start"] = True
+        _bookmark_load_chat_history_from_snapshot(snap)
+
         try:
             state.flush()
         except Exception:
@@ -998,6 +1057,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         _bookmark_apply_view(views[idx])
 
     def bookmark_close_display():
+        _bookmark_save_chat_history_for_displayed_snapshot()
         state.bookmark_display_snapshot = None
         state.bookmark_form_minimized = False
 
@@ -1309,6 +1369,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         state.bookmark_form_name = getattr(state, "bookmark_selected_name", "Name") or "Name"
         state.bookmark_form_description = ""
         state.bookmark_form_new_comment = ""
+        state.bookmark_save_chat_history = True
         state.bookmark_form_dialog = True
 
     def bookmark_open_new_form_from_nov():
@@ -1319,6 +1380,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         state.bookmark_form_name = getattr(state, "bookmark_selected_name", "Name") or "Name"
         state.bookmark_form_description = ""
         state.bookmark_form_new_comment = ""
+        state.bookmark_save_chat_history = True
         state.bookmark_form_dialog = True
 
     def _bookmark_capture_view():
@@ -1394,6 +1456,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             comments.append({"date": now, "text": new_comment.strip()})
         notes = form_description if (form_description is not None and isinstance(form_description, str)) else (
                     getattr(state, "bookmark_form_description", "") or "")
+        save_chat_history = bool(getattr(state, "bookmark_save_chat_history", True))
         view0 = {
             "camera": cap["camera"],
             "notes": notes,
@@ -1421,6 +1484,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "viewport": cap["viewport"],
             "comments": comments,
             "views": [view0],
+            "chat_history_enabled": save_chat_history,
+            "chat_history": _bookmark_current_chat_history() if save_chat_history else [],
+            "chat_history_updated": now if save_chat_history else None,
         }
         if cap["optional_lod"]:
             snapshot["optional_LOD"] = cap["optional_lod"]
@@ -1453,6 +1519,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "created": now,
             "updated": now,
             "views": [view0],
+            "chat_history_enabled": save_chat_history,
+            "chat_history": snapshot.get("chat_history") or [],
+            "chat_history_updated": snapshot.get("chat_history_updated"),
         }
         if _refs.get("view"):
             _refs["view"].update()
@@ -1492,6 +1561,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         idx = getattr(state, "bookmark_current_view_index", 0)
         idx = max(0, min(idx, len(views) - 1))
         notes = getattr(state, "bookmark_edit_description", "") or ""
+        save_chat_history = bool(getattr(state, "bookmark_save_chat_history", True))
         new_comment = (getattr(state, "bookmark_edit_comment", "") or "").strip()
         view_comments = list(views[idx].get("comments") or []) if idx < len(views) else []
         if new_comment:
@@ -1524,6 +1594,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         snap["notes"] = current_view.get("notes") or ""
         snap["description"] = snap["notes"]
         snap["comments"] = current_view.get("comments") or []
+        snap["chat_history_enabled"] = save_chat_history
+        snap["chat_history"] = _bookmark_current_chat_history() if save_chat_history else []
+        snap["chat_history_updated"] = now if save_chat_history else None
         new_title = snap["title"]
         new_category = (snap.get("category") or "").strip() or "Uncategorized"
         if (old_title, old_category) != (new_title, new_category):
@@ -1549,6 +1622,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             "created": snap.get("created"),
             "updated": snap.get("updated"),
             "views": views,
+            "chat_history_enabled": save_chat_history,
+            "chat_history": snap.get("chat_history") or [],
+            "chat_history_updated": snap.get("chat_history_updated"),
         }
         state.bookmark_edit_title = snap["title"]
         state.bookmark_edit_category = (snap.get("category") or "").strip() or ""

@@ -140,10 +140,78 @@ NOV_DRAG_SCRIPT = r"""
 })();
 """
 
+# Main viewer scale-bar drag zoom: horizontal drag synthesizes wheel events on VTK canvas.
+MAIN_SCALE_BAR_ZOOM_SCRIPT = r"""
+(function() {
+  "use strict";
+  window.mainScaleBarZoomStart = function(e) {
+    if (!e || e.button !== 0) return;
+
+    var doc = (e.currentTarget && e.currentTarget.ownerDocument) || document;
+    var canvas = doc.querySelector("canvas");
+    if (!canvas) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    var lastX = e.clientX;
+    var carry = 0;
+    var pxPerStep = 4;
+
+    var prevUserSelect = doc.body ? doc.body.style.userSelect : "";
+    var prevCursor = doc.body ? doc.body.style.cursor : "";
+    if (doc.body) {
+      doc.body.style.userSelect = "none";
+      doc.body.style.cursor = "ew-resize";
+    }
+
+    function emitWheel(stepSign, ev) {
+      // Negative deltaY zooms in for VTK trackball style.
+      var wheel = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+        deltaY: stepSign > 0 ? -120 : 120,
+        deltaMode: 0,
+      });
+      canvas.dispatchEvent(wheel);
+    }
+
+    function onMove(ev) {
+      ev.preventDefault();
+      var dx = ev.clientX - lastX;
+      lastX = ev.clientX;
+      carry += dx;
+
+      while (Math.abs(carry) >= pxPerStep) {
+        var sign = carry > 0 ? 1 : -1;
+        emitWheel(sign, ev);
+        carry -= sign * pxPerStep;
+      }
+    }
+
+    function onUp(ev) {
+      if (ev.button !== 0) return;
+      doc.removeEventListener("mousemove", onMove, true);
+      doc.removeEventListener("mouseup", onUp, true);
+      if (doc.body) {
+        doc.body.style.userSelect = prevUserSelect;
+        doc.body.style.cursor = prevCursor;
+      }
+    }
+
+    doc.addEventListener("mousemove", onMove, true);
+    doc.addEventListener("mouseup", onUp, true);
+  };
+})();
+"""
+
 # register js files here
 def register_scripts(client):
     client.Script(DRAWER_WIDTH_SCRIPT)
     client.Script(NOV_DRAG_SCRIPT)  # Load first so window.novStartDrag exists when lens is clicked
+    client.Script(MAIN_SCALE_BAR_ZOOM_SCRIPT)
     client.Script(_read_js("upset.js"))
     client.Script(_read_js("bar.js"))
     client.Script(_read_js("linechart.js"))
