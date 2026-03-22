@@ -1043,18 +1043,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return None
 
     def sync_viewport_plots_enabled():
-        """Enable/disable viewport plot computation based on whether any plot uses local scope."""
+        """Enable/disable viewport plot computation based on scope modes and drawer visibility."""
         vp = _refs.get("viewport_plots")
         if not vp:
             return
-        any_local_scope = (
-            getattr(state, "upset_scope_mode", "global") == "local"
-            or getattr(state, "bar_scope_mode", "global") == "local"
-            or getattr(state, "dilation_scope_mode", "global") == "local"
-        )
-        vp.set_enabled(any_local_scope)
 
-        if any_local_scope:
+        drawer_open = getattr(state, "right_drawer_open", False)
+        need_bar = drawer_open and getattr(state, "bar_scope_mode", "global") == "local"
+        need_upset = drawer_open and getattr(state, "upset_scope_mode", "global") == "local"
+        need_dilation = drawer_open and getattr(state, "dilation_scope_mode", "global") == "local"
+
+        any_needed = need_bar or need_upset or need_dilation
+        vp.set_enabled(any_needed)
+        vp.update_needed_plots(need_bar, need_upset, need_dilation)
+
+        if any_needed:
             # Sync active channel names for filtering viewport results
             active_ids = state.active_channels or []
             channels_list = state.channels or []

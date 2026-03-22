@@ -37,6 +37,10 @@ class ViewportPlotRequest:
     min_channels: int
     z_depth: int
     timestamp: float
+    # Per-plot flags: only compute what is needed
+    need_bar: bool = True
+    need_upset: bool = True
+    need_dilation: bool = True
 
 
 @dataclass
@@ -58,7 +62,11 @@ def _tile_range_sql(req: ViewportPlotRequest, table_prefix=""):
 
 
 def _run_viewport_queries(conn, req: ViewportPlotRequest) -> ViewportPlotResult:
-    """Execute all viewport plot queries on a worker-thread connection."""
+    """Execute viewport plot queries on a worker-thread connection.
+
+    Only computes the plot types flagged in the request (need_bar, need_upset,
+    need_dilation) to avoid unnecessary work.
+    """
     conn.row_factory = sqlite3.Row
     dilation = req.dilation
     channels = req.channels
@@ -72,79 +80,84 @@ def _run_viewport_queries(conn, req: ViewportPlotRequest) -> ViewportPlotResult:
     n_tiles_y = req.tile_y_range[1] - req.tile_y_range[0]
     tile_volume = n_tiles_x * _BASE_TILE * n_tiles_y * _BASE_TILE * z_depth
 
-    # ── Bar: per-channel voxel density ──
-    query_ch = f'''
-        SELECT channel, SUM(voxel_count) as total_voxels
-        FROM channel_stats
-        WHERE dilation = ? AND hierarchy_level = {_QUERY_LEVEL}
-          AND {tile_filter}
-        GROUP BY channel
-        ORDER BY total_voxels DESC
-    '''
-    cursor = conn.execute(query_ch, [dilation] + tile_params)
     channel_voxels = {}
     bar_data = []
-    for row in cursor:
-        ch = row["channel"]
-        voxels = row["total_voxels"] or 0
-        channel_voxels[ch] = voxels
-        density = (voxels / tile_volume * 100) if tile_volume > 0 else 0.0
-        bar_data.append((ch, density))
+    upset_data = []
+    dilation_data = {}
+
+    # ── Bar: per-channel voxel density ──
+    # Also needed by upset for overlap_coeff, so run if either bar or upset is requested
+    if req.need_bar or req.need_upset:
+        query_ch = f'''
+            SELECT channel, SUM(voxel_count) as total_voxels
+            FROM channel_stats
+            WHERE dilation = ? AND hierarchy_level = {_QUERY_LEVEL}
+              AND {tile_filter}
+            GROUP BY channel
+            ORDER BY total_voxels DESC
+        '''
+        cursor = conn.execute(query_ch, [dilation] + tile_params)
+        for row in cursor:
+            ch = row["channel"]
+            voxels = row["total_voxels"] or 0
+            channel_voxels[ch] = voxels
+            density = (voxels / tile_volume * 100) if tile_volume > 0 else 0.0
+            bar_data.append((ch, density))
 
     # ── UpSet: combination IoU ──
-    query_combo = f'''
-        SELECT c.channels, c.channel_count,
-               SUM(t.inter_count) as sum_inter,
-               SUM(t.union_count) as sum_union
-        FROM combinations c
-        JOIN tiles t ON c.id = t.combination_id
-        WHERE c.dilation = ? AND c.hierarchy_level = {_QUERY_LEVEL}
-          AND c.channel_count >= ?
-          AND {tile_filter_t}
-        GROUP BY c.channels
-        HAVING sum_union > 0
-        ORDER BY CAST(SUM(t.inter_count) AS REAL) / SUM(t.union_count) DESC
-        LIMIT ?
-    '''
-    cursor = conn.execute(query_combo, [dilation, min_channels] + tile_params_t + [200])
-    upset_data = []
-    for row in cursor:
-        channels_str = row["channels"]
-        chs = channels_str.split("|") if channels_str else []
-        if len(chs) != len(set(chs)):
-            continue
-        sum_inter = row["sum_inter"] or 0
-        sum_union = row["sum_union"] or 1
-        iou = sum_inter / sum_union if sum_union > 0 else 0.0
-        ch_totals = [channel_voxels.get(c, 0) for c in chs]
-        min_v = min(ch_totals) if ch_totals else 0
-        oc = sum_inter / min_v if min_v > 0 else 0.0
-        upset_data.append({"channels": chs, "iou": iou, "overlap_coeff": oc})
+    if req.need_upset:
+        query_combo = f'''
+            SELECT c.channels, c.channel_count,
+                   SUM(t.inter_count) as sum_inter,
+                   SUM(t.union_count) as sum_union
+            FROM combinations c
+            JOIN tiles t ON c.id = t.combination_id
+            WHERE c.dilation = ? AND c.hierarchy_level = {_QUERY_LEVEL}
+              AND c.channel_count >= ?
+              AND {tile_filter_t}
+            GROUP BY c.channels
+            HAVING sum_union > 0
+            ORDER BY CAST(SUM(t.inter_count) AS REAL) / SUM(t.union_count) DESC
+            LIMIT ?
+        '''
+        cursor = conn.execute(query_combo, [dilation, min_channels] + tile_params_t + [200])
+        for row in cursor:
+            channels_str = row["channels"]
+            chs = channels_str.split("|") if channels_str else []
+            if len(chs) != len(set(chs)):
+                continue
+            sum_inter = row["sum_inter"] or 0
+            sum_union = row["sum_union"] or 1
+            iou = sum_inter / sum_union if sum_union > 0 else 0.0
+            ch_totals = [channel_voxels.get(c, 0) for c in chs]
+            min_v = min(ch_totals) if ch_totals else 0
+            oc = sum_inter / min_v if min_v > 0 else 0.0
+            upset_data.append({"channels": chs, "iou": iou, "overlap_coeff": oc})
 
     # ── Dilation curves ──
-    channel_order = req.channel_order
+    if req.need_dilation and channels:
+        channel_order = req.channel_order
 
-    def sort_chs(ch_list):
-        return sorted(ch_list, key=lambda c: channel_order.index(c) if c in channel_order else 999)
+        def sort_chs(ch_list):
+            return sorted(ch_list, key=lambda c: channel_order.index(c) if c in channel_order else 999)
 
-    def make_key(ch_list):
-        return "|".join(sort_chs(ch_list))
+        def make_key(ch_list):
+            return "|".join(sort_chs(ch_list))
 
-    dilation_data = {}
-    for size in range(1, len(channels) + 1):
-        for combo in iter_combinations(channels, size):
-            combo_list = list(combo)
-            combo_key = make_key(combo_list)
+        for size in range(1, len(channels) + 1):
+            for combo in iter_combinations(channels, size):
+                combo_list = list(combo)
+                combo_key = make_key(combo_list)
 
-            if size == 1:
-                curve = _viewport_single_curve(conn, combo_list[0], tile_filter, tile_params, tile_volume)
-            else:
-                curve = _viewport_multi_curve(
-                    conn, combo_list, channel_order, tile_filter, tile_params,
-                    tile_filter_t, tile_params_t, tile_volume
-                )
-            if curve:
-                dilation_data[combo_key] = curve
+                if size == 1:
+                    curve = _viewport_single_curve(conn, combo_list[0], tile_filter, tile_params, tile_volume)
+                else:
+                    curve = _viewport_multi_curve(
+                        conn, combo_list, channel_order, tile_filter, tile_params,
+                        tile_filter_t, tile_params_t, tile_volume
+                    )
+                if curve:
+                    dilation_data[combo_key] = curve
 
     return ViewportPlotResult(
         bar_data=bar_data,
@@ -254,6 +267,11 @@ class ViewportPlotComputer:
         self._min_channels: int = 2
         self._enabled: bool = False
 
+        # Per-plot flags: which plot types need viewport computation
+        self._need_bar: bool = False
+        self._need_upset: bool = False
+        self._need_dilation: bool = False
+
     def set_analysis(self, db_path: Path, channel_order: List[str], z_depth: int):
         """Called after analysis file is loaded."""
         self._db_path = db_path
@@ -270,6 +288,8 @@ class ViewportPlotComputer:
 
     def set_enabled(self, enabled: bool):
         self._enabled = enabled
+        if not enabled:
+            self._pending = None
         print(f"[viewport_plots] Enabled: {enabled}")
 
     def update_channels(self, channel_names: List[str]):
@@ -285,6 +305,12 @@ class ViewportPlotComputer:
 
     def update_min_channels(self, min_ch: int):
         self._min_channels = min_ch
+
+    def update_needed_plots(self, need_bar: bool, need_upset: bool, need_dilation: bool):
+        """Set which plot types need viewport computation."""
+        self._need_bar = need_bar
+        self._need_upset = need_upset
+        self._need_dilation = need_dilation
 
     # ── Camera move trigger (lightweight — no threads) ──
 
@@ -306,6 +332,9 @@ class ViewportPlotComputer:
             min_channels=self._min_channels,
             z_depth=self._z_depth,
             timestamp=time.monotonic(),
+            need_bar=self._need_bar,
+            need_upset=self._need_upset,
+            need_dilation=self._need_dilation,
         )
 
     def _bg_compute(self, req: ViewportPlotRequest):
@@ -316,9 +345,10 @@ class ViewportPlotComputer:
                 result = _run_viewport_queries(conn, req)
                 self._queue.put(result)
                 n_tiles = (req.tile_x_range[1] - req.tile_x_range[0]) * (req.tile_y_range[1] - req.tile_y_range[0])
-                print(f"[viewport_plots] Computed: {len(result.bar_data)} channels, "
-                      f"{len(result.upset_data)} combos, {len(result.dilation_data)} curves "
-                      f"from {n_tiles} tiles (x:{req.tile_x_range}, y:{req.tile_y_range})")
+                plots = [s for s, f in [("bar", req.need_bar), ("upset", req.need_upset), ("dilation", req.need_dilation)] if f]
+                print(f"[viewport_plots] Computed [{','.join(plots)}]: "
+                      f"{len(result.bar_data)} ch, {len(result.upset_data)} combos, "
+                      f"{len(result.dilation_data)} curves from {n_tiles} tiles")
             finally:
                 conn.close()
         except Exception as e:

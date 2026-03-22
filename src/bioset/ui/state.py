@@ -566,6 +566,11 @@ def register_state_change_handlers(state, ctrl):
     def on_bar_search_change(bar_search, **kwargs):
         state.bar_filtered_channels = _filter_channels(state.analysis_channels, bar_search)
 
+    @state.change("right_drawer_open")
+    def on_right_drawer_open_change(right_drawer_open, **kwargs):
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
+
     @state.change("bookmark_open")
     def on_bookmark_open_change(bookmark_open, **kwargs):
         if bookmark_open:
