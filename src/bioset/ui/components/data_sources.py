@@ -114,7 +114,7 @@ def data_sources_section(state, ctrl):
                             dense=True,
                             hide_details=True,
                             __events=["change"],
-                            change=(ctrl.load_analysis_file, "[$event]"),
+                            change="window.biosetChunkedUpload($event, trigger)",
                         )
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
                         with vuetify.VListItemContent():

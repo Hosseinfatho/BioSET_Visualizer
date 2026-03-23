@@ -4,6 +4,7 @@ import datetime
 import hashlib
 import os
 import tempfile
+from pathlib import Path
 
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
@@ -476,6 +477,128 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.analysis_loaded = False
         finally:
             state.analysis_loading = False
+
+    # ── Chunked .bioset upload ──────────────────────────────────────────
+    _upload_temp_dir = None
+    _upload_temp_path = None
+
+    def upload_analysis_start(info):
+        nonlocal _upload_temp_dir, _upload_temp_path
+        import tempfile as _tmp
+        name = info.get("name", "upload.bioset")
+        total = info.get("total_size", 0)
+        _upload_temp_dir = _tmp.mkdtemp(prefix="bioset_upload_")
+        _upload_temp_path = Path(_upload_temp_dir) / name
+        # Create empty file
+        _upload_temp_path.write_bytes(b"")
+        state.analysis_loading = True
+        print(f"[callbacks] Chunked upload started: {name} ({total} bytes)")
+
+    def upload_analysis_chunk(info):
+        nonlocal _upload_temp_path
+        import base64
+        if _upload_temp_path is None:
+            return
+        data_b64 = info.get("data", "")
+        chunk_bytes = base64.b64decode(data_b64)
+        with open(_upload_temp_path, "ab") as f:
+            f.write(chunk_bytes)
+        total = info.get("total_size", 1)
+        offset = info.get("offset", 0) + len(chunk_bytes)
+        pct = min(100, int(offset * 100 / total))
+        if pct % 10 == 0:
+            print(f"[callbacks] Upload progress: {pct}%")
+
+    def upload_analysis_complete(info):
+        nonlocal _upload_temp_dir, _upload_temp_path
+        if _upload_temp_path is None:
+            state.analysis_loading = False
+            return
+        name = info.get("name", "upload.bioset")
+        print(f"[callbacks] Upload complete, loading {_upload_temp_path}...")
+        try:
+            from bioset.analysis import AnalysisLoader
+
+            if _refs["analysis_loader"] is None:
+                _refs["analysis_loader"] = AnalysisLoader()
+
+            loader = _refs["analysis_loader"]
+            metadata = loader.load(str(_upload_temp_path))
+
+            z_depth = 1
+            bounds = metadata.volume_bounds
+            if bounds and "z" in bounds:
+                z_depth = max(1, bounds["z"][1] - bounds["z"][0])
+
+            heatmap_lod = _refs.get("heatmap_lod")
+            if heatmap_lod and loader.db_path:
+                heatmap_lod.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
+            vp = _refs.get("viewport_plots")
+            if vp and loader.db_path:
+                vp.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
+            state.analysis_file_name = name
+            state.analysis_channels = metadata.channels
+            state.analysis_dilation_amounts = metadata.dilation_amounts
+            state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
+            state.analysis_volume_bounds = metadata.volume_bounds
+
+            if metadata.dilation_amounts:
+                mid = len(metadata.dilation_amounts) // 2
+                state.current_dilation = metadata.dilation_amounts[mid]
+
+            if metadata.hierarchy_levels:
+                state.current_hierarchy_level = metadata.hierarchy_levels[-1]["level"]
+
+            state.upset_selected_channels = [ch for ch in state.analysis_channels]
+            state.bar_selected_channels = [ch for ch in state.analysis_channels]
+            state.dilation_selected_channels = [ch for ch in state.analysis_channels]
+
+            state.analysis_loaded = True
+            state.right_drawer_open = True
+
+            print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
+                  f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
+
+            update_heatmap()
+            update_heatmap_combinations()
+            update_upset_data()
+            update_bar_data()
+            update_dilation_data()
+
+            if _refs["view"]:
+                _refs["view"].update()
+
+        except Exception as e:
+            print(f"[callbacks] Error loading analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            state.analysis_loaded = False
+        finally:
+            state.analysis_loading = False
+            # Clean up temp upload file
+            if _upload_temp_path and _upload_temp_path.exists():
+                try:
+                    _upload_temp_path.unlink()
+                except Exception:
+                    pass
+            if _upload_temp_dir:
+                import shutil
+                try:
+                    shutil.rmtree(_upload_temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            _upload_temp_dir = None
+            _upload_temp_path = None
 
     def toggle_channel(channel_id):
         """Toggle a channel's active state (add/remove from rendering)."""
@@ -2312,6 +2435,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_viewport_plots = set_viewport_plots
     ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
     ctrl.trigger("on_hover")(on_hover)
+    ctrl.trigger("upload_analysis_start")(upload_analysis_start)
+    ctrl.trigger("upload_analysis_chunk")(upload_analysis_chunk)
+    ctrl.trigger("upload_analysis_complete")(upload_analysis_complete)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer
     ctrl.refresh_labels = refresh_labels
