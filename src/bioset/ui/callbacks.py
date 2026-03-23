@@ -790,7 +790,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     channel_filter=active_channel_names,
                     dilation=state.current_dilation,
                     hierarchy_level=state.current_hierarchy_level,
-                    limit=10000,
+                    limit=100000,
                     exact_match=False,
                 )
 
