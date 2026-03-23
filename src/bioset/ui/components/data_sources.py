@@ -129,7 +129,7 @@ def data_sources_section(state, ctrl):
                             ):
                                 html.A(
                                     "Instructions for running the BioSET analysis pipeline.",
-                                    href="https://github.com/Chahat08/BioSET_Preprocessing",
+                                    href="https://github.com/nyu-vis-krueger-group/BioSET_Preprocessing/tree/master",
                                     target="_blank",
                                     style="font-size: 10px; color: #9e9e9e;",
                                 )
