@@ -326,7 +326,7 @@ class AnalysisLoader:
                     SUM(total_union) as sum_union,
                     SUM(total_count) as agg_count
                 FROM combinations
-                WHERE dilation = ? AND hierarchy_level = ?
+                WHERE dilation = ? AND hierarchy_level = ? AND channel_count >= 2
             '''
             params = [dilation, hierarchy_level]
             

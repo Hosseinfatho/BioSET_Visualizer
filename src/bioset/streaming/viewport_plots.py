@@ -400,7 +400,7 @@ class ViewportPlotComputer:
         ] if active_set else []
         state.upset_data_viewport_selected = [
             item for item in result.upset_data
-            if all(ch in active_set for ch in item["channels"])
+            if any(ch in active_set for ch in item["channels"])
         ] if active_set else []
 
         try:

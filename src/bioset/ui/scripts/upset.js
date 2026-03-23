@@ -64,9 +64,12 @@ Vue.component('upset-plot', {
         maxMetricValue = Math.max(...values);
       }
 
+      const metric = this.metric;
+      const sorted = sourceData.slice().sort((a, b) => (b[metric] || 0) - (a[metric] || 0));
+
       const start = this.offset;
       const end = start + this.limit;
-      const renderData = sourceData.slice(start, end);
+      const renderData = sorted.slice(start, end);
 
       const mappedData = renderData.map(item => ({
         sets: item.channels,
