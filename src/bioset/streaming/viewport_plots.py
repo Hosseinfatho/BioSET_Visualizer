@@ -1,14 +1,5 @@
 """Background computation of plot metrics restricted to viewport-visible tiles.
-
-Threading model mirrors HeatmapLOD:
-  - on_camera_moved() called on main thread → debounce → executor
-  - _bg_compute() runs in worker thread, opens its own SQLite connection
-  - check_and_apply() called from main thread asyncio poll loop
-
-All queries use hierarchy_level=0 (finest granularity) regardless of the
-heatmap LOD level.  Tile coordinates in the DB are always in level-0 grid
-units (each cell = 128 voxels), so the ROI-to-grid conversion is just
-``voxel_coord // 128``.
+smllest tile size (128) used.
 """
 from __future__ import annotations
 

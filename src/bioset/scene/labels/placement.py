@@ -367,13 +367,14 @@ def pick_label_type(region, camera_distance):
 # BILLBOARD renderer
 # ==========================================================================
 
-def render_billboard(region, anchor_pos, anchor_normal, camera, renderer):
+def render_billboard(region, anchor_pos, anchor_normal, camera, renderer, size_overrides=None):
+    ov = size_overrides or {}
     text_pd, _ = get_text_mesh(region.label_text)
     cam_pos = np.array(camera.GetPosition(), dtype=np.float64)
     to_camera = _norm(cam_pos - anchor_pos)
-    pos = anchor_pos + to_camera * config["BILLBOARD_OFFSET"]
-    s = config["BILLBOARD_TEXT_SCALE"]
-    r, g, b = config["BILLBOARD_COLOR"]
+    pos = anchor_pos + to_camera * ov.get("billboard_offset", config["BILLBOARD_OFFSET"])
+    s = ov.get("billboard_text_scale", config["BILLBOARD_TEXT_SCALE"])
+    r, g, b = ov.get("color", config["BILLBOARD_COLOR"])
 
     f = vtkFollower()
     m = vtkPolyDataMapper()
@@ -393,14 +394,15 @@ def render_billboard(region, anchor_pos, anchor_normal, camera, renderer):
 # FLAGPOLE renderer
 # ==========================================================================
 
-def render_flagpole(region, anchor_pos, anchor_normal, camera, renderer):
+def render_flagpole(region, anchor_pos, anchor_normal, camera, renderer, size_overrides=None):
+    ov = size_overrides or {}
     text_pd, _ = get_text_mesh(region.label_text)
     cam_pos = np.array(camera.GetPosition(), dtype=np.float64)
     to_camera = _norm(cam_pos - anchor_pos)
     pole_dir = _norm(anchor_normal + to_camera)
 
     base = anchor_pos + pole_dir * 1.0
-    top = base + pole_dir * config["FLAGPOLE_HEIGHT"]
+    top = base + pole_dir * ov.get("flagpole_height", config["FLAGPOLE_HEIGHT"])
     actors = []
 
     # Dot
@@ -437,7 +439,7 @@ def render_flagpole(region, anchor_pos, anchor_normal, camera, renderer):
     actors.append(la)
 
     # Text follower
-    s = config["FLAGPOLE_TEXT_SCALE"]
+    s = ov.get("flagpole_text_scale", config["FLAGPOLE_TEXT_SCALE"])
     f = vtkFollower()
     tm = vtkPolyDataMapper()
     tm.SetInputData(text_pd)
@@ -446,7 +448,7 @@ def render_flagpole(region, anchor_pos, anchor_normal, camera, renderer):
     f.SetCamera(camera)
     f.SetScale(s, s, s)
     f.SetPosition(top.tolist())
-    _style_label_actor(f, config["FLAGPOLE_COLOR"])
+    _style_label_actor(f, ov.get("color", config["FLAGPOLE_COLOR"]))
     f.SetPickable(False)
     renderer.AddActor(f)
     actors.append(f)
@@ -661,8 +663,9 @@ def _deform_text(text_pd, bounds, positions, normals, tangents, height, cam_up):
     return out
 
 
-def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, cam_fwd, renderer):
+def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, cam_fwd, renderer, size_overrides=None):
     """Surface-conforming label using probe-then-commit direction selection."""
+    ov = size_overrides or {}
     # Cheap early-out: if the surface faces away from or is edge-on to the camera,
     # the text would be heavily foreshortened and unreadable — fall back to flagpole.
     to_cam = _norm(cam_pos - anchor_pos)
@@ -670,21 +673,21 @@ def render_surface(region, anchor_pos, anchor_normal, channel, cam_pos, cam_up, 
     min_facing = config.get("SURFACE_MIN_FACING", 0.3)
     if facing < min_facing:
         return render_flagpole(region, anchor_pos, anchor_normal,
-                               renderer.GetActiveCamera(), renderer)
+                               renderer.GetActiveCamera(), renderer, size_overrides=size_overrides)
 
     _, dil_normals, dil_locator = preprocess_channel(channel)
     text_pd, text_bounds = get_text_mesh(region.label_text)
 
     dilation = config["DILATION_AMOUNT"]
-    r, g, b = config["SURFACE_LABEL_COLOR"]
+    r, g, b = ov.get("color", config["SURFACE_LABEL_COLOR"])
 
     # Size label by region extent
     bnds = region.bounds
     region_diag = np.sqrt((bnds[1]-bnds[0])**2 + (bnds[3]-bnds[2])**2 + (bnds[5]-bnds[4])**2)
     height = np.clip(
-        region_diag * config.get("SURFACE_HEIGHT_FACTOR", 0.12),
-        config.get("SURFACE_MIN_HEIGHT", 0.6),
-        config.get("SURFACE_MAX_HEIGHT", 3.0),
+        region_diag * ov.get("height_factor", config.get("SURFACE_HEIGHT_FACTOR", 0.12)),
+        ov.get("min_height", config.get("SURFACE_MIN_HEIGHT", 0.6)),
+        ov.get("max_height", config.get("SURFACE_MAX_HEIGHT", 3.0)),
     )
 
     tw, th = text_bounds[1] - text_bounds[0], text_bounds[3] - text_bounds[2]
@@ -980,6 +983,17 @@ def place_all_labels(single_regions, composite_regions, channels, renderer,
     counts = {"SURFACE": 0, "FLAGPOLE": 0, "BILLBOARD": 0,
               "coloc": 0, "ix": 0, "nudged": 0, "rejected": 0}
 
+    coloc_overrides = {
+        "flagpole_height": config.get("COLOC_FLAGPOLE_HEIGHT", config["FLAGPOLE_HEIGHT"]),
+        "flagpole_text_scale": config.get("COLOC_FLAGPOLE_TEXT_SCALE", config["FLAGPOLE_TEXT_SCALE"]),
+        "billboard_text_scale": config.get("COLOC_BILLBOARD_TEXT_SCALE", config["BILLBOARD_TEXT_SCALE"]),
+        "billboard_offset": config.get("COLOC_BILLBOARD_OFFSET", config["BILLBOARD_OFFSET"]),
+        "height_factor": config.get("COLOC_SURFACE_HEIGHT_FACTOR", config.get("SURFACE_HEIGHT_FACTOR", 0.12)),
+        "min_height": config.get("COLOC_SURFACE_MIN_HEIGHT", config.get("SURFACE_MIN_HEIGHT", 0.6)),
+        "max_height": config.get("COLOC_SURFACE_MAX_HEIGHT", config.get("SURFACE_MAX_HEIGHT", 3.0)),
+        "color": config.get("COLOC_LABEL_COLOR", config["SURFACE_LABEL_COLOR"]),
+    }
+
     # ================================================================
     # PASS 1: Co-localization labels (highest priority)
     # ================================================================
@@ -1008,10 +1022,12 @@ def place_all_labels(single_regions, composite_regions, channels, renderer,
             primary_ch = ch_by_name.get(region.channels[0])
             if primary_ch:
                 actors.extend(render_surface(region, anchor_pos, anchor_normal,
-                                              primary_ch, cam_pos, cam_up, cam_fwd, renderer))
+                                              primary_ch, cam_pos, cam_up, cam_fwd, renderer,
+                                              size_overrides=coloc_overrides))
             else:
                 actors.extend(render_flagpole(region, anchor_pos, anchor_normal,
-                                              camera, renderer))
+                                              camera, renderer,
+                                              size_overrides=coloc_overrides))
             counts["SURFACE"] += 1
         else:
             label_pos = _compute_label_position(label_type, anchor_pos, anchor_normal, cam_pos)
@@ -1027,11 +1043,13 @@ def place_all_labels(single_regions, composite_regions, channels, renderer,
             placed_rects.append(rect)
             if label_type == "BILLBOARD":
                 actors.extend(render_billboard(region, anchor_pos, anchor_normal,
-                                               camera, renderer))
+                                               camera, renderer,
+                                               size_overrides=coloc_overrides))
                 counts["BILLBOARD"] += 1
             else:
                 actors.extend(render_flagpole(region, anchor_pos, anchor_normal,
-                                               camera, renderer))
+                                               camera, renderer,
+                                               size_overrides=coloc_overrides))
                 counts["FLAGPOLE"] += 1
 
         counts["coloc"] += 1

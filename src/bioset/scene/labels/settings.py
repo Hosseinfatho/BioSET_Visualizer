@@ -17,7 +17,7 @@ label_config = {
     # INTERACTION DETECTION
     # =====================================================================
     "DETECT_INTERACTIONS": True,
-    "INTERACTION_DISTANCE": 10.0,
+    "INTERACTION_DISTANCE": 15.0,
     "INTERACTION_BILLBOARD_MIN_GAP": 5.0,
     "INTERACTION_BILLBOARD_OFFSET": 5.0,
     "INTERACTION_BILLBOARD_SCALE": 3.0,
@@ -94,7 +94,7 @@ label_config = {
     # Minimum dot(surface_normal, to_camera) to attempt a surface label.
     # 1.0 = dead-on, 0.0 = edge-on, <0 = away. Below threshold → flagpole fallback.
     # 0.3 ≈ 72° off from facing camera.
-    "SURFACE_MIN_FACING": 0.75,
+    "SURFACE_MIN_FACING": 0.6,
 
     # =====================================================================
     # FLAGPOLE LABEL SETTINGS
@@ -114,6 +114,19 @@ label_config = {
     "BILLBOARD_OFFSET":20.0,           # scaled from 80.0
     "BILLBOARD_TEXT_SCALE": 0.5,
     "BILLBOARD_COLOR": (1.0, 1.0, 1.0),
+
+    # =====================================================================
+    # CO-LOCALIZATION LABEL SIZE OVERRIDES
+    # When set, co-loc labels use these instead of the single-marker defaults.
+    # =====================================================================
+    "COLOC_FLAGPOLE_HEIGHT": 5.0,
+    "COLOC_FLAGPOLE_TEXT_SCALE": 1.3,
+    "COLOC_BILLBOARD_TEXT_SCALE": 1.3,
+    "COLOC_BILLBOARD_OFFSET": 40.0,
+    "COLOC_SURFACE_HEIGHT_FACTOR": 0.15,
+    "COLOC_SURFACE_MIN_HEIGHT": 0.8,
+    "COLOC_SURFACE_MAX_HEIGHT": 4.0,
+    "COLOC_LABEL_COLOR": (1.0, 1.0, 0.0),
 
     # =====================================================================
     # TEXT RENDERING
