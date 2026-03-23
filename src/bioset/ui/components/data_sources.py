@@ -109,12 +109,13 @@ def data_sources_section(state, ctrl):
                             chips=True,
                             small_chips=True,
                             prepend_icon="mdi-chart-box-outline",
+                            color="white",
                             loading=("analysis_loading", False),
                             disabled=("analysis_loading", False),
                             dense=True,
                             hide_details=True,
                             __events=["change"],
-                            change="window.biosetChunkedUpload($event, trigger)",
+                            change="$event ? window.biosetChunkedUpload($event, trigger) : trigger('clear_analysis')",
                         )
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
                         with vuetify.VListItemContent():

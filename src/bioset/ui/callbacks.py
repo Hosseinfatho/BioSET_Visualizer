@@ -376,6 +376,29 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    def clear_analysis():
+        """Clear only analysis data (not zarr/volume data)."""
+        if _refs["analysis_loader"]:
+            _refs["analysis_loader"].close()
+            _refs["analysis_loader"] = None
+
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            heatmap_lod.clear_analysis()
+
+        vp = _refs.get("viewport_plots")
+        if vp:
+            vp.clear_analysis()
+
+        state.analysis_loaded = False
+        state.analysis_file_name = ""
+        state.analysis_channels = []
+        state.analysis_dilation_amounts = []
+        state.analysis_hierarchy_levels = []
+        state.analysis_volume_bounds = {}
+        state.heatmap_tile_count = 0
+        print("[callbacks] Analysis cleared")
+
     def load_analysis_file(file_info):
         """
         Load analysis results from uploaded .bioset file.
@@ -2467,6 +2490,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.trigger("upload_analysis_start")(upload_analysis_start)
     ctrl.trigger("upload_analysis_chunk")(upload_analysis_chunk)
     ctrl.trigger("upload_analysis_complete")(upload_analysis_complete)
+    ctrl.trigger("clear_analysis")(clear_analysis)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer
     ctrl.refresh_labels = refresh_labels
