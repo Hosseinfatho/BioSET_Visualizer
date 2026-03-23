@@ -194,7 +194,7 @@ def right_drawer(state, ctrl):
                                 )
 
                         with html.Div(classes="mb-4 mt-2"):
-                            html.Div("Minimum Number of Channels", classes="text-caption mb-2 text-left", style="color: white;")
+                            html.Div("Combination Size", classes="text-caption mb-2 text-left", style="color: white;")
                             with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
                                 for val in [1, 2, 3, 4, 5]:
                                     vuetify.VBtn(

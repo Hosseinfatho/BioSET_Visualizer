@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB per chunk
+  var CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB per chunk
   var PARALLEL = 6; // concurrent readers
 
   window.biosetChunkedUpload = function (file, triggerFn) {

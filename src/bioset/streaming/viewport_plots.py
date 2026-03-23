@@ -104,7 +104,7 @@ def _run_viewport_queries(conn, req: ViewportPlotRequest) -> ViewportPlotResult:
             FROM combinations c
             JOIN tiles t ON c.id = t.combination_id
             WHERE c.dilation = ? AND c.hierarchy_level = {_QUERY_LEVEL}
-              AND c.channel_count >= ?
+              AND c.channel_count = ?
               AND {tile_filter_t}
             GROUP BY c.channels
             HAVING sum_union > 0

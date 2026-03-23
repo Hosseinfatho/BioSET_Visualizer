@@ -249,7 +249,7 @@ class AnalysisLoader:
                 SUM(total_union) as sum_union,
                 SUM(total_count) as agg_count
             FROM combinations
-            WHERE dilation = ? AND hierarchy_level = ? AND channel_count >= ?
+            WHERE dilation = ? AND hierarchy_level = ? AND channel_count = ?
             GROUP BY channels
             HAVING sum_union > 0
             ORDER BY CAST(SUM(total_count) AS REAL) / SUM(total_union) DESC
@@ -950,7 +950,7 @@ class AnalysisLoader:
                    SUM(t.union_count) as sum_union
             FROM combinations c
             JOIN tiles t ON c.id = t.combination_id
-            WHERE c.dilation = ? AND c.hierarchy_level = ? AND c.channel_count >= ?
+            WHERE c.dilation = ? AND c.hierarchy_level = ? AND c.channel_count = ?
               AND {tile_filter_t}
             GROUP BY c.channels
             HAVING sum_union > 0
