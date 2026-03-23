@@ -1658,7 +1658,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_messages = list(state.chatbot_messages) + [
                 {
                     "role": "assistant",
-                    "content": f"Bookmark suggestion applied: {state.bookmark_form_name} ({suggested_category}).",
+                    "format": "bookmark",
+                    "title": suggested_title or "(untitled)",
+                    "category": suggested_category,
+                    "description": suggested_description or "",
                 }
             ]
             print("[callbacks] Biomni bookmark suggestion applied to bookmark form")
