@@ -1777,10 +1777,33 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print("[callbacks] Label EndInteractionEvent observer registered")
 
     def capture_screenshot():
-        """Capture current VTK view as base64-encoded PNG."""
+        """Capture current VTK view as base64-encoded JPEG, capped under 5 MB."""
         import base64
+        from io import BytesIO
+        from PIL import Image
+
         png_bytes = capture_screenshot_png_bytes(_refs.get("streamer"))
-        return base64.b64encode(png_bytes).decode("utf-8") if png_bytes else None
+        if not png_bytes:
+            return None
+
+        img = Image.open(BytesIO(png_bytes)).convert("RGB")
+
+        # Down-scale if either dimension exceeds 1920
+        max_dim = 1920
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
+        # Encode as JPEG, lowering quality until under 5 MB (base64 limit)
+        max_b64_bytes = 5 * 1024 * 1024  # 5 MB
+        for quality in (85, 70, 50):
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=quality)
+            raw = buf.getvalue()
+            if len(raw) * 4 // 3 <= max_b64_bytes:
+                return base64.b64encode(raw).decode("utf-8")
+
+        # Last resort: already smallest quality
+        return base64.b64encode(raw).decode("utf-8")
 
     def _print_tile_channel_stats(tile, level, dilation):
         """Print per-channel stats and build the channel_stats dict stored in _refs."""
