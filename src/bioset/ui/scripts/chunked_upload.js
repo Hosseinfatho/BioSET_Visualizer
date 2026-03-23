@@ -2,32 +2,35 @@
   "use strict";
 
   var CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB per chunk
+  var PARALLEL = 6; // concurrent readers
 
   window.biosetChunkedUpload = function (file, triggerFn) {
     if (!file) return;
 
     var name = file.name;
     var total = file.size;
-    var offset = 0;
+    var totalChunks = Math.ceil(total / CHUNK_SIZE);
+    var nextChunk = 0; // next chunk index to dispatch
+    var doneChunks = 0; // chunks fully sent
+    var active = 0;
 
-    // Signal start so Python can prepare the temp file
     triggerFn("upload_analysis_start", [{ name: name, total_size: total }]);
 
-    function readNext() {
-      if (offset >= total) {
-        triggerFn("upload_analysis_complete", [
-          { name: name, total_size: total },
-        ]);
-        return;
+    function dispatch() {
+      while (active < PARALLEL && nextChunk < totalChunks) {
+        launchChunk(nextChunk++);
       }
+    }
 
-      var end = Math.min(offset + CHUNK_SIZE, total);
-      var slice = file.slice(offset, end);
+    function launchChunk(idx) {
+      var chunkOffset = idx * CHUNK_SIZE;
+      var end = Math.min(chunkOffset + CHUNK_SIZE, total);
+      var slice = file.slice(chunkOffset, end);
       var reader = new FileReader();
+      active++;
 
       reader.onload = function (e) {
         var arr = new Uint8Array(e.target.result);
-        // Convert to base64
         var binary = "";
         for (var i = 0; i < arr.length; i += 8192) {
           binary += String.fromCharCode.apply(
@@ -38,20 +41,29 @@
         var b64 = btoa(binary);
 
         triggerFn("upload_analysis_chunk", [
-          { name: name, data: b64, offset: offset, total_size: total },
+          { name: name, data: b64, offset: chunkOffset, total_size: total },
         ]);
-        offset = end;
-        // Small delay to avoid flooding the websocket
-        setTimeout(readNext, 10);
+
+        active--;
+        doneChunks++;
+
+        if (doneChunks === totalChunks) {
+          triggerFn("upload_analysis_complete", [
+            { name: name, total_size: total },
+          ]);
+        } else {
+          dispatch();
+        }
       };
 
       reader.onerror = function () {
-        console.error("biosetChunkedUpload: read error at offset", offset);
+        console.error("biosetChunkedUpload: read error at chunk", idx);
+        active--;
       };
 
       reader.readAsArrayBuffer(slice);
     }
 
-    readNext();
+    dispatch();
   };
 })();

@@ -481,40 +481,69 @@ def register_callbacks(ctrl, state, view, streamer=None):
     # ── Chunked .bioset upload ──────────────────────────────────────────
     _upload_temp_dir = None
     _upload_temp_path = None
+    _upload_total_size = 0
+    _upload_bytes_written = 0
+    _upload_name = ""
+    _upload_complete_signalled = False
 
     def upload_analysis_start(info):
-        nonlocal _upload_temp_dir, _upload_temp_path
+        nonlocal _upload_temp_dir, _upload_temp_path, _upload_total_size
+        nonlocal _upload_bytes_written, _upload_name, _upload_complete_signalled
         import tempfile as _tmp
         name = info.get("name", "upload.bioset")
         total = info.get("total_size", 0)
         _upload_temp_dir = _tmp.mkdtemp(prefix="bioset_upload_")
         _upload_temp_path = Path(_upload_temp_dir) / name
-        # Create empty file
-        _upload_temp_path.write_bytes(b"")
+        _upload_total_size = total
+        _upload_bytes_written = 0
+        _upload_name = name
+        _upload_complete_signalled = False
+        # Pre-allocate file to full size so parallel seeks work
+        with open(_upload_temp_path, "wb") as f:
+            f.seek(total - 1)
+            f.write(b"\0")
         state.analysis_loading = True
         print(f"[callbacks] Chunked upload started: {name} ({total} bytes)")
 
+    def _try_finalize_upload():
+        """Load the file once all bytes are written AND complete has been signalled."""
+        nonlocal _upload_temp_dir, _upload_temp_path, _upload_complete_signalled
+        if not _upload_complete_signalled:
+            return
+        if _upload_bytes_written < _upload_total_size:
+            return
+        print(f"[callbacks] All chunks received, loading {_upload_temp_path}...")
+        _do_load_assembled_file()
+
     def upload_analysis_chunk(info):
-        nonlocal _upload_temp_path
+        nonlocal _upload_temp_path, _upload_bytes_written
         import base64
         if _upload_temp_path is None:
             return
         data_b64 = info.get("data", "")
         chunk_bytes = base64.b64decode(data_b64)
-        with open(_upload_temp_path, "ab") as f:
+        offset = info.get("offset", 0)
+        with open(_upload_temp_path, "r+b") as f:
+            f.seek(offset)
             f.write(chunk_bytes)
-        total = info.get("total_size", 1)
-        offset = info.get("offset", 0) + len(chunk_bytes)
-        pct = min(100, int(offset * 100 / total))
+        _upload_bytes_written += len(chunk_bytes)
+        pct = min(100, int(_upload_bytes_written * 100 / max(1, _upload_total_size)))
         if pct % 10 == 0:
-            print(f"[callbacks] Upload progress: {pct}%")
+            print(f"[callbacks] Upload progress: {pct}%  ({_upload_bytes_written}/{_upload_total_size})")
+        _try_finalize_upload()
 
     def upload_analysis_complete(info):
+        nonlocal _upload_complete_signalled
+        _upload_complete_signalled = True
+        print(f"[callbacks] Upload complete signal received ({_upload_bytes_written}/{_upload_total_size} bytes written)")
+        _try_finalize_upload()
+
+    def _do_load_assembled_file():
         nonlocal _upload_temp_dir, _upload_temp_path
         if _upload_temp_path is None:
             state.analysis_loading = False
             return
-        name = info.get("name", "upload.bioset")
+        name = _upload_name
         print(f"[callbacks] Upload complete, loading {_upload_temp_path}...")
         try:
             from bioset.analysis import AnalysisLoader
