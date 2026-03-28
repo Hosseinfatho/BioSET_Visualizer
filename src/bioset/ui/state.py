@@ -319,6 +319,9 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_background_color(bg_color)
     
 
+    # Track whether analysis-sidebar data needs recomputation when the drawer opens.
+    _analysis_stale = {"dilation": False, "upset": False, "bar": False}
+
     @state.change("active_channels")
     def on_active_channels_change(active_channels, **kwargs):
         print(f"[state] Active channels changed: {active_channels}")
@@ -332,14 +335,23 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_active_channels(active_channels)
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
-        if hasattr(ctrl, 'update_upset_data_local'):
-            ctrl.update_upset_data_local()
-        if hasattr(ctrl, 'update_bar_data_local'):
-            ctrl.update_bar_data_local()
         if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
             ctrl.nov_recompute_scores_if_visible()
-        if hasattr(ctrl, 'update_dilation_data'):
-            ctrl.update_dilation_data()
+
+        # Defer expensive analysis computations when the sidebar is closed
+        drawer_open = getattr(state, "right_drawer_open", False)
+        if drawer_open:
+            if hasattr(ctrl, 'update_upset_data_local'):
+                ctrl.update_upset_data_local()
+            if hasattr(ctrl, 'update_bar_data_local'):
+                ctrl.update_bar_data_local()
+            if hasattr(ctrl, 'update_dilation_data'):
+                ctrl.update_dilation_data()
+        else:
+            _analysis_stale["dilation"] = True
+            _analysis_stale["upset"] = True
+            _analysis_stale["bar"] = True
+
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 
@@ -568,6 +580,17 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("right_drawer_open")
     def on_right_drawer_open_change(right_drawer_open, **kwargs):
+        if right_drawer_open:
+            # Recompute any analysis data that was deferred while the drawer was closed
+            if _analysis_stale.get("dilation") and hasattr(ctrl, 'update_dilation_data'):
+                ctrl.update_dilation_data()
+                _analysis_stale["dilation"] = False
+            if _analysis_stale.get("upset") and hasattr(ctrl, 'update_upset_data_local'):
+                ctrl.update_upset_data_local()
+                _analysis_stale["upset"] = False
+            if _analysis_stale.get("bar") and hasattr(ctrl, 'update_bar_data_local'):
+                ctrl.update_bar_data_local()
+                _analysis_stale["bar"] = False
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 

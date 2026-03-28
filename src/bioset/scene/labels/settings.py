@@ -1,3 +1,7 @@
+"""
+All tunable parameters for the BioSET label placement system.
+"""
+
 label_config = {
     # =====================================================================
     # REGION EXTRACTION
@@ -17,16 +21,16 @@ label_config = {
     # INTERACTION DETECTION
     # =====================================================================
     "DETECT_INTERACTIONS": True,
-    "INTERACTION_DISTANCE": 15.0,
+    "INTERACTION_DISTANCE": 10.0,
     "INTERACTION_BILLBOARD_MIN_GAP": 5.0,
     "INTERACTION_BILLBOARD_OFFSET": 5.0,
     "INTERACTION_BILLBOARD_SCALE": 3.0,
-    "INTERACTION_BILLBOARD_COLOR": (1.0, 0.8, 0.5),
-    "INTERACTION_FLAGPOLE_HEIGHT": 5.0,
-    "INTERACTION_FLAGPOLE_SCALE": 0.7,
-    "INTERACTION_FLAGPOLE_COLOR": (1.0, 0.8, 0.5),
-    "INTERACTION_CLUSTER_RADIUS": 6.0,   # scaled from 60.0
-    "MAX_INTERACTION_LABELS": 8,
+    "INTERACTION_BILLBOARD_COLOR": (1.0, 0.75, 0.55),
+    "INTERACTION_FLAGPOLE_HEIGHT": 7.0,
+    "INTERACTION_FLAGPOLE_SCALE": 1.0,
+    "INTERACTION_FLAGPOLE_COLOR": (1.0, 0.75, 0.55),
+    "INTERACTION_CLUSTER_RADIUS": 10.0,  # was 6 — merge nearby interactions more
+    "MAX_INTERACTION_LABELS": 0,         # was 4 — at most 2 on screen
 
     # =====================================================================
     # LABEL DISPLAY
@@ -35,52 +39,32 @@ label_config = {
 
     # =====================================================================
     # HIERARCHICAL LABEL LEVELS
-    #
-    # Camera distance controls level of detail:
-    #   dist >= OVERVIEW_DIST  → single "overall" label
-    #   REGION_DIST < dist < OVERVIEW_DIST → clustered billboard labels
-    #   dist <= REGION_DIST → individual region labels (surface/flagpole/billboard)
-    #
-    # Keep HIERARCHY_REGION_DIST well below FAR_THRESHOLD so there is a
-    # distance band where individual regions are shown as FLAGPOLE labels
-    # (REGION_DIST < dist < FAR_THRESHOLD). Without this gap the hierarchy
-    # switches to individual regions at the same distance the zoom heuristic
-    # switches to SURFACE — skipping FLAGPOLE entirely.
     # =====================================================================
     "HIERARCHY_OVERVIEW_DIST": 500.0,
     "HIERARCHY_REGION_DIST": 200.0,
-
     "CLUSTER_LABEL_BASE_SCALE": 1.0,
     "CLUSTER_EXTENT_SCALE_FACTOR": 50.0,
-    "CLUSTER_LABEL_COLOR": (1.0, 1.0, 0.8),
+    "CLUSTER_LABEL_COLOR": (0.95, 0.92, 0.8),
     "CLUSTER_LABEL_OFFSET": 40.0,
+    "MAX_CLUSTER_LABELS": 6,            # was 12
 
     # =====================================================================
     # ZOOM-BASED LABEL TYPE HEURISTIC
-    #
-    #   dist > FAR_THRESHOLD              → BILLBOARD  (cluster/overview zoom)
-    #   MID_THRESHOLD < dist <= FAR       → FLAGPOLE   (individual regions, mid zoom)
-    #   dist <= MID_THRESHOLD             → SURFACE    (close zoom)
-    #
-    # FAR must be > HIERARCHY_REGION_DIST so individual regions use FLAGPOLE
-    # in the band [HIERARCHY_REGION_DIST, FAR_THRESHOLD].
-    # MID must be < HIERARCHY_REGION_DIST so SURFACE only triggers up close.
     # =====================================================================
     "FAR_THRESHOLD": 400.0,
     "MID_THRESHOLD": 160.0,
-
-    "MAX_VISIBLE_LABELS": 10,
-    "LABEL_SCREEN_PADDING": 15,
+    "MAX_VISIBLE_LABELS": 4,            # was 10 — biggest declutter lever
+    "LABEL_SCREEN_PADDING": 25,         # was 15 — more breathing room
 
     # =====================================================================
     # SURFACE LABEL SETTINGS
     # =====================================================================
-    "DILATION_AMOUNT": 5.0,            # BioSET geometry requires smaller value than 10x scaling
+    "DILATION_AMOUNT": 5.0,
     "SMOOTH_ITERATIONS": 100,
-    "SURFACE_LABEL_HEIGHT": 1.0,       # scaled from 10.0
-    "SURFACE_HEIGHT_FACTOR": 0.12,     # region_diag * this = label height
-    "SURFACE_MIN_HEIGHT": 1.0,         # scaled from 6.0
-    "SURFACE_MAX_HEIGHT": 1.5,         # scaled from 30.0
+    "SURFACE_LABEL_HEIGHT": 1.8,
+    "SURFACE_HEIGHT_FACTOR": 2.2,
+    "SURFACE_MIN_HEIGHT": 1.8,
+    "SURFACE_MAX_HEIGHT": 3.0,
     "WALK_STEP": 3.0,
     "WALK_STEPS": 30,
     "WALK_NORMAL_COS_THRESHOLD": 0.5,
@@ -88,48 +72,44 @@ label_config = {
     "LOOP_THRESHOLD": 3.0,
     "SURFACE_MIN_WALK_FRACTION": 0.6,
     "CENTROID_BIAS": 0.7,
-    "SURFACE_LABEL_COLOR": (1.0, 1.0, 1.0),
+    "SURFACE_LABEL_COLOR": (0.92, 0.9, 0.82),
     "SURFACE_PROBE_DIRECTIONS": 6,
     "SURFACE_PROBE_STEPS": 8,
-    # Minimum dot(surface_normal, to_camera) to attempt a surface label.
-    # 1.0 = dead-on, 0.0 = edge-on, <0 = away. Below threshold → flagpole fallback.
-    # 0.3 ≈ 72° off from facing camera.
-    "SURFACE_MIN_FACING": 0.6,
+    "SURFACE_MIN_FACING": 0.8,
 
     # =====================================================================
     # FLAGPOLE LABEL SETTINGS
     # =====================================================================
-    "FLAGPOLE_HEIGHT": 3.0,            # scaled from 35.0
-    "FLAGPOLE_TEXT_SCALE": 1.0,
-    "FLAGPOLE_COLOR": (1.0, 1.0, 1.0),
-    "FLAGPOLE_LINE_COLOR": (1.0, 1.0, 1.0),
+    "FLAGPOLE_HEIGHT": 6.0,
+    "FLAGPOLE_TEXT_SCALE": 1.2,
+    "FLAGPOLE_COLOR": (0.92, 0.9, 0.82),
+    "FLAGPOLE_LINE_COLOR": (0.6, 0.58, 0.5),
     "FLAGPOLE_LINE_WIDTH": 1.5,
-    "FLAGPOLE_DOT_RADIUS": 0.15,       # scaled from 1.2
-    "FLAGPOLE_DOT_COLOR": (1.0, 1.0, 1.0),
-    "FLAGPOLE_FAN_SPACING": 2.0,       # scaled from 15.0
+    "FLAGPOLE_DOT_RADIUS": 0.15,
+    "FLAGPOLE_DOT_COLOR": (0.92, 0.9, 0.82),
+    "FLAGPOLE_FAN_SPACING": 3.0,        # was 2 — more spread
 
     # =====================================================================
     # BILLBOARD LABEL SETTINGS
     # =====================================================================
-    "BILLBOARD_OFFSET":20.0,           # scaled from 80.0
+    "BILLBOARD_OFFSET": 15.0,
     "BILLBOARD_TEXT_SCALE": 0.5,
-    "BILLBOARD_COLOR": (1.0, 1.0, 1.0),
+    "BILLBOARD_COLOR": (0.92, 0.9, 0.82),
 
     # =====================================================================
     # CO-LOCALIZATION LABEL SIZE OVERRIDES
-    # When set, co-loc labels use these instead of the single-marker defaults.
     # =====================================================================
-    "COLOC_FLAGPOLE_HEIGHT": 5.0,
-    "COLOC_FLAGPOLE_TEXT_SCALE": 1.3,
-    "COLOC_BILLBOARD_TEXT_SCALE": 1.3,
+    "COLOC_FLAGPOLE_HEIGHT": 8.0,
+    "COLOC_FLAGPOLE_TEXT_SCALE": 1.4,
+    "COLOC_BILLBOARD_TEXT_SCALE": 1.5,
     "COLOC_BILLBOARD_OFFSET": 40.0,
-    "COLOC_SURFACE_HEIGHT_FACTOR": 0.15,
-    "COLOC_SURFACE_MIN_HEIGHT": 0.8,
-    "COLOC_SURFACE_MAX_HEIGHT": 4.0,
-    "COLOC_LABEL_COLOR": (1.0, 1.0, 0.0),
+    "COLOC_SURFACE_HEIGHT_FACTOR": 0.35,
+    "COLOC_SURFACE_MIN_HEIGHT": 1.2,
+    "COLOC_SURFACE_MAX_HEIGHT": 4.5,
+    "COLOC_LABEL_COLOR": (1.0, 0.92, 0.55),
 
     # =====================================================================
     # TEXT RENDERING
     # =====================================================================
-    "TEXT_EXTRUSION_DEPTH": 0.1,      # Z-depth for vtkLinearExtrusionFilter
+    "TEXT_EXTRUSION_DEPTH": 0.1,
 }
