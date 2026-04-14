@@ -136,6 +136,22 @@ def floating_chatbot_section(state, ctrl):
                                                 )
                                             html.Div("{{ s.reason }}", classes="text-caption grey--text", style="line-height: 1.2;")
 
+                        with html.Div(v_if="message.role === 'assistant' && message.format === 'bookmark'", classes="d-flex justify-start"):
+                            with vuetify.VCard(classes="pa-3", color="#303030", dark=True, style="max-width:90%; width:100%;"):
+                                html.Div("Bookmark Suggestion", classes="text-caption font-weight-bold mb-2", style="color: #ffffff;")
+                                html.Div("Title", classes="text-caption grey--text mb-0")
+                                html.Div("{{ message.title }}", classes="text-body-2 font-weight-medium mb-2")
+                                html.Div("Category", classes="text-caption grey--text mb-0")
+                                with html.Div(classes="mb-2"):
+                                    vuetify.VChip(
+                                        "{{ message.category }}",
+                                        small=True,
+                                        color="#616161",
+                                        text_color="white",
+                                    )
+                                html.Div("Description", classes="text-caption grey--text mb-0", v_if="message.description")
+                                html.Div("{{ message.description }}", classes="text-body-2", v_if="message.description", style="white-space: pre-wrap; line-height: 1.4;")
+
                         with html.Div(v_if="message.role === 'assistant' && !message.format", classes="d-flex justify-start"):
                             with vuetify.VCard(classes="pa-2", color="#303030", dark=True, style="max-width:80%;"):
                                 html.Div("{{ message.content }}", classes="text-body-2")

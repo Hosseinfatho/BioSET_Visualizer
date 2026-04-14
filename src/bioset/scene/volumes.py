@@ -248,10 +248,10 @@ def build_histogram_tf(image, *, tint_rgb=(0.2, 0.8, 1.0)):
     opacity = vtkPiecewiseFunction()
     opacity.AddPoint(r0, 0.0)
     opacity.AddPoint(lo, 0.0)
-    opacity.AddPoint(lo + 0.25 * (hi - lo), 0.03)
-    opacity.AddPoint(lo + 0.60 * (hi - lo), 0.12)
-    opacity.AddPoint(hi, 0.25)
-    opacity.AddPoint(max(p995, hi), 0.25)
+    opacity.AddPoint(lo + 0.25 * (hi - lo), 0.015)
+    opacity.AddPoint(lo + 0.60 * (hi - lo), 0.06)
+    opacity.AddPoint(hi, 0.12)
+    opacity.AddPoint(max(p995, hi), 0.12)
 
     color = vtkColorTransferFunction()
     color.AddRGBPoint(r0, 0.0, 0.0, 0.0)
@@ -275,7 +275,7 @@ def apply_volume_properties(prop: vtkVolumeProperty, image, *, shade=True):
     prop.SetInterpolationTypeToLinear()
 
     sx, sy, sz = image.GetSpacing()
-    prop.SetScalarOpacityUnitDistance(max(1e-6, 1.0 * min(sx, sy, sz)))
+    prop.SetScalarOpacityUnitDistance(max(1e-6, 3.0 * min(sx, sy, sz)))
 
 def build_tf_with_range(
     data_range: Tuple[float, float],
@@ -296,28 +296,34 @@ def build_tf_with_range(
     p10, p99, p995 = percentile_range
 
     pct_lo, pct_hi = intensity_range_pct
-    
+
     bounded_lo = max(p10, r0)
     bounded_hi = max(p99, bounded_lo + 1.0)
 
     lo = bounded_lo + (pct_lo / 100.0) * (bounded_hi - bounded_lo)
     hi = bounded_lo + (pct_hi / 100.0) * (bounded_hi - bounded_lo)
-    
-    if hi <= lo:
-        hi = lo + 1.0
-    
+
     opacity = vtkPiecewiseFunction()
+    color = vtkColorTransferFunction()
+
+    # When both ends are the same, make channel fully transparent
+    if hi <= lo:
+        opacity.AddPoint(r0, 0.0)
+        opacity.AddPoint(r1, 0.0)
+        color.AddRGBPoint(r0, 0.0, 0.0, 0.0)
+        color.AddRGBPoint(r1, 0.0, 0.0, 0.0)
+        return color, opacity
+
     opacity.AddPoint(r0, 0.0)
     opacity.AddPoint(lo, 0.0)
-    opacity.AddPoint(lo + 0.25 * (hi - lo), 0.03)
-    opacity.AddPoint(lo + 0.60 * (hi - lo), 0.12)
-    opacity.AddPoint(hi, 0.25)
-    opacity.AddPoint(max(p995, hi), 0.25)
-    
-    color = vtkColorTransferFunction()
+    opacity.AddPoint(lo + 0.25 * (hi - lo), 0.015)
+    opacity.AddPoint(lo + 0.60 * (hi - lo), 0.06)
+    opacity.AddPoint(hi, 0.12)
+    opacity.AddPoint(max(p995, hi), 0.12)
+
     color.AddRGBPoint(r0, 0.0, 0.0, 0.0)
     color.AddRGBPoint(lo, 0.0, 0.0, 0.0)
     color.AddRGBPoint(hi, *tint_rgb)
     color.AddRGBPoint(r1, *tint_rgb)
-    
+
     return color, opacity

@@ -161,7 +161,7 @@ def analysis_parameters_section(state, ctrl):
                                                         x-small
                                                         :style="(function(){var c=channels.find(function(x){return x.name===ch});var clr=c?c.color:'#888';var sel=JSON.stringify(heatmap_combination)===JSON.stringify(combo.channels);return 'background:'+(sel?clr:'transparent')+';border:1px solid '+clr+';color:'+(sel?'#000':clr)})()"
                                                     >{{ ch }}</v-chip>
-                                                    <span v-if="combo.iou !== null" style="color: #aaa; font-size: 10px; margin-left: 4px;">
+                                                    <span v-if="combo.iou !== null" class="text-caption grey--text ml-1">
                                                         IoU: {{ combo.iou.toFixed(4) }}
                                                     </span>
                                                 </div>

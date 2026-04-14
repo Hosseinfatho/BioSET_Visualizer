@@ -109,12 +109,13 @@ def data_sources_section(state, ctrl):
                             chips=True,
                             small_chips=True,
                             prepend_icon="mdi-chart-box-outline",
+                            color="white",
                             loading=("analysis_loading", False),
                             disabled=("analysis_loading", False),
                             dense=True,
                             hide_details=True,
                             __events=["change"],
-                            change=(ctrl.load_analysis_file, "[$event]"),
+                            change="$event ? window.biosetChunkedUpload($event, trigger) : trigger('clear_analysis')",
                         )
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
                         with vuetify.VListItemContent():
@@ -129,7 +130,7 @@ def data_sources_section(state, ctrl):
                             ):
                                 html.A(
                                     "Instructions for running the BioSET analysis pipeline.",
-                                    href="https://github.com/Chahat08/BioSET_Preprocessing",
+                                    href="https://github.com/nyu-vis-krueger-group/BioSET_Preprocessing/tree/master",
                                     target="_blank",
                                     style="font-size: 10px; color: #9e9e9e;",
                                 )

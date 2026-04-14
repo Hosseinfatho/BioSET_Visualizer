@@ -4,6 +4,7 @@ import datetime
 import hashlib
 import os
 import tempfile
+from pathlib import Path
 
 from bioset.NOV import register_nov_callbacks
 from bioset.bookmark import register_bookmark_callbacks, capture_screenshot_png_bytes
@@ -36,6 +37,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "heatmap": None,
         "mesh_manager": None,
         "heatmap_lod": None,
+        "viewport_plots": None,
         "renderer": None,
         "label_manager": None,
         "biomni_client": None,
@@ -75,6 +77,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the heatmap LOD renderer reference."""
         _refs["heatmap_lod"] = heatmap_lod
         print(f"[callbacks] Heatmap LOD set: {heatmap_lod}")
+
+    def set_viewport_plots(viewport_plots):
+        """Set the viewport plot computer reference."""
+        _refs["viewport_plots"] = viewport_plots
+        print(f"[callbacks] Viewport plots set: {viewport_plots}")
 
     def set_interactor(interactor):
         """Set the main VTK interactor for bookmark flag picking."""
@@ -369,6 +376,29 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if _refs["view"]:
             _refs["view"].update()
 
+    def clear_analysis():
+        """Clear only analysis data (not zarr/volume data)."""
+        if _refs["analysis_loader"]:
+            _refs["analysis_loader"].close()
+            _refs["analysis_loader"] = None
+
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod:
+            heatmap_lod.clear_analysis()
+
+        vp = _refs.get("viewport_plots")
+        if vp:
+            vp.clear_analysis()
+
+        state.analysis_loaded = False
+        state.analysis_file_name = ""
+        state.analysis_channels = []
+        state.analysis_dilation_amounts = []
+        state.analysis_hierarchy_levels = []
+        state.analysis_volume_bounds = {}
+        state.heatmap_tile_count = 0
+        print("[callbacks] Analysis cleared")
+
     def load_analysis_file(file_info):
         """
         Load analysis results from uploaded .bioset file.
@@ -407,14 +437,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
             loader = _refs["analysis_loader"]
             metadata = loader.load_from_bytes(file_bytes)
 
-            # Notify HeatmapLOD of new analysis context
+            # Notify HeatmapLOD and ViewportPlotComputer of new analysis context
+            z_depth = 1
+            bounds = metadata.volume_bounds
+            if bounds and "z" in bounds:
+                z_depth = max(1, bounds["z"][1] - bounds["z"][0])
+
             heatmap_lod = _refs.get("heatmap_lod")
             if heatmap_lod and loader.db_path:
-                z_depth = 1
-                bounds = metadata.volume_bounds
-                if bounds and "z" in bounds:
-                    z_depth = max(1, bounds["z"][1] - bounds["z"][0])
                 heatmap_lod.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
+            vp = _refs.get("viewport_plots")
+            if vp and loader.db_path:
+                vp.set_analysis(
                     db_path=loader.db_path,
                     channel_order=list(metadata.channels),
                     z_depth=z_depth,
@@ -461,6 +500,157 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.analysis_loaded = False
         finally:
             state.analysis_loading = False
+
+    # ── Chunked .bioset upload ──────────────────────────────────────────
+    _upload_temp_dir = None
+    _upload_temp_path = None
+    _upload_total_size = 0
+    _upload_bytes_written = 0
+    _upload_name = ""
+    _upload_complete_signalled = False
+
+    def upload_analysis_start(info):
+        nonlocal _upload_temp_dir, _upload_temp_path, _upload_total_size
+        nonlocal _upload_bytes_written, _upload_name, _upload_complete_signalled
+        import tempfile as _tmp
+        name = info.get("name", "upload.bioset")
+        total = info.get("total_size", 0)
+        _upload_temp_dir = _tmp.mkdtemp(prefix="bioset_upload_")
+        _upload_temp_path = Path(_upload_temp_dir) / name
+        _upload_total_size = total
+        _upload_bytes_written = 0
+        _upload_name = name
+        _upload_complete_signalled = False
+        # Pre-allocate file to full size so parallel seeks work
+        with open(_upload_temp_path, "wb") as f:
+            f.seek(total - 1)
+            f.write(b"\0")
+        state.analysis_loading = True
+        print(f"[callbacks] Chunked upload started: {name} ({total} bytes)")
+
+    def _try_finalize_upload():
+        """Load the file once all bytes are written AND complete has been signalled."""
+        nonlocal _upload_temp_dir, _upload_temp_path, _upload_complete_signalled
+        if not _upload_complete_signalled:
+            return
+        if _upload_bytes_written < _upload_total_size:
+            return
+        print(f"[callbacks] All chunks received, loading {_upload_temp_path}...")
+        _do_load_assembled_file()
+
+    def upload_analysis_chunk(info):
+        nonlocal _upload_temp_path, _upload_bytes_written
+        import base64
+        if _upload_temp_path is None:
+            return
+        data_b64 = info.get("data", "")
+        chunk_bytes = base64.b64decode(data_b64)
+        offset = info.get("offset", 0)
+        with open(_upload_temp_path, "r+b") as f:
+            f.seek(offset)
+            f.write(chunk_bytes)
+        _upload_bytes_written += len(chunk_bytes)
+        pct = min(100, int(_upload_bytes_written * 100 / max(1, _upload_total_size)))
+        if pct % 10 == 0:
+            print(f"[callbacks] Upload progress: {pct}%  ({_upload_bytes_written}/{_upload_total_size})")
+        _try_finalize_upload()
+
+    def upload_analysis_complete(info):
+        nonlocal _upload_complete_signalled
+        _upload_complete_signalled = True
+        print(f"[callbacks] Upload complete signal received ({_upload_bytes_written}/{_upload_total_size} bytes written)")
+        _try_finalize_upload()
+
+    def _do_load_assembled_file():
+        nonlocal _upload_temp_dir, _upload_temp_path
+        if _upload_temp_path is None:
+            state.analysis_loading = False
+            return
+        name = _upload_name
+        print(f"[callbacks] Upload complete, loading {_upload_temp_path}...")
+        try:
+            from bioset.analysis import AnalysisLoader
+
+            if _refs["analysis_loader"] is None:
+                _refs["analysis_loader"] = AnalysisLoader()
+
+            loader = _refs["analysis_loader"]
+            metadata = loader.load(str(_upload_temp_path))
+
+            z_depth = 1
+            bounds = metadata.volume_bounds
+            if bounds and "z" in bounds:
+                z_depth = max(1, bounds["z"][1] - bounds["z"][0])
+
+            heatmap_lod = _refs.get("heatmap_lod")
+            if heatmap_lod and loader.db_path:
+                heatmap_lod.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
+            vp = _refs.get("viewport_plots")
+            if vp and loader.db_path:
+                vp.set_analysis(
+                    db_path=loader.db_path,
+                    channel_order=list(metadata.channels),
+                    z_depth=z_depth,
+                )
+
+            state.analysis_file_name = name
+            state.analysis_channels = metadata.channels
+            state.analysis_dilation_amounts = metadata.dilation_amounts
+            state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
+            state.analysis_volume_bounds = metadata.volume_bounds
+
+            if metadata.dilation_amounts:
+                mid = len(metadata.dilation_amounts) // 2
+                state.current_dilation = metadata.dilation_amounts[mid]
+
+            if metadata.hierarchy_levels:
+                state.current_hierarchy_level = metadata.hierarchy_levels[-1]["level"]
+
+            state.upset_selected_channels = [ch for ch in state.analysis_channels]
+            state.bar_selected_channels = [ch for ch in state.analysis_channels]
+            state.dilation_selected_channels = [ch for ch in state.analysis_channels]
+
+            state.analysis_loaded = True
+            state.right_drawer_open = True
+
+            print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
+                  f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
+
+            update_heatmap()
+            update_heatmap_combinations()
+            update_upset_data()
+            update_bar_data()
+            update_dilation_data()
+
+            if _refs["view"]:
+                _refs["view"].update()
+
+        except Exception as e:
+            print(f"[callbacks] Error loading analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            state.analysis_loaded = False
+        finally:
+            state.analysis_loading = False
+            # Clean up temp upload file
+            if _upload_temp_path and _upload_temp_path.exists():
+                try:
+                    _upload_temp_path.unlink()
+                except Exception:
+                    pass
+            if _upload_temp_dir:
+                import shutil
+                try:
+                    shutil.rmtree(_upload_temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            _upload_temp_dir = None
+            _upload_temp_path = None
 
     def toggle_channel(channel_id):
         """Toggle a channel's active state (add/remove from rendering)."""
@@ -600,7 +790,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     channel_filter=active_channel_names,
                     dilation=state.current_dilation,
                     hierarchy_level=state.current_hierarchy_level,
-                    limit=50,
+                    limit=100000,
                     exact_match=False,
                 )
 
@@ -1000,6 +1190,63 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         print(f"[callbacks] Dilation data updated: {len(result)}/{len(all_keys)} curves shown")
     
+    def _compute_current_tile_ranges():
+        """Compute tile grid ranges for the current viewport. Returns ((gx0, gx1), (gy0, gy1)) or None."""
+        streamer = _refs.get("streamer")
+        renderer = _refs.get("renderer")
+        vp = _refs.get("viewport_plots")
+        if not streamer or not renderer or not vp:
+            return None
+        try:
+            from bioset.streaming.lod import compute_visible_xy_roi_vox
+            bounds = streamer._volume_bounds_world(0)
+            sp = streamer._spacing_for_component(0)
+            _, ydim, xdim = streamer._dims_for_component(0)
+            roi = compute_visible_xy_roi_vox(
+                renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
+                x_dim=xdim, y_dim=ydim, margin_vox=0,
+            )
+            # DB tile coords are always in level-0 grid units (128 voxels)
+            BASE_TILE = 128
+            gx0 = roi.x0 // BASE_TILE
+            gx1 = (roi.x1 + BASE_TILE - 1) // BASE_TILE
+            gy0 = roi.y0 // BASE_TILE
+            gy1 = (roi.y1 + BASE_TILE - 1) // BASE_TILE
+            return (gx0, gx1), (gy0, gy1)
+        except Exception as e:
+            print(f"[viewport_plots] ROI computation error: {e}")
+            return None
+
+    def sync_viewport_plots_enabled():
+        """Enable/disable viewport plot computation based on scope modes and drawer visibility."""
+        vp = _refs.get("viewport_plots")
+        if not vp:
+            return
+
+        drawer_open = getattr(state, "right_drawer_open", False)
+        need_bar = drawer_open and getattr(state, "bar_scope_mode", "global") == "local"
+        need_upset = drawer_open and getattr(state, "upset_scope_mode", "global") == "local"
+        need_dilation = drawer_open and getattr(state, "dilation_scope_mode", "global") == "local"
+
+        any_needed = need_bar or need_upset or need_dilation
+        vp.set_enabled(any_needed)
+        vp.update_needed_plots(need_bar, need_upset, need_dilation)
+
+        if any_needed:
+            # Sync active channel names for filtering viewport results
+            active_ids = state.active_channels or []
+            channels_list = state.channels or []
+            id_to_name = {ch["id"]: ch["name"] for ch in channels_list}
+            active_names = [id_to_name[ch_id] for ch_id in active_ids if ch_id in id_to_name]
+            vp.update_active_channels(active_names)
+            vp.update_dilation(getattr(state, "current_dilation", 0.0))
+            vp.update_min_channels(int(getattr(state, "upset_min_channels", 2)))
+
+            # Trigger immediate computation with current viewport
+            ranges = _compute_current_tile_ranges()
+            if ranges:
+                vp.on_camera_moved(ranges[0], ranges[1])
+
     def reset_camera():
         """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
         streamer = _refs.get("streamer")
@@ -1421,7 +1668,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot explain plot - Biomni not initialised")
             return
 
-        source_data = list(state.upset_data_local if state.upset_view_mode == "local" else state.upset_data)
+        # Pick the data source matching current scope + channel toggles
+        if state.upset_scope_mode == "local":
+            source_data = list(state.upset_data_viewport_selected if state.upset_channel_mode == "selected" else state.upset_data_viewport)
+        else:
+            source_data = list(state.upset_data_local if state.upset_channel_mode == "selected" else state.upset_data)
         offset = state.upset_offset
         limit = state.upset_limit
         visible_data = source_data[offset:offset + limit]
@@ -1433,7 +1684,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         plot_payload = {
             "type": "upset",
-            "view_mode": state.upset_view_mode,
+            "scope_mode": state.upset_scope_mode,
+            "channel_mode": state.upset_channel_mode,
             "selected_channels": list(state.upset_selected_channels or []),
             "active_channels": active_channel_names,
             "filters": {
@@ -1476,7 +1728,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot explain plot - Biomni not initialised")
             return
 
-        raw_data = list(state.bar_data_local if state.bar_view_mode == "local" else state.bar_data)
+        # Pick the data source matching current scope + channel toggles
+        if state.bar_scope_mode == "local":
+            raw_data = list(state.bar_data_viewport_selected if state.bar_channel_mode == "selected" else state.bar_data_viewport)
+        else:
+            raw_data = list(state.bar_data_local if state.bar_channel_mode == "selected" else state.bar_data)
         offset = state.bar_offset
         limit = state.bar_limit
         source_data = [
@@ -1492,7 +1748,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         plot_payload = {
             "type": "bar",
-            "view_mode": state.bar_view_mode,
+            "scope_mode": state.bar_scope_mode,
+            "channel_mode": state.bar_channel_mode,
             "selected_channels": list(state.bar_selected_channels or []),
             "active_channels": active_channel_names,
             "filters": {
@@ -1576,7 +1833,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_messages = list(state.chatbot_messages) + [
                 {
                     "role": "assistant",
-                    "content": f"Bookmark suggestion applied: {state.bookmark_form_name} ({suggested_category}).",
+                    "format": "bookmark",
+                    "title": suggested_title or "(untitled)",
+                    "category": suggested_category,
+                    "description": suggested_description or "",
                 }
             ]
             print("[callbacks] Biomni bookmark suggestion applied to bookmark form")
@@ -1695,10 +1955,33 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print("[callbacks] Label EndInteractionEvent observer registered")
 
     def capture_screenshot():
-        """Capture current VTK view as base64-encoded PNG."""
+        """Capture current VTK view as base64-encoded JPEG, capped under 5 MB."""
         import base64
+        from io import BytesIO
+        from PIL import Image
+
         png_bytes = capture_screenshot_png_bytes(_refs.get("streamer"))
-        return base64.b64encode(png_bytes).decode("utf-8") if png_bytes else None
+        if not png_bytes:
+            return None
+
+        img = Image.open(BytesIO(png_bytes)).convert("RGB")
+
+        # Down-scale if either dimension exceeds 1920
+        max_dim = 1920
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
+        # Encode as JPEG, lowering quality until under 5 MB (base64 limit)
+        max_b64_bytes = 5 * 1024 * 1024  # 5 MB
+        for quality in (85, 70, 50):
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=quality)
+            raw = buf.getvalue()
+            if len(raw) * 4 // 3 <= max_b64_bytes:
+                return base64.b64encode(raw).decode("utf-8")
+
+        # Last resort: already smallest quality
+        return base64.b64encode(raw).decode("utf-8")
 
     def _print_tile_channel_stats(tile, level, dilation):
         """Print per-channel stats and build the channel_stats dict stored in _refs."""
@@ -2201,7 +2484,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
+    ctrl.set_viewport_plots = set_viewport_plots
+    ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
     ctrl.trigger("on_hover")(on_hover)
+    ctrl.trigger("upload_analysis_start")(upload_analysis_start)
+    ctrl.trigger("upload_analysis_chunk")(upload_analysis_chunk)
+    ctrl.trigger("upload_analysis_complete")(upload_analysis_complete)
+    ctrl.trigger("clear_analysis")(clear_analysis)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer
     ctrl.refresh_labels = refresh_labels

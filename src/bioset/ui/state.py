@@ -116,6 +116,7 @@ def init_state(state):
     # Dilation Lineplot
     state.setdefault("dilation_data", {})
     state.setdefault("dilation_view_mode", "single")  # one of: ["single", "multiple"]
+    state.setdefault("dilation_scope_mode", "global")  # "global" (all tiles) or "local" (viewport tiles)
     state.setdefault("dilation_metric_single", "density")  # always fixed to density
     state.setdefault("dilation_metric_multiple", "iou")  # one of: ["iou", "overlap_coeff", "count", "density"]
     state.setdefault("dilation_filter_dialog", False)
@@ -127,9 +128,19 @@ def init_state(state):
     state.setdefault("bar_expanded_offset", 0)
     state.setdefault("bar_expanded_limit", 50)
     
-    # View mode toggles
-    state.setdefault("upset_view_mode", "global")  # "global" or "local"
-    state.setdefault("bar_view_mode", "global")  # "global" or "local"
+    # Scope toggles: "global" (all tiles) vs "local" (viewport tiles only)
+    state.setdefault("upset_scope_mode", "global")
+    state.setdefault("bar_scope_mode", "global")
+    # Channel toggles: "all" (all channels in data) vs "selected" (active channels only)
+    state.setdefault("upset_channel_mode", "all")
+    state.setdefault("bar_channel_mode", "all")
+
+    # Viewport-local plot data (computed from visible tiles only)
+    state.setdefault("upset_data_viewport", [])       # all channels, viewport tiles
+    state.setdefault("upset_data_viewport_selected", [])  # active channels, viewport tiles
+    state.setdefault("bar_data_viewport", [])          # all channels, viewport tiles
+    state.setdefault("bar_data_viewport_selected", []) # active channels, viewport tiles
+    state.setdefault("dilation_data_viewport", {})
     
     # Channels - all channels
     # {id: int, name: str, color: str}
@@ -308,6 +319,9 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_background_color(bg_color)
     
 
+    # Track whether analysis-sidebar data needs recomputation when the drawer opens.
+    _analysis_stale = {"dilation": False, "upset": False, "bar": False}
+
     @state.change("active_channels")
     def on_active_channels_change(active_channels, **kwargs):
         print(f"[state] Active channels changed: {active_channels}")
@@ -321,14 +335,25 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_active_channels(active_channels)
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
-        if hasattr(ctrl, 'update_upset_data_local'):
-            ctrl.update_upset_data_local()
-        if hasattr(ctrl, 'update_bar_data_local'):
-            ctrl.update_bar_data_local()
         if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
             ctrl.nov_recompute_scores_if_visible()
-        if hasattr(ctrl, 'update_dilation_data'):
-            ctrl.update_dilation_data()
+
+        # Defer expensive analysis computations when the sidebar is closed
+        drawer_open = getattr(state, "right_drawer_open", False)
+        if drawer_open:
+            if hasattr(ctrl, 'update_upset_data_local'):
+                ctrl.update_upset_data_local()
+            if hasattr(ctrl, 'update_bar_data_local'):
+                ctrl.update_bar_data_local()
+            if hasattr(ctrl, 'update_dilation_data'):
+                ctrl.update_dilation_data()
+        else:
+            _analysis_stale["dilation"] = True
+            _analysis_stale["upset"] = True
+            _analysis_stale["bar"] = True
+
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("channels")
     def on_channels_change(channels, **kwargs):
@@ -427,6 +452,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("heatmap_auto_level")
     def on_heatmap_auto_level_change(heatmap_auto_level, **kwargs):
@@ -451,6 +478,8 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_bar_data()
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("upset_data")
     def on_upset_data_change(upset_data, **kwargs):
@@ -459,8 +488,15 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_upset_data_local'):
             ctrl.update_upset_data_local()
 
-    @state.change("upset_view_mode")
-    def on_upset_view_mode_change(upset_view_mode, **kwargs):
+    @state.change("upset_scope_mode")
+    def on_upset_scope_mode_change(upset_scope_mode, **kwargs):
+        state.upset_offset = 0
+        state.upset_expanded_offset = 0
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
+
+    @state.change("upset_channel_mode")
+    def on_upset_channel_mode_change(upset_channel_mode, **kwargs):
         state.upset_offset = 0
         state.upset_expanded_offset = 0
 
@@ -471,10 +507,22 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_bar_data_local'):
             ctrl.update_bar_data_local()
 
-    @state.change("bar_view_mode")
-    def on_bar_view_mode_change(bar_view_mode, **kwargs):
+    @state.change("bar_scope_mode")
+    def on_bar_scope_mode_change(bar_scope_mode, **kwargs):
         state.bar_offset = 0
         state.bar_expanded_offset = 0
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
+
+    @state.change("bar_channel_mode")
+    def on_bar_channel_mode_change(bar_channel_mode, **kwargs):
+        state.bar_offset = 0
+        state.bar_expanded_offset = 0
+
+    @state.change("dilation_scope_mode")
+    def on_dilation_scope_mode_change(dilation_scope_mode, **kwargs):
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("dilation_view_mode")
     def on_dilation_view_mode_change(dilation_view_mode, **kwargs):
@@ -529,6 +577,22 @@ def register_state_change_handlers(state, ctrl):
     @state.change("bar_search")
     def on_bar_search_change(bar_search, **kwargs):
         state.bar_filtered_channels = _filter_channels(state.analysis_channels, bar_search)
+
+    @state.change("right_drawer_open")
+    def on_right_drawer_open_change(right_drawer_open, **kwargs):
+        if right_drawer_open:
+            # Recompute any analysis data that was deferred while the drawer was closed
+            if _analysis_stale.get("dilation") and hasattr(ctrl, 'update_dilation_data'):
+                ctrl.update_dilation_data()
+                _analysis_stale["dilation"] = False
+            if _analysis_stale.get("upset") and hasattr(ctrl, 'update_upset_data_local'):
+                ctrl.update_upset_data_local()
+                _analysis_stale["upset"] = False
+            if _analysis_stale.get("bar") and hasattr(ctrl, 'update_bar_data_local'):
+                ctrl.update_bar_data_local()
+                _analysis_stale["bar"] = False
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
 
     @state.change("bookmark_open")
     def on_bookmark_open_change(bookmark_open, **kwargs):

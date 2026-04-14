@@ -2,8 +2,11 @@ Vue.component('upset-plot', {
   props: {
     data: Array,
     dataLocal: Array,
+    dataViewport: Array,
+    dataViewportSelected: Array,
     channelData: Array,
-    viewMode: String,
+    scopeMode: String,
+    channelMode: String,
     metric: {
       type: String,
       default: 'iou'
@@ -29,7 +32,10 @@ Vue.component('upset-plot', {
   watch: {
     data: 'render',
     dataLocal: 'render',
-    viewMode: 'render',
+    dataViewport: 'render',
+    dataViewportSelected: 'render',
+    scopeMode: 'render',
+    channelMode: 'render',
     metric: 'render',
     offset: 'render',
     limit: 'render',
@@ -44,7 +50,9 @@ Vue.component('upset-plot', {
   methods: {
     render() {
       if (!this.$refs.container || !window.UpSetJS) return;
-      const sourceData = this.viewMode === 'local' ? (this.dataLocal || []) : (this.data || []);
+      const sourceData = this.scopeMode === 'local'
+        ? (this.channelMode === 'selected' ? (this.dataViewportSelected || []) : (this.dataViewport || []))
+        : (this.channelMode === 'selected' ? (this.dataLocal || []) : (this.data || []));
       if (sourceData.length === 0) {
             this.$refs.container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888; font-size: 14px;">No channel is selected</div>';
             return;
@@ -56,9 +64,12 @@ Vue.component('upset-plot', {
         maxMetricValue = Math.max(...values);
       }
 
+      const metric = this.metric;
+      const sorted = sourceData.slice().sort((a, b) => (b[metric] || 0) - (a[metric] || 0));
+
       const start = this.offset;
       const end = start + this.limit;
-      const renderData = sourceData.slice(start, end);
+      const renderData = sorted.slice(start, end);
 
       const mappedData = renderData.map(item => ({
         sets: item.channels,

@@ -88,33 +88,44 @@ class HeatmapRenderer:
 
         if not tiles:
             return
-        max_frac = max(fractions) if fractions else 1.0
-        scale = max_frac if max_frac > 0 else 1.0
-        min_frac = min(fractions) if fractions else 0.0
-        frac_range = scale - min_frac if scale > min_frac else 1.0
-        
+
+        # Quantile normalization: rank-based mapping spreads even small
+        # differences across the full 0→1 range so neighbouring tiles with
+        # similar values get visually distinct colours / opacities.
+        sorted_fracs = sorted(t.active_fraction for t in tiles)
+        n = len(sorted_fracs)
+        # Map each unique value to its average rank (handles ties)
+        rank_map: dict[float, float] = {}
+        i = 0
+        while i < n:
+            j = i
+            while j < n and sorted_fracs[j] == sorted_fracs[i]:
+                j += 1
+            avg_rank = (i + j - 1) / 2.0
+            rank_map[sorted_fracs[i]] = avg_rank / (n - 1) if n > 1 else 1.0
+            i = j
+
         sx, sy, sz = spacing
         base_color = color if color else self.config.base_color
-        
+
         for tile in tiles:
             x_center = (tile.x0 + tile.x1) / 2.0 * sx
             y_center = (tile.y0 + tile.y1) / 2.0 * sy
             z_center = self.config.z_height / 2.0 + self.config.z_offset
-            
+
             x_size = (tile.x1 - tile.x0) * sx
             y_size = (tile.y1 - tile.y0) * sy
             z_size = self.config.z_height
-            
+
+            normalized = rank_map[tile.active_fraction]
+
             # Outline mode: only brightness (gray→white by value); same line width for all.
             if self.config.outline_only:
-                normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 1.0
-                value_0_10 = max(0.0, min(10.0, normalized * 10.0))
-                tile_color = (value_0_10 / 10.0, value_0_10 / 10.0, value_0_10 / 10.0)  # 0=black, 10=white
+                tile_color = (normalized, normalized, normalized)
                 opacity = self.config.outline_min_opacity + normalized * (self.config.outline_max_opacity - self.config.outline_min_opacity)
             elif self.config.opacity_scale == 'linear':
-                normalized = tile.active_fraction / scale
+                pass  # normalized already set from rank
             else:
-                normalized = (tile.active_fraction - min_frac) / frac_range if frac_range > 0 else 0.0
                 normalized = normalized ** self.config.gamma
             
             if not self.config.outline_only:
