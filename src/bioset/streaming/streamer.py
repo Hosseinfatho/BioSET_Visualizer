@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Callable
 
@@ -76,6 +76,13 @@ class VolumeStreamer:
 
         if VolumeStreamer._executor is None:
             VolumeStreamer._executor = ThreadPoolExecutor(max_workers=2)
+
+        # Dedicated pool so the channels of a single viewport load concurrently
+        # (one slow/remote channel no longer blocks the fast cached ones). Kept
+        # separate from the shared _executor (which also serves NOV) to avoid
+        # a worker waiting on the same pool it occupies.
+        self._channel_executor = ThreadPoolExecutor(
+            max_workers=6, thread_name_prefix="channel_load")
 
         max_bytes = int(cfg.cache_size_gb * (1024**3))
         self.zsrc = ZarrMultiscaleSource(
@@ -1393,8 +1400,10 @@ class VolumeStreamer:
         MUST be called on main thread where OpenGL context exists.
 
         Cheap by design: the numpy->vtk conversion already happened in the
-        worker, so this only does SetInputData + transfer-function + an
-        interactive (fast) render. The full-quality render is owed to tick_idle.
+        worker, so this only does SetInputData + transfer-function. It does NOT
+        render — the drain loop renders once after applying everything queued
+        (see check_and_apply_loaded_data), so N per-channel frames cost one
+        render, not N.
         """
         component = loaded.component
         roi = loaded.roi
@@ -1424,11 +1433,8 @@ class VolumeStreamer:
             self.state[ch] = ChannelState(component=component, roi=roi)
 
         self._last_component = component
-        self.renderer.ResetCameraClippingRange()
-        with timer.stage("render"):
-            self._render_interactive()
 
-        # Latency from when the user finished interacting to the pixels updating
+        # Latency from when the user finished interacting to this swap.
         latency = time.time() - loaded.timestamp
         timer.log(end_to_end_latency=f"{latency * 1000:.0f}ms")
 
@@ -1472,6 +1478,16 @@ class VolumeStreamer:
         except ValueError:
             return None
 
+    def _load_one_image_task(self, request: LoadRequest, component: int, ch: int, roi: ROI):
+        """Channel-pool task: skip if already superseded (avoids launching new
+        remote fetches for a viewport the user has already left), else load."""
+        if self._is_superseded(request):
+            return ch, None
+        try:
+            return ch, self._load_one_image(component, ch, roi)
+        except Exception:
+            return ch, None
+
     def _background_load(self, request: LoadRequest):
         """Worker thread: load coarse->fine for the request, building VTK images
         off the main thread and enqueuing each stage for a cheap main-thread swap.
@@ -1497,28 +1513,45 @@ class VolumeStreamer:
                 if self._is_superseded(request):
                     break
                 stage_roi = self._roi_at_component(request.roi, target, stage_comp)
+                channels = [int(c) for c in list(self._active_channels)]
+                if not channels:
+                    break
                 timer = StageTimer("background-load", comp=stage_comp, gen=request.gen)
                 queue_wait = time.time() - request.timestamp
 
-                channel_images: Dict[int, "vtkImageData"] = {}
-                for ch in list(self._active_channels):
+                # Load all channels concurrently; push each to the main thread
+                # the instant it's ready (per-channel display) so a fast cached
+                # channel paints immediately instead of waiting for a slow one.
+                futures = {
+                    self._channel_executor.submit(
+                        self._load_one_image_task, request, stage_comp, ch, stage_roi): ch
+                    for ch in channels
+                }
+                done = 0
+                for fut in as_completed(futures):
+                    # A newer viewport arrived: stop waiting on stragglers and
+                    # release the worker. In-flight channel loads finish on their
+                    # own; their now-stale frames are dropped on drain.
                     if self._is_superseded(request):
                         break
-                    img = self._load_one_image(stage_comp, int(ch), stage_roi)
-                    if img is not None:
-                        channel_images[int(ch)] = img
-
-                if channel_images and not self._is_superseded(request):
+                    ch, img = fut.result()
+                    if img is None:
+                        continue
                     self._loaded_data_queue.put(LoadedData(
                         component=stage_comp,
                         roi=stage_roi,
-                        channel_images=channel_images,
+                        channel_images={ch: img},
                         timestamp=request.timestamp,
                         gen=request.gen,
                     ))
-                    timer.log(channels=len(channel_images),
+                    done += 1
+
+                if done:
+                    timer.log(channels=done,
                               stage=f"{idx + 1}/{len(stages)}",
                               queue_wait=f"{queue_wait * 1000:.0f}ms")
+                if self._is_superseded(request):
+                    break
         except Exception as e:
             import traceback
             print(f"[background] load error: {e}")
@@ -1586,6 +1619,10 @@ class VolumeStreamer:
                 continue
             self._apply_loaded_data_on_main_thread(loaded)
             applied_any = True
+        # One render for the whole batch of swaps (keeps the event loop free).
+        if applied_any:
+            self.renderer.ResetCameraClippingRange()
+            self._render_interactive()
         return applied_any
 
     def on_interaction_end(self) -> int:
@@ -1596,10 +1633,14 @@ class VolumeStreamer:
         """
         # Defensive: some zoom/scroll interactions can push the camera clipping
         # range into an invalid state (everything clipped => black screen).
-        # Reset + a fast interactive render keeps interaction stable and cheap.
+        # Reset it, but do NOT render here — the interactor already rendered this
+        # frame, and rendering again on every scroll-stop is pure main-thread
+        # downtime. Instead flag a full-quality repaint for the idle loop, which
+        # fires ~300ms after the user stops and also reapplies the clipping fix.
         try:
             self.renderer.ResetCameraClippingRange()
-            self._render_interactive()
+            self._needs_still_render = True
+            self._idle_ticks = 0
         except Exception:
             pass
 
