@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple, Any
+from typing import Dict, Optional, Tuple, Any
 
 import dask.array as da
 from ome_zarr.io import parse_url
@@ -63,3 +63,28 @@ class ZarrMultiscaleSource:
 
     def shape_tczyx(self, component: int) -> Tuple[int, ...]:
         return tuple(self.array(component).shape)
+
+    def cache_stats(self) -> Optional[Dict[str, Any]]:
+        """On-disk CacheStore performance counters (hits/misses/evictions/hit_rate).
+
+        A 'miss' means the chunk was fetched from the remote store; a 'hit'
+        means it was served from the local on-disk cache. Returns None when
+        caching is disabled or the store doesn't expose stats.
+        """
+        fn = getattr(self.store, "cache_stats", None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                return None
+        return None
+
+    def cache_info(self) -> Optional[Dict[str, Any]]:
+        """On-disk CacheStore state (current_size, max_size, cached_keys, ...)."""
+        fn = getattr(self.store, "cache_info", None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                return None
+        return None

@@ -15,6 +15,7 @@ from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtk
 from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
 
 from .lod import ROI, camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
+from .profiling import StageTimer, fmt_bytes, log as plog
 from .zarr_source import ZarrMultiscaleSource
 from ..scene.volumes import SpacingConfig, color_name_to_rgb, build_histogram_tf, build_tf_with_range
 
@@ -83,6 +84,11 @@ class VolumeStreamer:
 
         self._array_cache: Dict[Tuple[int, int, ROI], np.ndarray] = {}
         self._cache_max_entries = 32
+
+        # In-memory array-cache profiling counters
+        self._mem_cache_hits = 0
+        self._mem_cache_misses = 0
+        self._mem_cache_evictions = 0
 
         self._last_component: Optional[int] = None
         self._initial_camera: Optional[dict] = None  # position, focalPoint, viewUp after first load
@@ -1065,7 +1071,10 @@ class VolumeStreamer:
             for_nov_view: bool = False,
     ) -> vtkImageData:
         """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only)."""
-        np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)
+        timer = StageTimer("vtk-image", view=("nov" if for_nov_view else "main"))
+        downsampled = False
+        with timer.stage("ascontiguous"):
+            np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)
         z, y, x = np_vol_zyx.shape
         if x <= 0 or y <= 0 or z <= 0:
             raise ValueError(
@@ -1075,21 +1084,23 @@ class VolumeStreamer:
         sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
 
         if max(x, y, z) > self.MAX_TEXTURE_DIM:
-            scale = self.MAX_TEXTURE_DIM / max(x, y, z)
-            oz, oy, ox = z, y, x
-            nz = max(1, int(round(z * scale)))
-            ny = max(1, int(round(y * scale)))
-            nx = max(1, int(round(x * scale)))
-            iz = np.linspace(0, z - 1, nz).round().astype(np.intp)
-            iy = np.linspace(0, y - 1, ny).round().astype(np.intp)
-            ix = np.linspace(0, x - 1, nx).round().astype(np.intp)
-            np_vol_zyx = np_vol_zyx[np.ix_(iz, iy, ix)]
-            z, y, x = nz, ny, nx
-            spacing = SpacingConfig(
-                sx=sx * (ox / nx) if nx else sx,
-                sy=sy * (oy / ny) if ny else sy,
-                sz=sz * (oz / nz) if nz else sz,
-            )
+            downsampled = True
+            with timer.stage("downsample"):
+                scale = self.MAX_TEXTURE_DIM / max(x, y, z)
+                oz, oy, ox = z, y, x
+                nz = max(1, int(round(z * scale)))
+                ny = max(1, int(round(y * scale)))
+                nx = max(1, int(round(x * scale)))
+                iz = np.linspace(0, z - 1, nz).round().astype(np.intp)
+                iy = np.linspace(0, y - 1, ny).round().astype(np.intp)
+                ix = np.linspace(0, x - 1, nx).round().astype(np.intp)
+                np_vol_zyx = np_vol_zyx[np.ix_(iz, iy, ix)]
+                z, y, x = nz, ny, nx
+                spacing = SpacingConfig(
+                    sx=sx * (ox / nx) if nx else sx,
+                    sy=sy * (oy / ny) if ny else sy,
+                    sz=sz * (oz / nz) if nz else sz,
+                )
             print(f"[stream] Downsampled volume to ({z},{y},{x}) for OpenGL 2048 limit")
 
         # Apply NOV lens clip only for NOV popup view (main view always shows full volume)
@@ -1109,16 +1120,20 @@ class VolumeStreamer:
             inside = in_z.reshape(-1, 1, 1) & in_y.reshape(1, -1, 1) & in_x.reshape(1, 1, -1)
             np_vol_zyx[~inside] = 0
 
-        vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)
-        vtk_arr.SetName("scalars")
+        with timer.stage("numpy_to_vtk"):
+            vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)
+            vtk_arr.SetName("scalars")
 
-        img = vtkImageData()
-        img.SetDimensions(x, y, z)
-        img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1)
-        img.SetOrigin(*origin_xyz)
-        img.SetSpacing(spacing.sx, spacing.sy, spacing.sz)
-        img.GetPointData().SetScalars(vtk_arr)
-        img.Modified()
+            img = vtkImageData()
+            img.SetDimensions(x, y, z)
+            img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1)
+            img.SetOrigin(*origin_xyz)
+            img.SetSpacing(spacing.sx, spacing.sy, spacing.sz)
+            img.GetPointData().SetScalars(vtk_arr)
+            img.Modified()
+
+        timer.log(shape=(z, y, x), bytes=fmt_bytes(np_vol_zyx.nbytes),
+                  downsampled=downsampled)
         return img
 
     def _cache_key(self, component: int, ch: int, roi: ROI) -> Tuple[int, int, ROI]:
@@ -1136,30 +1151,112 @@ class VolumeStreamer:
                 :self._cache_max_entries // 2]
             for k in keys_to_remove:
                 del self._array_cache[k]
+                self._mem_cache_evictions += 1
 
         self._array_cache[key] = arr
 
+    def _mem_cache_bytes(self) -> int:
+        """Total bytes held in the in-memory array cache."""
+        return sum(a.nbytes for a in self._array_cache.values())
+
+    def _mem_cache_summary(self) -> str:
+        """One-line summary of in-memory array-cache state for profiling logs."""
+        total = self._mem_cache_hits + self._mem_cache_misses
+        rate = (self._mem_cache_hits / total * 100.0) if total else 0.0
+        return (
+            f"mem-cache[hits={self._mem_cache_hits} misses={self._mem_cache_misses} "
+            f"rate={rate:.0f}% evict={self._mem_cache_evictions} "
+            f"entries={len(self._array_cache)} size={fmt_bytes(self._mem_cache_bytes())}]"
+        )
+
+    def _disk_cache_summary(self) -> str:
+        """One-line summary of on-disk zarr CacheStore state for profiling logs."""
+        info = self.zsrc.cache_info()
+        stats = self.zsrc.cache_stats()
+        if info is None and stats is None:
+            return "disk-cache[disabled]"
+        parts = []
+        if stats is not None:
+            parts.append(
+                f"hits={stats.get('hits', 0)} misses(remote)={stats.get('misses', 0)} "
+                f"rate={stats.get('hit_rate', 0.0) * 100:.0f}% evict={stats.get('evictions', 0)}"
+            )
+        if info is not None:
+            parts.append(
+                f"size={fmt_bytes(info.get('current_size', 0))}/"
+                f"{fmt_bytes(info.get('max_size', 0))} keys={info.get('cached_keys', 0)}"
+            )
+        return "disk-cache[" + " ".join(parts) + "]"
+
+    def log_cache_summary(self) -> None:
+        """Print a snapshot of both cache layers. Safe to call from anywhere."""
+        plog("cache", f"{self._mem_cache_summary()} {self._disk_cache_summary()}")
+
     def _load_channel_data(self, component: int, ch: int, roi: ROI) -> np.ndarray:
-        """Load channel data - runs in background thread."""
+        """Load channel data - runs in background thread.
+
+        Instruments the full path: in-memory cache lookup, dask graph build,
+        slicing, and .compute() (the actual remote/disk fetch). For the compute
+        stage we diff the on-disk CacheStore counters to attribute the cost to
+        remote downloads vs. local-disk-cache reads.
+        """
+        # --- Layer 1: in-memory array cache ---
         cached = self._get_cached_array(component, ch, roi)
         if cached is not None:
-            print(f"[cache hit] comp={component} ch={ch} roi={roi}")
+            self._mem_cache_hits += 1
+            timer = StageTimer("load", comp=component, ch=ch,
+                               roi=f"({roi.x0}:{roi.x1},{roi.y0}:{roi.y1})")
+            timer.log(src="MEM-HIT", bytes=fmt_bytes(cached.nbytes),
+                      shape=tuple(cached.shape), mem=self._mem_cache_summary())
             return cached
 
-        print(
-            f"[loading] comp={component} ch={ch} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
-        t0 = time.perf_counter()
+        self._mem_cache_misses += 1
 
-        darr = self.zsrc.array(component)
-        vol_zyx = darr[self.cfg.zarr_time_index,
-                       ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
-        np_arr = vol_zyx.compute()
+        # --- Layer 2 + remote: dask build + compute ---
+        timer = StageTimer("load", comp=component, ch=ch,
+                           roi=f"({roi.x0}:{roi.x1},{roi.y0}:{roi.y1})")
 
-        t1 = time.perf_counter()
-        print(
-            f"[loaded] comp={component} ch={ch} in {t1-t0:.2f}s, shape={np_arr.shape}")
+        with timer.stage("dask-build"):
+            darr = self.zsrc.array(component)
+            vol_zyx = darr[self.cfg.zarr_time_index,
+                           ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
+
+        # Snapshot on-disk cache counters so we can attribute the compute cost
+        # to remote downloads (misses) vs. local disk reads (hits).
+        stats_before = self.zsrc.cache_stats()
+        info_before = self.zsrc.cache_info()
+
+        with timer.stage("compute"):
+            np_arr = vol_zyx.compute()
+
+        # Compute remote-vs-disk delta for this load
+        fetch_src = "?"
+        if stats_before is not None:
+            stats_after = self.zsrc.cache_stats() or {}
+            d_hits = stats_after.get("hits", 0) - stats_before.get("hits", 0)
+            d_miss = stats_after.get("misses", 0) - stats_before.get("misses", 0)
+            d_bytes = 0
+            if info_before is not None:
+                info_after = self.zsrc.cache_info() or {}
+                d_bytes = info_after.get("current_size", 0) - info_before.get("current_size", 0)
+            if d_miss > 0 and d_hits == 0:
+                fetch_src = "REMOTE"
+            elif d_miss == 0 and d_hits > 0:
+                fetch_src = "DISK"
+            elif d_miss > 0 and d_hits > 0:
+                fetch_src = "MIXED"
+            else:
+                fetch_src = "NONE"  # served from dask/zarr internal buffers
+            fetch_detail = (f"chunks(disk={d_hits},remote={d_miss}) "
+                            f"downloaded={fmt_bytes(max(0, d_bytes))}")
+        else:
+            fetch_detail = "no-disk-cache"
 
         self._put_cached_array(component, ch, roi, np_arr)
+
+        timer.log(src=fetch_src, bytes=fmt_bytes(np_arr.nbytes),
+                  shape=tuple(np_arr.shape), fetch=fetch_detail,
+                  mem=self._mem_cache_summary(), disk=self._disk_cache_summary())
         return np_arr
 
     def _init_low_res_full(self):
@@ -1224,6 +1321,9 @@ class VolumeStreamer:
         spacing = self._spacing_for_component(component)
         origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
 
+        timer = StageTimer("apply-main", comp=component,
+                           channels=len(loaded.channel_arrays))
+
         for ch, np_arr in loaded.channel_arrays.items():
             if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
                 print(f"[stream] Skipping channel {ch}: loaded shape {np_arr.shape} has zero size.")
@@ -1235,8 +1335,9 @@ class VolumeStreamer:
                 continue
 
             vol, mapper = self._get_or_create_volume(ch)
-            mapper.SetInputData(img)
-            mapper.Modified()
+            with timer.stage(f"gpu-upload[ch{ch}]"):
+                mapper.SetInputData(img)
+                mapper.Modified()
 
             if ch in self._channel_tfs:
                 color_tf, opacity_tf = self._channel_tfs[ch]
@@ -1251,10 +1352,12 @@ class VolumeStreamer:
 
         self._last_component = component
         self.renderer.ResetCameraClippingRange()
-        self._render()
+        with timer.stage("render"):
+            self._render()
 
-        print(
-            f"[stream] applied {len(loaded.channel_arrays)} channels at comp={component}")
+        # Latency from when the user finished interacting to the pixels updating
+        latency = time.time() - loaded.timestamp
+        timer.log(end_to_end_latency=f"{latency * 1000:.0f}ms")
 
     def _background_load(self, request: LoadRequest):
         """
@@ -1269,8 +1372,13 @@ class VolumeStreamer:
             component = request.component
             roi = request.roi
 
+            # Wait time from when the request was created (interaction end) to
+            # the worker actually starting — surfaces debounce + queue latency.
+            queue_wait = time.time() - request.timestamp
+            timer = StageTimer("background-load", comp=component)
+
             channel_arrays: Dict[int, np.ndarray] = {}
-            for ch in self._active_channels: 
+            for ch in self._active_channels:
                 ch = int(ch)
                 prev = self.state.get(ch)
                 need_update = (prev is None) or (
@@ -1288,8 +1396,10 @@ class VolumeStreamer:
                     timestamp=request.timestamp,
                 )
                 self._loaded_data_queue.put(loaded)
-                print(
-                    f"[background] queued {len(channel_arrays)} channels for main thread")
+                total_bytes = sum(a.nbytes for a in channel_arrays.values())
+                timer.log(channels=len(channel_arrays),
+                          bytes=fmt_bytes(total_bytes),
+                          queue_wait=f"{queue_wait * 1000:.0f}ms")
 
         finally:
             with self._loading_lock:

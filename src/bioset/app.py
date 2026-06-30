@@ -12,10 +12,19 @@ from trame.app import get_server
 
 load_dotenv()
 
-# Parse --logs argument early before any other imports
+# Parse --logs / --profile arguments early before any other imports
 # Default: no logs (quiet mode). Use --logs to enable output.
+# Profiling is off unless --profile is passed (optionally with a file path).
 _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--logs", action="store_true", default=False, help="Enable console output")
+_parser.add_argument(
+    "--profile",
+    nargs="?",
+    const="__default__",
+    default=None,
+    help="Enable streaming profiling. Optionally pass a log file path; "
+         "otherwise a timestamped file is written under ./profiling/.",
+)
 _args, _ = _parser.parse_known_args()
 
 if not _args.logs:
@@ -36,10 +45,21 @@ ASSETS_DIR = Path(__file__).parent / "ui" / "assets"
 from .config import default_config
 from .scene import build_scene
 from .ui import build_ui
+# Safe to import now that .scene / .streaming packages are fully initialized
+# (importing it earlier trips a pre-existing scene<->streaming import cycle).
+from .streaming.profiling import enable_profiling
 
 import contextlib
 
 def main():
+    # Profiling is off unless --profile was passed; enable it before any
+    # streaming work so the very first loads are captured.
+    if _args.profile is not None:
+        _profile_path = None if _args.profile == "__default__" else _args.profile
+        _resolved = enable_profiling(_profile_path)
+        # Use real stderr in case --logs redirected it, so the path is discoverable.
+        print(f"[bioset] Profiling enabled -> {_resolved}", file=sys.__stderr__)
+
     cfg = default_config()
     cfg = cfg.__class__(**{**cfg.__dict__,
                            "source": "zarr_s3",
