@@ -98,6 +98,8 @@ def main():
                 await asyncio.sleep(0.1)
                 try:
                     updated = False
+                    # Dispatch the newest pending viewport load (debounced, single-flight)
+                    scene.streamer.service_loads()
                     if scene.streamer.check_and_apply_loaded_data():
                         updated = True
                     if scene.heatmap_lod is not None:
@@ -112,6 +114,9 @@ def main():
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
                         view.update()
                     if scene.streamer.process_nov_progressive_queue():
+                        view.update()
+                    # Once the user is idle, re-render the volume at full quality
+                    if scene.streamer.tick_idle():
                         view.update()
                     _scale_bar_tick[0] += 1
                     if _scale_bar_tick[0] >= 5:

@@ -14,7 +14,13 @@ from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
 from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
 from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
 
-from .lod import ROI, camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
+from .lod import (
+    ROI,
+    camera_distance_to_focal,
+    choose_component,
+    compute_visible_xy_roi_vox,
+    scale_roi_to_component,
+)
 from .profiling import StageTimer, fmt_bytes, log as plog
 from .zarr_source import ZarrMultiscaleSource
 from ..scene.volumes import SpacingConfig, color_name_to_rgb, build_histogram_tf, build_tf_with_range
@@ -28,19 +34,31 @@ class ChannelState:
 
 @dataclass
 class LoadRequest:
-    """Represents a pending load operation"""
+    """Represents a pending load operation.
+
+    gen is a monotonically increasing generation id. A request is stale the
+    moment a newer one is created, which lets in-flight work bail early and
+    lets the apply step drop results that no longer match the viewport.
+    """
     component: int
     roi: ROI
     timestamp: float
+    gen: int = 0
 
 
 @dataclass
 class LoadedData:
-    """Data loaded in background thread, ready for VTK update on main thread"""
+    """Result built in the worker thread, ready for a cheap main-thread swap.
+
+    The heavy numpy->vtk conversion is done in the worker, so channel_images
+    already hold fully-built vtkImageData. The main thread only does
+    SetInputData + Render.
+    """
     component: int
     roi: ROI
-    channel_arrays: Dict[int, np.ndarray]
+    channel_images: Dict[int, "vtkImageData"]
     timestamp: float
+    gen: int
 
 
 class VolumeStreamer:
@@ -75,10 +93,17 @@ class VolumeStreamer:
                                 Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
         self._channel_percentile_bounds: Dict[int, Tuple[float, float, float]] = {}
 
-        self._pending_request: Optional[LoadRequest] = None
-        self._debounce_lock = threading.Lock()
-        self._loading_lock = threading.Lock()
-        self._is_loading = False
+        # --- Latest-wins async loader state ---
+        # on_interaction_end stores the newest desired (comp, roi) here; the
+        # main-thread poll loop (service_loads) debounces and dispatches it.
+        self._req_lock = threading.Lock()
+        self._latest_request: Optional[LoadRequest] = None
+        self._max_gen = 0                       # newest generation handed out
+        self._inflight = False                  # a worker load is running
+
+        # Idle-refine: after the user stops, re-render once at full quality.
+        self._needs_still_render = False
+        self._idle_ticks = 0
 
         self._loaded_data_queue: queue.Queue[LoadedData] = queue.Queue()
 
@@ -1305,35 +1330,80 @@ class VolumeStreamer:
         self.renderer.ResetCamera()
         self._render()
 
+    # Update rates for the GPU ray-cast mapper (AutoAdjustSampleDistances on):
+    # high rate -> coarse sampling -> fast/interactive; low rate -> best quality.
+    INTERACTIVE_UPDATE_RATE = 15.0
+    STILL_UPDATE_RATE = 0.001
+
     def _render(self):
-        """Trigger render"""
+        """Trigger render (best quality). Used for one-off main-thread renders."""
         self.render_window.Render()
         if self.render_callback is not None:
             self.render_callback()
 
+    def _render_interactive(self):
+        """Fast, lower-quality render so swaps/interactions never stall the UI.
+
+        Flags that a full-quality 'still' render is owed once the user is idle.
+        """
+        try:
+            self.render_window.SetDesiredUpdateRate(self.INTERACTIVE_UPDATE_RATE)
+        except Exception:
+            pass
+        self.render_window.Render()
+        if self.render_callback is not None:
+            self.render_callback()
+        self._needs_still_render = True
+        self._idle_ticks = 0
+
+    def _render_still(self):
+        """Full-quality render. Called from the poll loop after the user goes idle."""
+        try:
+            self.render_window.SetDesiredUpdateRate(self.STILL_UPDATE_RATE)
+        except Exception:
+            pass
+        self.render_window.Render()
+        if self.render_callback is not None:
+            self.render_callback()
+        self._needs_still_render = False
+
+    def tick_idle(self) -> bool:
+        """Main-thread poll-loop hook: re-render at full quality once idle.
+
+        Returns True if a still render was performed (so the caller can push
+        the frame to the client).
+        """
+        if not self._needs_still_render:
+            return False
+        # Don't refine while work is pending or a new viewport is queued.
+        with self._req_lock:
+            busy = self._inflight or self._latest_request is not None
+        if busy:
+            self._idle_ticks = 0
+            return False
+        self._idle_ticks += 1
+        if self._idle_ticks < 3:  # ~300ms of quiet at the 100ms poll cadence
+            return False
+        self._render_still()
+        return True
+
     def _apply_loaded_data_on_main_thread(self, loaded: LoadedData):
         """
-        Apply loaded numpy arrays to VTK objects.
+        Swap pre-built vtkImageData onto the mappers and render.
         MUST be called on main thread where OpenGL context exists.
+
+        Cheap by design: the numpy->vtk conversion already happened in the
+        worker, so this only does SetInputData + transfer-function + an
+        interactive (fast) render. The full-quality render is owed to tick_idle.
         """
         component = loaded.component
         roi = loaded.roi
         spacing = self._spacing_for_component(component)
-        origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
 
         timer = StageTimer("apply-main", comp=component,
-                           channels=len(loaded.channel_arrays))
+                           channels=len(loaded.channel_images))
 
-        for ch, np_arr in loaded.channel_arrays.items():
-            if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
-                print(f"[stream] Skipping channel {ch}: loaded shape {np_arr.shape} has zero size.")
-                continue
-            try:
-                img = self._create_vtk_image(np_arr, spacing, origin_xyz)
-            except ValueError as e:
-                print(f"[stream] Skipping channel {ch}: {e}")
-                continue
-
+        for ch, img in loaded.channel_images.items():
             vol, mapper = self._get_or_create_volume(ch)
             with timer.stage(f"gpu-upload[ch{ch}]"):
                 mapper.SetInputData(img)
@@ -1348,108 +1418,188 @@ class VolumeStreamer:
                     max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
                 )
 
+            if not self.renderer.HasViewProp(vol):
+                self.renderer.AddVolume(vol)
+
             self.state[ch] = ChannelState(component=component, roi=roi)
 
         self._last_component = component
         self.renderer.ResetCameraClippingRange()
         with timer.stage("render"):
-            self._render()
+            self._render_interactive()
 
         # Latency from when the user finished interacting to the pixels updating
         latency = time.time() - loaded.timestamp
         timer.log(end_to_end_latency=f"{latency * 1000:.0f}ms")
 
-    def _background_load(self, request: LoadRequest):
-        """
-        Background thread: Load data from zarr, then queue for main thread update.
-        """
-        with self._loading_lock:
-            if self._is_loading:
-                return
-            self._is_loading = True
+    # ------------------------------------------------------------------
+    # Latest-wins async loader
+    #
+    # Flow (all main-thread hops driven by app.py's 100ms poll loop):
+    #   on_interaction_end  -> stores newest LoadRequest (_set_latest_request)
+    #   service_loads       -> debounces + dispatches one load at a time
+    #   _background_load     -> worker: builds vtkImageData, coarse->fine,
+    #                          bails early if a newer request arrives
+    #   check_and_apply_loaded_data -> drains queue, drops stale frames, swaps
+    # ------------------------------------------------------------------
 
+    def _is_superseded(self, request: LoadRequest) -> bool:
+        """True if a newer request has been created since `request`."""
+        with self._req_lock:
+            return self._max_gen > request.gen
+
+    def _roi_at_component(self, roi_target: ROI, target_comp: int, comp: int) -> ROI:
+        """Scale a target-component ROI to another component's voxel grid."""
+        if comp == target_comp:
+            return roi_target
+        _, ydim, xdim = self._dims_for_component(comp)
+        d = scale_roi_to_component(
+            {"x0": roi_target.x0, "x1": roi_target.x1,
+             "y0": roi_target.y0, "y1": roi_target.y1},
+            target_comp, comp, x_dim=xdim, y_dim=ydim,
+        )
+        return ROI(d["x0"], d["x1"], d["y0"], d["y1"])
+
+    def _load_one_image(self, component: int, ch: int, roi: ROI):
+        """Worker-thread: fetch numpy and build vtkImageData (no GL needed)."""
+        np_arr = self._load_channel_data(component, ch, roi)
+        if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
+            return None
+        spacing = self._spacing_for_component(component)
+        origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
         try:
-            component = request.component
-            roi = request.roi
+            return self._create_vtk_image(np_arr, spacing, origin_xyz)
+        except ValueError:
+            return None
 
-            # Wait time from when the request was created (interaction end) to
-            # the worker actually starting — surfaces debounce + queue latency.
-            queue_wait = time.time() - request.timestamp
-            timer = StageTimer("background-load", comp=component)
+    def _background_load(self, request: LoadRequest):
+        """Worker thread: load coarse->fine for the request, building VTK images
+        off the main thread and enqueuing each stage for a cheap main-thread swap.
+        Bails out as soon as a newer request supersedes this one.
+        """
+        try:
+            target = request.component
+            cur = self._last_component
+            # Progressive: when changing resolution, show a cheap coarse version
+            # of the new viewport first, then refine to the target. Plain pans at
+            # the same component skip the coarse stage, and so does the case where
+            # what's already on screen is at least as coarse as the intermediate
+            # (it already serves as the placeholder).
+            do_progressive = (cur is None) or (target != cur)
+            stages: List[int] = []
+            if do_progressive and target <= self.cfg.max_component - 2:
+                inter = min(self.cfg.max_component, target + 2)
+                if inter != target and (cur is None or inter < cur):
+                    stages.append(inter)
+            stages.append(target)
 
-            channel_arrays: Dict[int, np.ndarray] = {}
-            for ch in self._active_channels:
-                ch = int(ch)
-                prev = self.state.get(ch)
-                need_update = (prev is None) or (
-                    prev.component != component) or (prev.roi != roi)
+            for idx, stage_comp in enumerate(stages):
+                if self._is_superseded(request):
+                    break
+                stage_roi = self._roi_at_component(request.roi, target, stage_comp)
+                timer = StageTimer("background-load", comp=stage_comp, gen=request.gen)
+                queue_wait = time.time() - request.timestamp
 
-                if need_update:
-                    channel_arrays[ch] = self._load_channel_data(
-                        component, ch, roi)
+                channel_images: Dict[int, "vtkImageData"] = {}
+                for ch in list(self._active_channels):
+                    if self._is_superseded(request):
+                        break
+                    img = self._load_one_image(stage_comp, int(ch), stage_roi)
+                    if img is not None:
+                        channel_images[int(ch)] = img
 
-            if channel_arrays:
-                loaded = LoadedData(
-                    component=component,
-                    roi=roi,
-                    channel_arrays=channel_arrays,
-                    timestamp=request.timestamp,
-                )
-                self._loaded_data_queue.put(loaded)
-                total_bytes = sum(a.nbytes for a in channel_arrays.values())
-                timer.log(channels=len(channel_arrays),
-                          bytes=fmt_bytes(total_bytes),
-                          queue_wait=f"{queue_wait * 1000:.0f}ms")
-
+                if channel_images and not self._is_superseded(request):
+                    self._loaded_data_queue.put(LoadedData(
+                        component=stage_comp,
+                        roi=stage_roi,
+                        channel_images=channel_images,
+                        timestamp=request.timestamp,
+                        gen=request.gen,
+                    ))
+                    timer.log(channels=len(channel_images),
+                              stage=f"{idx + 1}/{len(stages)}",
+                              queue_wait=f"{queue_wait * 1000:.0f}ms")
+        except Exception as e:
+            import traceback
+            print(f"[background] load error: {e}")
+            traceback.print_exc()
         finally:
-            with self._loading_lock:
-                self._is_loading = False
+            with self._req_lock:
+                self._inflight = False
 
-            with self._debounce_lock:
-                if self._pending_request and self._pending_request.timestamp > request.timestamp:
-                    self._schedule_load(self._pending_request)
-                    self._pending_request = None
+    def _set_latest_request(self, component: int, roi: ROI) -> None:
+        """Record the newest desired viewport; the poll loop dispatches it."""
+        with self._req_lock:
+            self._max_gen += 1
+            self._latest_request = LoadRequest(
+                component=component, roi=roi, timestamp=time.time(), gen=self._max_gen)
 
     def _schedule_load(self, request: LoadRequest):
-        """Submit load request to thread pool"""
-        VolumeStreamer._executor.submit(self._background_load, request)
+        """Compat shim for callers that build a LoadRequest directly
+        (e.g. _trigger_lod_update_for_new_channel): route through latest-wins."""
+        self._set_latest_request(request.component, request.roi)
 
-    def _debounce_callback(self, request: LoadRequest):
-        """Called after debounce delay"""
-        time.sleep(self.DEBOUNCE_DELAY)
+    def _displayed_matches(self, req: LoadRequest) -> bool:
+        """True if every active channel is already shown at req's comp and ROI."""
+        if not self._active_channels:
+            return False
+        for ch in self._active_channels:
+            st = self.state.get(int(ch))
+            if st is None or st.component != req.component or st.roi != req.roi:
+                return False
+        return True
 
-        with self._debounce_lock:
-            if self._pending_request and self._pending_request.timestamp == request.timestamp:
-                self._pending_request = None
-                self._schedule_load(request)
+    def service_loads(self) -> None:
+        """Main-thread poll-loop hook: debounce and dispatch at most one load.
+
+        Single-flight + latest-wins: only the newest request is ever dispatched,
+        and only once the current load finishes, so a backlog can't build up.
+        """
+        with self._req_lock:
+            if self._inflight or self._latest_request is None:
+                return
+            req = self._latest_request
+            if (time.time() - req.timestamp) < self.DEBOUNCE_DELAY:
+                return  # still settling; wait for quiet
+            if self._displayed_matches(req):
+                self._latest_request = None
+                return
+            self._latest_request = None
+            self._inflight = True
+        VolumeStreamer._executor.submit(self._background_load, req)
 
     def check_and_apply_loaded_data(self):
-        """
-        Call this from main thread (e.g., in a timer or after interaction).
-        Applies any data that was loaded in background threads.
+        """Main thread: drain finished loads and swap them in.
+
+        Frames older than the newest generation are dropped so we never flash a
+        viewport the user has already moved away from.
         """
         applied_any = False
         while True:
             try:
                 loaded = self._loaded_data_queue.get_nowait()
-                self._apply_loaded_data_on_main_thread(loaded)
-                applied_any = True
             except queue.Empty:
                 break
+            with self._req_lock:
+                stale = loaded.gen < self._max_gen
+            if stale:
+                continue
+            self._apply_loaded_data_on_main_thread(loaded)
+            applied_any = True
         return applied_any
 
     def on_interaction_end(self) -> int:
         """
-        Called on EndInteractionEvent - debounced and async.
-        This runs on main thread.
-        Returns the desired component (for heatmap LOD to consume).
+        Called on EndInteractionEvent (main thread). Records the new desired
+        viewport for the async loader and returns the desired component (for
+        heatmap LOD to consume). Does NOT block on loading or full-quality render.
         """
-        # Defensive: some zoom/scroll interactions can push the camera clipping range
-        # into an invalid state (everything clipped => black screen). Resetting here
-        # is cheap and keeps interaction stable.
+        # Defensive: some zoom/scroll interactions can push the camera clipping
+        # range into an invalid state (everything clipped => black screen).
+        # Reset + a fast interactive render keeps interaction stable and cheap.
         try:
             self.renderer.ResetCameraClippingRange()
-            self._render()
+            self._render_interactive()
         except Exception:
             pass
 
@@ -1461,7 +1611,7 @@ class VolumeStreamer:
                 # If distance becomes degenerate, recover by resetting camera.
                 self.renderer.ResetCamera()
                 self.renderer.ResetCameraClippingRange()
-                self._render()
+                self._render_interactive()
                 dist = camera_distance_to_focal(self.renderer.GetActiveCamera())
         except Exception:
             pass
@@ -1475,8 +1625,6 @@ class VolumeStreamer:
 
         if not self._active_channels:
             return desired_comp
-
-        self.check_and_apply_loaded_data()
 
         spacing = self._spacing_for_component(desired_comp)
         zdim, ydim, xdim = self._dims_for_component(desired_comp)
@@ -1495,31 +1643,9 @@ class VolumeStreamer:
         print(
             f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
 
-        needs_update = False
-        for ch in self._active_channels:  
-            ch = int(ch)
-            prev = self.state.get(ch)
-            if prev is None or prev.component != desired_comp or prev.roi != roi:
-                needs_update = True
-                break
-
-        if not needs_update:
-            print(f"[interaction] no update needed")
+        request = LoadRequest(component=desired_comp, roi=roi, timestamp=time.time())
+        if self._displayed_matches(request):
             return desired_comp
 
-        request = LoadRequest(
-            component=desired_comp,
-            roi=roi,
-            timestamp=time.time(),
-        )
-
-        with self._debounce_lock:
-            self._pending_request = request
-
-        threading.Thread(
-            target=self._debounce_callback,
-            args=(request,),
-            daemon=True,
-        ).start()
-
+        self._set_latest_request(desired_comp, roi)
         return desired_comp
