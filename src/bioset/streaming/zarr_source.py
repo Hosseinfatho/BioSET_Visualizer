@@ -54,12 +54,28 @@ class ZarrMultiscaleSource:
             self.store = source_store
 
         self._arrays: Dict[int, da.Array] = {}
+        self._raw_arrays: Dict[int, Any] = {}
 
     def array(self, component: int) -> da.Array:
         if component not in self._arrays:
             self._arrays[component] = da.from_zarr(
                 self.store, component=str(component))
         return self._arrays[component]
+
+    def raw_array(self, component: int):
+        """Raw (non-dask) zarr Array for direct per-chunk reads.
+
+        Opened through the *cached* ``self.store`` so chunk reads still hit the
+        on-disk CacheStore (the decoded-chunk in-memory cache sits above this).
+        The handle is memoized: reopening it per chunk would re-read ``.zarray``,
+        one wasted round-trip per chunk.
+        """
+        a = self._raw_arrays.get(component)
+        if a is None:
+            import zarr
+            a = zarr.open_group(self.store, mode="r")[str(component)]
+            self._raw_arrays[component] = a
+        return a
 
     def shape_tczyx(self, component: int) -> Tuple[int, ...]:
         return tuple(self.array(component).shape)

@@ -9,10 +9,11 @@ and flushed immediately, so the trace is preserved continuously even if the
 process is killed mid-session.
 
 What gets logged, per load, lets you see how long each stage takes
-(remote fetch / dask build / compute / numpy->vtk / gpu upload) and how the
-two cache layers behave:
+(tile assembly / numpy->vtk / gpu upload) and how the two cache layers behave:
 
-  * in-memory array cache (VolumeStreamer._array_cache) — keyed by (comp, ch, roi)
+  * in-memory decoded-chunk cache (VolumeStreamer._chunk_cache) — a byte-budget
+    LRU keyed by chunk identity (comp, ch, cyi, cxi); overlapping ROIs reuse
+    tiles. See VolumeStreamer._chunk_cache_summary.
   * on-disk zarr CacheStore — chunks pulled from remote are stored locally;
     a CacheStore "miss" means we went to the remote, a "hit" means local disk.
 """

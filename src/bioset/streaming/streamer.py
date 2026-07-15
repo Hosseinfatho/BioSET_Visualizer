@@ -14,6 +14,8 @@ from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
 from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
 from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
 
+from .chunk_cache import ChunkCache, PageTable
+from .chunk_grid import ChunkGrid
 from .lod import (
     ROI,
     camera_distance_to_focal,
@@ -122,13 +124,24 @@ class VolumeStreamer:
 
         self._loaded_data_queue: queue.Queue[LoadedData] = queue.Queue()
 
-        self._array_cache: Dict[Tuple[int, int, ROI], np.ndarray] = {}
-        self._cache_max_entries = 32
-
-        # In-memory array-cache profiling counters
-        self._mem_cache_hits = 0
-        self._mem_cache_misses = 0
-        self._mem_cache_evictions = 0
+        # --- Chunk page-table cache (replaces the exact-ROI array cache) ---
+        # Decoded chunks keyed by (comp, ch, cyi, cxi), byte-budget LRU, over the
+        # on-disk compressed CacheStore. Overlapping pans/zooms reuse tiles
+        # instead of re-downloading whole ROIs.
+        chunk_budget = int(getattr(cfg, "chunk_cache_gb", 1.0) * (1024**3))
+        self._chunk_cache = ChunkCache(budget_bytes=chunk_budget)
+        self._page_table = PageTable()
+        self._grids: Dict[int, ChunkGrid] = {}     # comp -> ChunkGrid (lazy)
+        self._grids_lock = threading.Lock()
+        # Concurrent per-chunk fetch (tiles); separate from _channel_executor
+        # (channels) so a channel task never waits on the pool it occupies.
+        self._chunk_pool = ThreadPoolExecutor(
+            max_workers=32, thread_name_prefix="chunk_fetch")
+        # Total bytes fetched from the store (decoded), for profiling. The TF is
+        # built once from real activation data and reused per frame (see
+        # _apply_loaded_data_on_main_thread), so a zero/blurry seed frame renders
+        # transparent through the frozen TF — no solid-block, no per-frame flicker.
+        self._bytes_fetched = 0
 
         self._last_component: Optional[int] = None
         self._initial_camera: Optional[dict] = None  # position, focalPoint, viewUp after first load
@@ -171,7 +184,11 @@ class VolumeStreamer:
             cache_dir=self.cfg.cache_dir,
             cache_size_bytes=max_bytes,
         )
-        self._array_cache.clear()
+        self._chunk_cache.clear()
+        self._page_table.clear()
+        with self._grids_lock:
+            self._grids.clear()
+        self._tf_frozen.clear()
         self._active_channels.clear()
         self._channel_colors.clear()
         self._channel_tfs.clear()
@@ -1183,37 +1200,94 @@ class VolumeStreamer:
                   downsampled=downsampled)
         return img
 
-    def _cache_key(self, component: int, ch: int, roi: ROI) -> Tuple[int, int, ROI]:
-        return (component, ch, roi)
+    # ------------------------------------------------------------------
+    # Chunk page-table: tile addressing, per-chunk fetch, and assembly.
+    # ------------------------------------------------------------------
+    def _grid(self, comp: int) -> ChunkGrid:
+        """ChunkGrid for a component (lazily built, thread-safe)."""
+        g = self._grids.get(comp)
+        if g is None:
+            with self._grids_lock:
+                g = self._grids.get(comp)
+                if g is None:
+                    g = ChunkGrid(self.zsrc.raw_array(comp))
+                    self._grids[comp] = g
+        return g
 
-    def _get_cached_array(self, component: int, ch: int, roi: ROI) -> Optional[np.ndarray]:
-        key = self._cache_key(component, ch, roi)
-        return self._array_cache.get(key)
+    def _read_tile(self, comp: int, ch: int, cyi: int, cxi: int, grid: ChunkGrid) -> np.ndarray:
+        """Fetch one tile's full-z column (one remote request) and cache it.
 
-    def _put_cached_array(self, component: int, ch: int, roi: ROI, arr: np.ndarray):
-        key = self._cache_key(component, ch, roi)
+        In-memory decoded-chunk cache first; on miss, read through the cached
+        zarr store (which layers the on-disk compressed CacheStore beneath).
+        """
+        key = (comp, ch, cyi, cxi)
+        hit = self._chunk_cache.get(key)
+        if hit is not None:
+            return hit
+        b = grid.tile_bounds(cyi, cxi)
+        arr = np.ascontiguousarray(
+            self.zsrc.raw_array(comp)[self.cfg.zarr_time_index, ch, :, b.y0:b.y1, b.x0:b.x1],
+            dtype=np.uint16,
+        )  # (z, ty, tx)
+        self._chunk_cache.put(key, arr)
+        self._bytes_fetched += arr.nbytes
+        return arr
 
-        if len(self._array_cache) >= self._cache_max_entries:
-            keys_to_remove = list(self._array_cache.keys())[
-                :self._cache_max_entries // 2]
-            for k in keys_to_remove:
-                del self._array_cache[k]
-                self._mem_cache_evictions += 1
+    @staticmethod
+    def _place(out: np.ndarray, tile: np.ndarray, b: ROI, snapped: ROI) -> None:
+        """Copy a tile into its slot in the assembled `out` array."""
+        out[:, b.y0 - snapped.y0:b.y1 - snapped.y0,
+            b.x0 - snapped.x0:b.x1 - snapped.x0] = tile
 
-        self._array_cache[key] = arr
+    def _place_upsampled(self, out: np.ndarray, up: np.ndarray, b: ROI,
+                         f: int, snapped: ROI) -> None:
+        """Place a nearest-neighbour-upsampled coarse tile into `out`, clipped
+        to the assembled ROI. `b` is the coarse tile's bounds; it maps to the
+        fine grid by f = 2**(coarse-comp)."""
+        # Fine-grid extent this coarse tile covers.
+        fy0, fx0 = b.y0 * f, b.x0 * f
+        # Destination window inside `out`, clipped to the snapped ROI.
+        dy0 = max(0, fy0 - snapped.y0)
+        dx0 = max(0, fx0 - snapped.x0)
+        dy1 = min(out.shape[1], fy0 + up.shape[1] - snapped.y0)
+        dx1 = min(out.shape[2], fx0 + up.shape[2] - snapped.x0)
+        if dy1 <= dy0 or dx1 <= dx0:
+            return
+        # Corresponding source window inside the upsampled tile.
+        sy0 = dy0 - (fy0 - snapped.y0)
+        sx0 = dx0 - (fx0 - snapped.x0)
+        out[:, dy0:dy1, dx0:dx1] = up[:, sy0:sy0 + (dy1 - dy0), sx0:sx0 + (dx1 - dx0)]
 
-    def _mem_cache_bytes(self) -> int:
-        """Total bytes held in the in-memory array cache."""
-        return sum(a.nbytes for a in self._array_cache.values())
+    def _seed_from_coarser(self, out: np.ndarray, comp: int, ch: int,
+                           snapped: ROI, grid: ChunkGrid) -> bool:
+        """Fill `out` from the nearest COARSER already-resident LOD (nearest-
+        neighbour upsample) so the viewport shows a blurry base before any fine
+        tile lands. Cache-only (never fetches here); returns True if it painted.
+        """
+        for coarse in range(comp + 1, self.cfg.max_component + 1):
+            cs = self._roi_at_component(snapped, comp, coarse)
+            cg = self._grid(coarse)
+            f = 2 ** (coarse - comp)
+            placed = False
+            for (cyi, cxi) in cg.covering_tiles(cg.snap_roi(cs)):
+                a = self._chunk_cache.get((coarse, ch, cyi, cxi))
+                if a is None:
+                    continue
+                up = np.repeat(np.repeat(a, f, axis=2), f, axis=1)
+                self._place_upsampled(out, up, cg.tile_bounds(cyi, cxi), f, snapped)
+                placed = True
+            if placed:
+                return True   # one coarse level is enough for a blurry base
+        return False
 
-    def _mem_cache_summary(self) -> str:
-        """One-line summary of in-memory array-cache state for profiling logs."""
-        total = self._mem_cache_hits + self._mem_cache_misses
-        rate = (self._mem_cache_hits / total * 100.0) if total else 0.0
+    def _chunk_cache_summary(self) -> str:
+        """One-line summary of the decoded-chunk cache for profiling logs."""
+        s = self._chunk_cache.stats()
         return (
-            f"mem-cache[hits={self._mem_cache_hits} misses={self._mem_cache_misses} "
-            f"rate={rate:.0f}% evict={self._mem_cache_evictions} "
-            f"entries={len(self._array_cache)} size={fmt_bytes(self._mem_cache_bytes())}]"
+            f"chunk-cache[hits={s['hits']} misses={s['misses']} "
+            f"rate={s['hit_rate'] * 100:.0f}% evict={s['evictions']} "
+            f"entries={s['entries']} size={fmt_bytes(s['bytes'])} "
+            f"fetched={fmt_bytes(self._bytes_fetched)}]"
         )
 
     def _disk_cache_summary(self) -> str:
@@ -1237,74 +1311,51 @@ class VolumeStreamer:
 
     def log_cache_summary(self) -> None:
         """Print a snapshot of both cache layers. Safe to call from anywhere."""
-        plog("cache", f"{self._mem_cache_summary()} {self._disk_cache_summary()}")
+        plog("cache", f"{self._chunk_cache_summary()} {self._disk_cache_summary()}")
+
+    def _assemble_roi(self, component: int, ch: int, snapped: ROI,
+                      grid: ChunkGrid) -> np.ndarray:
+        """Assemble the snapped (tile-aligned) ROI by fetching its covering
+        tiles concurrently and placing them. Used by both the blocking path and
+        the progressive stream (which seeds/emits around this)."""
+        z = self.zsrc.raw_array(component).shape[2]
+        out = np.zeros((z, snapped.y1 - snapped.y0, snapped.x1 - snapped.x0),
+                       dtype=np.uint16)
+        tiles = grid.covering_tiles(snapped)
+        futs = {
+            self._chunk_pool.submit(self._read_tile, component, ch, cyi, cxi, grid):
+                (cyi, cxi)
+            for (cyi, cxi) in tiles
+        }
+        for fut in as_completed(futs):
+            cyi, cxi = futs[fut]
+            self._place(out, fut.result(), grid.tile_bounds(cyi, cxi), snapped)
+        return out
 
     def _load_channel_data(self, component: int, ch: int, roi: ROI) -> np.ndarray:
-        """Load channel data - runs in background thread.
+        """Load a channel's data for `roi` (blocking) via the chunk cache.
 
-        Instruments the full path: in-memory cache lookup, dask graph build,
-        slicing, and .compute() (the actual remote/disk fetch). For the compute
-        stage we diff the on-disk CacheStore counters to attribute the cost to
-        remote downloads vs. local-disk-cache reads.
+        Assembles the tile-aligned (snapped) region from concurrent per-chunk
+        reads, then crops back to the exact requested `roi` so every existing
+        caller (NOV sync/scoring, bookmark restore, per-channel display) keeps
+        its original contract: shape == (z, roi_h, roi_w), origin at roi.x0/y0.
+        Overlapping ROIs now reuse cached tiles instead of re-downloading.
         """
-        # --- Layer 1: in-memory array cache ---
-        cached = self._get_cached_array(component, ch, roi)
-        if cached is not None:
-            self._mem_cache_hits += 1
-            timer = StageTimer("load", comp=component, ch=ch,
-                               roi=f"({roi.x0}:{roi.x1},{roi.y0}:{roi.y1})")
-            timer.log(src="MEM-HIT", bytes=fmt_bytes(cached.nbytes),
-                      shape=tuple(cached.shape), mem=self._mem_cache_summary())
-            return cached
-
-        self._mem_cache_misses += 1
-
-        # --- Layer 2 + remote: dask build + compute ---
         timer = StageTimer("load", comp=component, ch=ch,
                            roi=f"({roi.x0}:{roi.x1},{roi.y0}:{roi.y1})")
-
-        with timer.stage("dask-build"):
-            darr = self.zsrc.array(component)
-            vol_zyx = darr[self.cfg.zarr_time_index,
-                           ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
-
-        # Snapshot on-disk cache counters so we can attribute the compute cost
-        # to remote downloads (misses) vs. local disk reads (hits).
-        stats_before = self.zsrc.cache_stats()
-        info_before = self.zsrc.cache_info()
-
-        with timer.stage("compute"):
-            np_arr = vol_zyx.compute()
-
-        # Compute remote-vs-disk delta for this load
-        fetch_src = "?"
-        if stats_before is not None:
-            stats_after = self.zsrc.cache_stats() or {}
-            d_hits = stats_after.get("hits", 0) - stats_before.get("hits", 0)
-            d_miss = stats_after.get("misses", 0) - stats_before.get("misses", 0)
-            d_bytes = 0
-            if info_before is not None:
-                info_after = self.zsrc.cache_info() or {}
-                d_bytes = info_after.get("current_size", 0) - info_before.get("current_size", 0)
-            if d_miss > 0 and d_hits == 0:
-                fetch_src = "REMOTE"
-            elif d_miss == 0 and d_hits > 0:
-                fetch_src = "DISK"
-            elif d_miss > 0 and d_hits > 0:
-                fetch_src = "MIXED"
-            else:
-                fetch_src = "NONE"  # served from dask/zarr internal buffers
-            fetch_detail = (f"chunks(disk={d_hits},remote={d_miss}) "
-                            f"downloaded={fmt_bytes(max(0, d_bytes))}")
-        else:
-            fetch_detail = "no-disk-cache"
-
-        self._put_cached_array(component, ch, roi, np_arr)
-
-        timer.log(src=fetch_src, bytes=fmt_bytes(np_arr.nbytes),
-                  shape=tuple(np_arr.shape), fetch=fetch_detail,
-                  mem=self._mem_cache_summary(), disk=self._disk_cache_summary())
-        return np_arr
+        grid = self._grid(component)
+        snapped = grid.snap_roi(roi)
+        with timer.stage("assemble"):
+            out = self._assemble_roi(component, ch, snapped, grid)
+        # Crop the snapped assembly back to the exact requested ROI.
+        y0 = roi.y0 - snapped.y0
+        x0 = roi.x0 - snapped.x0
+        cropped = np.ascontiguousarray(
+            out[:, y0:y0 + (roi.y1 - roi.y0), x0:x0 + (roi.x1 - roi.x0)])
+        timer.log(src="CHUNK", bytes=fmt_bytes(cropped.nbytes),
+                  shape=tuple(cropped.shape),
+                  chunk=self._chunk_cache_summary(), disk=self._disk_cache_summary())
+        return cropped
 
     def _init_low_res_full(self):
         """Initialize with full low-res volumes - runs on main thread"""
@@ -1340,7 +1391,6 @@ class VolumeStreamer:
             self.renderer.AddVolume(vol)
             self.state[ch] = ChannelState(
                 component=comp, roi=ROI(0, int(x), 0, int(y)))
-            self._put_cached_array(comp, ch, ROI(0, int(x), 0, int(y)), np_vol)
 
             color_name = self.cfg.channel_colors[i % len(
                 self.cfg.channel_colors)]
@@ -1433,10 +1483,28 @@ class VolumeStreamer:
             return True
         return False
 
+    def _emit_hires(self, ch: int, st: ChannelState, out: np.ndarray, gen: int) -> None:
+        """Build a full-resolution vtkImageData from the assembled array and
+        enqueue it as a hires frame (origin from the snapped ROI)."""
+        spacing = self._spacing_for_component(st.component)
+        origin_xyz = (st.roi.x0 * spacing.sx, st.roi.y0 * spacing.sy, 0.0)
+        try:
+            img = self._create_vtk_image(out, spacing, origin_xyz)  # full res (2048 cap)
+        except ValueError:
+            return
+        self._loaded_data_queue.put(LoadedData(
+            component=st.component, roi=st.roi,
+            channel_images={int(ch): img},
+            timestamp=time.time(), gen=gen, hires=True,
+        ))
+
     def _build_hires_upgrade(self, gen: int) -> None:
         """Worker thread: rebuild full-resolution vtkImageData for the channels
-        currently shown downsized, from the (full-res) cached numpy, and enqueue
-        them. Skipped frames stay capped and get retried on the next idle tick.
+        currently shown downsized, re-assembling from the chunk cache CENTRE-OUT
+        so the sharp centre lands before the periphery. Full-res re-uploads are
+        expensive, so re-uploads are bounded (centre-half, then full) rather than
+        per-tile. Channels with tiles not yet resident are emitted at whatever
+        coverage they reached and retried on the next idle tick.
         """
         try:
             for ch in list(self._capped_channels):
@@ -1445,20 +1513,24 @@ class VolumeStreamer:
                 st = self.state.get(int(ch))
                 if st is None:
                     continue
-                arr = self._get_cached_array(st.component, ch, st.roi)
-                if arr is None:
-                    continue  # numpy evicted; leave capped, retry later
-                spacing = self._spacing_for_component(st.component)
-                origin_xyz = (st.roi.x0 * spacing.sx, st.roi.y0 * spacing.sy, 0.0)
-                try:
-                    img = self._create_vtk_image(arr, spacing, origin_xyz)  # full res
-                except ValueError:
-                    continue
-                self._loaded_data_queue.put(LoadedData(
-                    component=st.component, roi=st.roi,
-                    channel_images={int(ch): img},
-                    timestamp=time.time(), gen=gen, hires=True,
-                ))
+                grid = self._grid(st.component)
+                out = np.zeros(
+                    (self.zsrc.raw_array(st.component).shape[2],
+                     st.roi.y1 - st.roi.y0, st.roi.x1 - st.roi.x0),
+                    dtype=np.uint16)
+                # Blurry base so any not-yet-resident tiles aren't black.
+                self._seed_from_coarser(out, st.component, ch, st.roi, grid)
+
+                tiles = grid.covering_tiles(st.roi)   # centre-out
+                n = len(tiles)
+                emit_at = {max(1, n // 2), n}         # bounded: centre-half, full
+                for i, (cyi, cxi) in enumerate(tiles, start=1):
+                    if self._is_superseded_gen(gen):
+                        break
+                    self._place(out, self._read_tile(st.component, ch, cyi, cxi, grid),
+                                grid.tile_bounds(cyi, cxi), st.roi)
+                    if i in emit_at and not self._is_superseded_gen(gen):
+                        self._emit_hires(ch, st, out, gen)
         except Exception as e:
             import traceback
             print(f"[hires] upgrade error: {e}")
@@ -1550,35 +1622,83 @@ class VolumeStreamer:
         )
         return ROI(d["x0"], d["x1"], d["y0"], d["y1"])
 
-    def _load_one_image(self, component: int, ch: int, roi: ROI, max_dim: Optional[int] = None):
-        """Worker-thread: fetch numpy and build vtkImageData (no GL needed).
-        Returns (img, needs_hires_upgrade). needs_hires_upgrade is True when the
-        texture was capped below what a full-res build would produce, so the idle
+    def _emit(self, request: LoadRequest, comp: int, ch: int, snapped: ROI,
+              out: np.ndarray) -> None:
+        """Build a capped (interactive) vtkImageData off-thread from the current
+        assembly and enqueue it. Origin/extent come from the SNAPPED ROI so
+        channels stay aligned in world space. `was_capped` flags frames the idle
         loop should later re-upload at full resolution."""
-        np_arr = self._load_channel_data(component, ch, roi)
-        if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
-            return None, False
-        # A full build would cap at MAX_TEXTURE_DIM; if the data already fits in
-        # `max_dim` there's nothing to upgrade later.
-        needs_upgrade = (max_dim is not None) and (max(np_arr.shape) > max_dim)
-        spacing = self._spacing_for_component(component)
-        origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
+        spacing = self._spacing_for_component(comp)
+        origin_xyz = (snapped.x0 * spacing.sx, snapped.y0 * spacing.sy, 0.0)
+        was_capped = max(out.shape) > self.INTERACTIVE_MAX_DIM
         try:
-            return self._create_vtk_image(np_arr, spacing, origin_xyz, max_dim=max_dim), needs_upgrade
+            img = self._create_vtk_image(
+                out, spacing, origin_xyz, max_dim=self.INTERACTIVE_MAX_DIM)
         except ValueError:
-            return None, False
+            return
+        self._loaded_data_queue.put(LoadedData(
+            component=comp, roi=snapped, channel_images={ch: img},
+            timestamp=request.timestamp, gen=request.gen, was_capped=was_capped))
 
-    def _load_one_image_task(self, request: LoadRequest, component: int, ch: int, roi: ROI,
-                             max_dim: Optional[int] = None):
-        """Channel-pool task: skip if already superseded (avoids launching new
-        remote fetches for a viewport the user has already left), else load."""
-        if self._is_superseded(request):
-            return ch, None, False
+    def _stream_channel(self, request: LoadRequest, comp: int, ch: int,
+                        snapped: ROI, grid: ChunkGrid) -> None:
+        """Assemble one channel's snapped ROI progressively (worker thread):
+        seed a blurry base from a coarser LOD, paint already-resident tiles and
+        emit immediately, then fetch missing tiles CENTRE-OUT and re-emit
+        throttled as they land. On supersede it returns at once; tiles already
+        fetched stay in the cache (not wasted)."""
         try:
-            img, needs_upgrade = self._load_one_image(component, ch, roi, max_dim=max_dim)
-            return ch, img, needs_upgrade
-        except Exception:
-            return ch, None, False
+            z = self.zsrc.raw_array(comp).shape[2]
+            out = np.zeros((z, snapped.y1 - snapped.y0, snapped.x1 - snapped.x0),
+                           dtype=np.uint16)
+            self._seed_from_coarser(out, comp, ch, snapped, grid)
+
+            missing = []
+            for (cyi, cxi) in grid.covering_tiles(snapped):   # centre-out
+                a = self._chunk_cache.get((comp, ch, cyi, cxi))
+                if a is not None:
+                    self._place(out, a, grid.tile_bounds(cyi, cxi), snapped)
+                else:
+                    missing.append((cyi, cxi))
+
+            if self._is_superseded(request):
+                return
+            self._emit(request, comp, ch, snapped, out)   # instant: seed + resident
+
+            if not missing:
+                return
+
+            futs = {}
+            for (cyi, cxi) in missing:
+                if self._is_superseded(request):
+                    break
+                # Page table records residency (also the mixed-res hook); one
+                # request is active at a time so each key is submitted once.
+                self._page_table.mark_inflight((comp, ch, cyi, cxi), request.gen, comp)
+                futs[self._chunk_pool.submit(
+                    self._read_tile, comp, ch, cyi, cxi, grid)] = (cyi, cxi)
+
+            last = 0.0
+            for fut in as_completed(futs):
+                cyi, cxi = futs[fut]
+                try:
+                    arr = fut.result()
+                except Exception:
+                    continue
+                self._page_table.mark_resident((comp, ch, cyi, cxi), request.gen, comp)
+                if self._is_superseded(request):
+                    return   # fetched tiles remain cached; not wasted
+                self._place(out, arr, grid.tile_bounds(cyi, cxi), snapped)
+                now = time.time()
+                if now - last >= 0.05:    # throttle re-assembly ~20 Hz
+                    self._emit(request, comp, ch, snapped, out)
+                    last = now
+            if not self._is_superseded(request):
+                self._emit(request, comp, ch, snapped, out)   # final frame
+        except Exception as e:
+            import traceback
+            print(f"[stream] channel {ch} error: {e}")
+            traceback.print_exc()
 
     def _background_load(self, request: LoadRequest):
         """Worker thread: load coarse->fine for the request, building VTK images
@@ -1605,45 +1725,35 @@ class VolumeStreamer:
                 if self._is_superseded(request):
                     break
                 stage_roi = self._roi_at_component(request.roi, target, stage_comp)
+                grid = self._grid(stage_comp)
+                snapped = grid.snap_roi(stage_roi)
                 channels = [int(c) for c in list(self._active_channels)]
                 if not channels:
                     break
                 timer = StageTimer("background-load", comp=stage_comp, gen=request.gen)
                 queue_wait = time.time() - request.timestamp
 
-                # Load all channels concurrently; push each to the main thread
-                # the instant it's ready (per-channel display) so a fast cached
-                # channel paints immediately instead of waiting for a slow one.
+                # Stream all channels concurrently; each _stream_channel seeds,
+                # paints resident tiles, and emits progressively centre-out so a
+                # fast cached channel paints immediately and the centre sharpens
+                # first. We only await here for lifecycle (emits happen inside).
                 futures = {
                     self._channel_executor.submit(
-                        self._load_one_image_task, request, stage_comp, ch, stage_roi,
-                        self.INTERACTIVE_MAX_DIM): ch
+                        self._stream_channel, request, stage_comp, ch, snapped, grid): ch
                     for ch in channels
                 }
-                done = 0
                 for fut in as_completed(futures):
-                    # A newer viewport arrived: stop waiting on stragglers and
-                    # release the worker. In-flight channel loads finish on their
-                    # own; their now-stale frames are dropped on drain.
                     if self._is_superseded(request):
                         break
-                    ch, img, was_capped = fut.result()
-                    if img is None:
-                        continue
-                    self._loaded_data_queue.put(LoadedData(
-                        component=stage_comp,
-                        roi=stage_roi,
-                        channel_images={ch: img},
-                        timestamp=request.timestamp,
-                        gen=request.gen,
-                        was_capped=was_capped,
-                    ))
-                    done += 1
+                    try:
+                        fut.result()
+                    except Exception:
+                        pass
 
-                if done:
-                    timer.log(channels=done,
-                              stage=f"{idx + 1}/{len(stages)}",
-                              queue_wait=f"{queue_wait * 1000:.0f}ms")
+                timer.log(channels=len(channels),
+                          stage=f"{idx + 1}/{len(stages)}",
+                          queue_wait=f"{queue_wait * 1000:.0f}ms",
+                          chunk=self._chunk_cache_summary())
                 if self._is_superseded(request):
                     break
         except Exception as e:
@@ -1667,12 +1777,21 @@ class VolumeStreamer:
         self._set_latest_request(request.component, request.roi)
 
     def _displayed_matches(self, req: LoadRequest) -> bool:
-        """True if every active channel is already shown at req's comp and ROI."""
+        """True if every active channel is already shown at req's comp and ROI.
+
+        The interactive loader stores the tile-aligned (snapped) ROI in state, so
+        compare against the snapped request ROI or an unchanged viewport would be
+        seen as different and reloaded every settle.
+        """
         if not self._active_channels:
             return False
+        try:
+            target = self._grid(req.component).snap_roi(req.roi)
+        except Exception:
+            target = req.roi
         for ch in self._active_channels:
             st = self.state.get(int(ch))
-            if st is None or st.component != req.component or st.roi != req.roi:
+            if st is None or st.component != req.component or st.roi != target:
                 return False
         return True
 
