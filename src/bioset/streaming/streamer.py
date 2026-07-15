@@ -188,7 +188,6 @@ class VolumeStreamer:
         self._page_table.clear()
         with self._grids_lock:
             self._grids.clear()
-        self._tf_frozen.clear()
         self._active_channels.clear()
         self._channel_colors.clear()
         self._channel_tfs.clear()
@@ -1260,25 +1259,36 @@ class VolumeStreamer:
 
     def _seed_from_coarser(self, out: np.ndarray, comp: int, ch: int,
                            snapped: ROI, grid: ChunkGrid) -> bool:
-        """Fill `out` from the nearest COARSER already-resident LOD (nearest-
-        neighbour upsample) so the viewport shows a blurry base before any fine
-        tile lands. Cache-only (never fetches here); returns True if it painted.
+        """Fill `out` with a COMPLETE blurry base from coarser LODs so no emitted
+        frame ever has holes; the centre-out fine tiles later only sharpen it.
+
+        Levels are applied coarsest-first, so finer detail overlays the coarser
+        base where it's cached. Full coverage is guaranteed by *fetching* the
+        coarsest level's covering tiles when they aren't resident (that level is
+        tiny, so this is cheap). Returns True if a complete base was produced;
+        False only when `comp` is already the coarsest level (nothing coarser to
+        seed from — the caller must then avoid emitting a holey frame).
         """
-        for coarse in range(comp + 1, self.cfg.max_component + 1):
+        covered = False
+        for coarse in range(self.cfg.max_component, comp, -1):
             cs = self._roi_at_component(snapped, comp, coarse)
             cg = self._grid(coarse)
             f = 2 ** (coarse - comp)
-            placed = False
+            guarantee = (coarse == self.cfg.max_component)  # coarsest: ensure full cover
             for (cyi, cxi) in cg.covering_tiles(cg.snap_roi(cs)):
                 a = self._chunk_cache.get((coarse, ch, cyi, cxi))
                 if a is None:
-                    continue
+                    if not guarantee:
+                        continue          # finer-coarse level: overlay only if cached
+                    try:
+                        a = self._read_tile(coarse, ch, cyi, cxi, cg)  # cheap coarsest fetch
+                    except Exception:
+                        continue
                 up = np.repeat(np.repeat(a, f, axis=2), f, axis=1)
                 self._place_upsampled(out, up, cg.tile_bounds(cyi, cxi), f, snapped)
-                placed = True
-            if placed:
-                return True   # one coarse level is enough for a blurry base
-        return False
+            if guarantee:
+                covered = True
+        return covered
 
     def _chunk_cache_summary(self) -> str:
         """One-line summary of the decoded-chunk cache for profiling logs."""
@@ -1518,12 +1528,15 @@ class VolumeStreamer:
                     (self.zsrc.raw_array(st.component).shape[2],
                      st.roi.y1 - st.roi.y0, st.roi.x1 - st.roi.x0),
                     dtype=np.uint16)
-                # Blurry base so any not-yet-resident tiles aren't black.
-                self._seed_from_coarser(out, st.component, ch, st.roi, grid)
+                # Complete blurry base so any not-yet-placed tile isn't a hole.
+                covered = self._seed_from_coarser(out, st.component, ch, st.roi, grid)
 
                 tiles = grid.covering_tiles(st.roi)   # centre-out
                 n = len(tiles)
-                emit_at = {max(1, n // 2), n}         # bounded: centre-half, full
+                # Bounded re-uploads: centre-half + full. Skip the half-way emit
+                # if we have no complete base (it would show holes); emit only
+                # the final full frame in that case.
+                emit_at = {max(1, n // 2), n} if covered else {n}
                 for i, (cyi, cxi) in enumerate(tiles, start=1):
                     if self._is_superseded_gen(gen):
                         break
@@ -1651,7 +1664,7 @@ class VolumeStreamer:
             z = self.zsrc.raw_array(comp).shape[2]
             out = np.zeros((z, snapped.y1 - snapped.y0, snapped.x1 - snapped.x0),
                            dtype=np.uint16)
-            self._seed_from_coarser(out, comp, ch, snapped, grid)
+            covered = self._seed_from_coarser(out, comp, ch, snapped, grid)
 
             missing = []
             for (cyi, cxi) in grid.covering_tiles(snapped):   # centre-out
@@ -1663,7 +1676,14 @@ class VolumeStreamer:
 
             if self._is_superseded(request):
                 return
-            self._emit(request, comp, ch, snapped, out)   # instant: seed + resident
+            # Only paint a frame that is COMPLETE (a full blurry base, or every
+            # tile already resident). Otherwise keep the current texture on
+            # screen so the volume never blanks or shows holes; we'll emit once
+            # the final full frame is assembled. This is what makes it "fill
+            # everything, then sharpen centre-out" instead of flickering.
+            complete = covered or not missing
+            if complete:
+                self._emit(request, comp, ch, snapped, out)
 
             if not missing:
                 return
@@ -1689,12 +1709,16 @@ class VolumeStreamer:
                 if self._is_superseded(request):
                     return   # fetched tiles remain cached; not wasted
                 self._place(out, arr, grid.tile_bounds(cyi, cxi), snapped)
-                now = time.time()
-                if now - last >= 0.05:    # throttle re-assembly ~20 Hz
-                    self._emit(request, comp, ch, snapped, out)
-                    last = now
+                # Throttled sharpening emits are only safe once we have a
+                # complete base (each is still a hole-free frame). Without one
+                # (comp is the coarsest level) we wait for the final full frame.
+                if complete:
+                    now = time.time()
+                    if now - last >= 0.05:    # throttle re-assembly ~20 Hz
+                        self._emit(request, comp, ch, snapped, out)
+                        last = now
             if not self._is_superseded(request):
-                self._emit(request, comp, ch, snapped, out)   # final frame
+                self._emit(request, comp, ch, snapped, out)   # final complete frame
         except Exception as e:
             import traceback
             print(f"[stream] channel {ch} error: {e}")
