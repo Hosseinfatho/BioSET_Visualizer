@@ -12,7 +12,7 @@ from vtkmodules.util.numpy_support import numpy_to_vtk
 from vtkmodules.vtkCommonDataModel import vtkImageData
 from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
 from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
-from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
+from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper, vtkMultiVolume
 
 from .chunk_cache import ChunkCache, PageTable
 from .chunk_grid import ChunkGrid
@@ -104,6 +104,23 @@ class VolumeStreamer:
         self.mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
         self.state: Dict[int, ChannelState] = {}
 
+        # Multi-channel blending: all active channels share ONE GPU mapper via a
+        # vtkMultiVolume (one input port per channel), so the ray-caster composites
+        # them per sample instead of the last-added volume occluding the others.
+        # Each port is still an independently-updated texture, so per-channel
+        # streaming (base swap, coalescing, ROI refine) is unchanged.
+        self._blend_mode = "composite"
+        # A single real volume triggers a vtkMultiVolume bug that ignores the
+        # image origin (content renders shifted); >=2 volumes render correctly.
+        # A permanent transparent 1^3 dummy keeps the count >=2 for a lone channel.
+        self._dummy_volume, self._dummy_image = self._make_dummy_volume()
+        self._multi_mapper = self._new_multi_mapper()
+        self._multi_volume = self._new_multi_volume()
+        self._multi_volume.SetMapper(self._multi_mapper)
+        self.renderer.AddVolume(self._multi_volume)
+        self._channel_port: Dict[int, int] = {}          # ch -> port index
+        self._current_input: Dict[int, "vtkImageData"] = {}  # last texture per ch (for rebuilds)
+
         self._channel_tfs: Dict[int,
                                 Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
         self._channel_percentile_bounds: Dict[int, Tuple[float, float, float]] = {}
@@ -192,8 +209,6 @@ class VolumeStreamer:
     def set_zarr_url(self, url: str):
         """Update the zarr URL and reinitialize the source."""
         print(f"[stream] Setting zarr URL: {url}")
-        for vol in self.volumes.values():
-            self.renderer.RemoveVolume(vol)
         max_bytes = int(self.cfg.cache_size_gb * (1024**3))
         self.zsrc = ZarrMultiscaleSource(
             url=url,
@@ -218,6 +233,8 @@ class VolumeStreamer:
         self._channel_tfs.clear()
         self.volumes.clear()
         self.mappers.clear()
+        self._current_input.clear()
+        self._rebuild_multivolume()   # drops all ports (volumes now empty)
         self.state.clear()
         self._initial_camera = None
 
@@ -405,14 +422,13 @@ class VolumeStreamer:
         print(f"[stream] Deactivating channel {channel_id}")
         
         self._active_channels.discard(channel_id)
-        
-        if channel_id in self.volumes:
-            vol = self.volumes[channel_id]
-            self.renderer.RemoveVolume(vol)
-            del self.volumes[channel_id]
-        
-        if channel_id in self.mappers:
-            del self.mappers[channel_id]
+
+        # Drop the channel's volume and re-pack the multi-volume ports.
+        self.volumes.pop(channel_id, None)
+        self.mappers.pop(channel_id, None)
+        self._current_input.pop(channel_id, None)
+        self._rebuild_multivolume()
+
         if channel_id in self.nov_volumes and self.nov_renderer:
             self.nov_renderer.RemoveVolume(self.nov_volumes[channel_id])
         if channel_id in self.nov_volumes:
@@ -478,8 +494,8 @@ class VolumeStreamer:
         self._channel_histograms[channel_id] = self._compute_histogram(np_arr, (r0, r1))
 
         vol, mapper = self._get_or_create_volume(channel_id)
-        mapper.SetInputData(img)
-        
+        self._set_channel_input(channel_id, img)
+
         tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
         color_tf, opacity_tf, pct_range = build_histogram_tf(img, tint_rgb=tint_rgb)
         self._channel_tfs[channel_id] = (color_tf, opacity_tf)
@@ -488,13 +504,8 @@ class VolumeStreamer:
         prop = vol.GetProperty()
         prop.SetColor(color_tf)
         prop.SetScalarOpacity(opacity_tf)
-        # prop.SetScalarOpacityUnitDistance(
-        #     max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
-        # )
-        
-        if not self.renderer.HasViewProp(vol):
-            self.renderer.AddVolume(vol)
-        
+        # Membership is handled by the shared multi-volume (no per-channel AddVolume).
+
         self.state[channel_id] = ChannelState(component=component, roi=roi)
         self._last_component = component
         
@@ -1047,22 +1058,30 @@ class VolumeStreamer:
             self._load_and_display_channel(ch, st.component, st.roi, reset_camera=False)
 
     def _spacing_for_component(self, component: int) -> SpacingConfig:
-        scale = float(2 ** component)
-        # z spacing depends on the pyramid: xy-only stores (S3) keep z fixed;
-        # isotropic stores (the Globus rechunked_mis) halve z per level too.
-        # Derive the z factor from the real shape ratio so both render correctly:
-        # for xy-only z0/zc == 1 (unchanged); for isotropic z0/zc == 2**component.
+        # Derive per-axis spacing from the REAL level-0/level shape ratios rather
+        # than assuming 2**component. Level dims aren't exact powers of two (e.g.
+        # x: 10908 -> 170 at comp 6, and 170*64 != 10908), so a 2**component scale
+        # gives each component a slightly different world extent and the volume
+        # visibly shifts when the LOD changes on zoom. Real ratios make every
+        # component span the identical physical extent (xdim*sx == x0*base_sx),
+        # and they correctly handle both xy-only (z0/zc==1) and isotropic (z halves)
+        # pyramids. Dataset-agnostic.
+        # Use (dim-1) ratios, not dim ratios: VTK renders a volume's extent as
+        # (dim-1)*spacing (voxels are point samples), so to make every LOD span
+        # the identical physical extent — and not shift/scale when the LOD changes
+        # on zoom — we need (dimc-1)*sx == (dim0-1)*base_sx. This matters most for
+        # z on the isotropic Globus store (zc as small as 3): with dim ratios the
+        # base's z-extent was (3-1)*sz vs the fine's (24-1)*sz, a big jump.
         try:
-            z0 = self._level0_dims_zyx()[0]
-            zc = self._dims_for_component(component)[0]
-            z_scale = (z0 / zc) if zc else 1.0
+            z0, y0, x0 = self._level0_dims_zyx()
+            zc, yc, xc = self._dims_for_component(component)
+            sx = self.cfg.base_sx * (x0 - 1) / (xc - 1) if (xc > 1 and x0 > 1) else self.cfg.base_sx
+            sy = self.cfg.base_sy * (y0 - 1) / (yc - 1) if (yc > 1 and y0 > 1) else self.cfg.base_sy
+            sz = self.cfg.base_sz * (z0 - 1) / (zc - 1) if (zc > 1 and z0 > 1) else self.cfg.base_sz
         except Exception:
-            z_scale = 1.0
-        return SpacingConfig(
-            sx=self.cfg.base_sx * scale,
-            sy=self.cfg.base_sy * scale,
-            sz=self.cfg.base_sz * z_scale,
-        )
+            scale = float(2 ** component)
+            sx, sy, sz = self.cfg.base_sx * scale, self.cfg.base_sy * scale, self.cfg.base_sz
+        return SpacingConfig(sx=sx, sy=sy, sz=sz)
 
     def _opacity_unit_distance(self) -> float:
         """LOD-independent opacity unit distance = the finest (level-0) voxel
@@ -1131,36 +1150,117 @@ class VolumeStreamer:
         
         self._render()
 
-    def _get_or_create_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
-        """Get existing VTK volume/mapper or create new ones."""
-        if ch in self.volumes:
-            return self.volumes[ch], self.mappers[ch]
+    # vtkMultiVolume caps at ~10 input ports; refuse extra channels gracefully.
+    MAX_BLEND_CHANNELS = 10
 
-        mapper = vtkGPUVolumeRayCastMapper()
-        mapper.SetAutoAdjustSampleDistances(True)
+    def _get_or_create_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
+        """Get or create the channel's vtkVolume and register it as a port on the
+        shared multi-volume mapper. The mapper is shared across all channels so
+        they blend per-sample; the returned mapper is that shared one."""
+        if ch in self.volumes:
+            return self.volumes[ch], self._multi_mapper
 
         prop = vtkVolumeProperty()
         if self.cfg.linear_interpolation:
             prop.SetInterpolationTypeToLinear()
         else:
             prop.SetInterpolationTypeToNearest()
-
-        if self.cfg.shade:
-            prop.ShadeOn()
-            prop.SetAmbient(0.5)
-            prop.SetDiffuse(0.8)
-            prop.SetSpecular(0.1)
-            prop.SetSpecularPower(8.0)
-        else:
-            prop.ShadeOff()
+        # vtkMultiVolume does not support per-volume gradient shading; force off.
+        prop.ShadeOff()
 
         vol = vtkVolume()
-        vol.SetMapper(mapper)
+        # Note: no per-channel mapper — the vtkMultiVolume drives one shared mapper.
         vol.SetProperty(prop)
 
         self.volumes[ch] = vol
-        self.mappers[ch] = mapper
-        return vol, mapper
+        self.mappers[ch] = self._multi_mapper   # back-compat for callers reading .mappers
+        # Registration (port assignment) happens on the channel's first
+        # _set_channel_input, once it actually has a texture.
+        return vol, self._multi_mapper
+
+    def _new_multi_mapper(self):
+        m = vtkGPUVolumeRayCastMapper()
+        m.SetAutoAdjustSampleDistances(True)
+        if self._blend_mode == "additive":
+            m.SetBlendModeToAdditive()
+        else:
+            m.SetBlendModeToComposite()
+        return m
+
+    def _new_multi_volume(self):
+        return vtkMultiVolume()
+
+    def _make_dummy_volume(self):
+        """A transparent 1^3 volume used to keep the multi-volume at >=2 inputs
+        (a lone real volume hits a vtkMultiVolume origin bug -> shifted render)."""
+        arr = np.zeros((1, 1, 1), dtype=np.uint16)
+        vtk_arr = numpy_to_vtk(arr.ravel(order="C"), deep=True)
+        img = vtkImageData()
+        img.SetDimensions(1, 1, 1)
+        img.SetExtent(0, 0, 0, 0, 0, 0)
+        img.SetSpacing(1.0, 1.0, 1.0)
+        img.SetOrigin(0.0, 0.0, 0.0)
+        img.GetPointData().SetScalars(vtk_arr)
+        img.Modified()
+        prop = vtkVolumeProperty()
+        prop.ShadeOff()
+        ctf = vtkColorTransferFunction(); ctf.AddRGBPoint(0.0, 0.0, 0.0, 0.0)
+        otf = vtkPiecewiseFunction(); otf.AddPoint(0.0, 0.0)
+        prop.SetColor(ctf); prop.SetScalarOpacity(otf)
+        vol = vtkVolume(); vol.SetProperty(prop)
+        return vol, img
+
+    def _channel_image(self, ch: int) -> Optional["vtkImageData"]:
+        return self._current_input.get(ch) or self._base_images.get(ch)
+
+    def _rebuild_multivolume(self) -> None:
+        """Rebuild the shared multi-volume from scratch on a membership change
+        (channel add/remove — rare, a user action).
+
+        We recreate BOTH the vtkMultiVolume and its GPU mapper rather than
+        mutating ports in place: VTK does NOT reliably drop a mapper input port
+        (RemoveAllInputs leaves it), which leaves a port with an input but no
+        volume and makes vtkMultiVolume abort at render ("Failed to query
+        vtkVolume instance for port N"). Verified empirically. Re-setting the
+        <=10 active textures here is cheap enough for a rare event. Only channels
+        that already have a texture are registered (contiguous ports 0..N-1)."""
+        try:
+            self.renderer.RemoveVolume(self._multi_volume)
+        except Exception:
+            pass
+        self._multi_mapper = self._new_multi_mapper()
+        self._multi_volume = self._new_multi_volume()
+        self._multi_volume.SetMapper(self._multi_mapper)
+        self.renderer.AddVolume(self._multi_volume)
+        self._channel_port.clear()
+        ready = [c for c in self.volumes.keys() if self._channel_image(c) is not None]
+        if len(ready) > self.MAX_BLEND_CHANNELS:
+            print(f"[stream] blend cap {self.MAX_BLEND_CHANNELS}; "
+                  f"{len(ready) - self.MAX_BLEND_CHANNELS} channel(s) not rendered")
+            ready = ready[:self.MAX_BLEND_CHANNELS]
+        for port, ch in enumerate(ready):
+            self._multi_volume.SetVolume(self.volumes[ch], port)
+            self._multi_mapper.SetInputDataObject(port, self._channel_image(ch))
+            self._channel_port[ch] = port
+            self.mappers[ch] = self._multi_mapper
+        # Keep the multi-volume at >=2 inputs (see _make_dummy_volume): with 0 or
+        # 1 real channel, append the transparent dummy so a lone real volume
+        # doesn't hit the origin-shift bug.
+        if len(ready) <= 1:
+            dport = len(ready)
+            self._multi_volume.SetVolume(self._dummy_volume, dport)
+            self._multi_mapper.SetInputDataObject(dport, self._dummy_image)
+
+    def _set_channel_input(self, ch: int, img: "vtkImageData") -> None:
+        """Point a channel's port at a new texture (the per-frame hot path)."""
+        self._current_input[ch] = img
+        port = self._channel_port.get(ch)
+        if port is None:
+            # First texture for this channel → it can now be registered.
+            if ch in self.volumes:
+                self._rebuild_multivolume()
+            return
+        self._multi_mapper.SetInputDataObject(port, img)
 
     # ------------------------------------------------------------------
     # Full-volume coarse "base" texture: shown instantly while interacting so
@@ -1198,15 +1298,12 @@ class VolumeStreamer:
         if img is None:
             return False
         vol, mapper = self._get_or_create_volume(ch)
-        mapper.SetInputData(img)
-        mapper.Modified()
+        self._set_channel_input(ch, img)
         if ch in self._channel_tfs:
             color_tf, opacity_tf = self._channel_tfs[ch]
             prop = vol.GetProperty()
             prop.SetColor(color_tf)
             prop.SetScalarOpacity(opacity_tf)
-        if not self.renderer.HasViewProp(vol):
-            self.renderer.AddVolume(vol)
         self._showing_base.add(ch)
         return True
 
@@ -1220,10 +1317,9 @@ class VolumeStreamer:
             if ch in self._showing_base:
                 continue
             base = self._base_images.get(ch)
-            if base is None or ch not in self.mappers:
+            if base is None or ch not in self._channel_port:
                 continue
-            self.mappers[ch].SetInputData(base)
-            self.mappers[ch].Modified()
+            self._set_channel_input(ch, base)
             self._showing_base.add(ch)
             swapped = True
         if swapped:
@@ -1567,14 +1663,13 @@ class VolumeStreamer:
             color_tf, opacity_tf = self._precompute_transfer_function(ch, img)
 
             vol, mapper = self._get_or_create_volume(ch)
-            mapper.SetInputData(img)
+            self._set_channel_input(ch, img)
 
             prop = vol.GetProperty()
             prop.SetColor(color_tf)
             prop.SetScalarOpacity(opacity_tf)
             prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
 
-            self.renderer.AddVolume(vol)
             self.state[ch] = ChannelState(
                 component=comp, roi=ROI(0, int(x), 0, int(y)))
 
@@ -1754,10 +1849,13 @@ class VolumeStreamer:
                            channels=len(loaded.channel_images))
 
         for ch, img in loaded.channel_images.items():
+            # A late frame for a channel the user has since deactivated must not
+            # resurrect it (that would desync the multi-volume ports).
+            if ch not in self._active_channels:
+                continue
             vol, mapper = self._get_or_create_volume(ch)
             with timer.stage(f"gpu-upload[ch{ch}]"):
-                mapper.SetInputData(img)
-                mapper.Modified()
+                self._set_channel_input(ch, img)
 
             if ch in self._channel_tfs:
                 color_tf, opacity_tf = self._channel_tfs[ch]
@@ -1765,9 +1863,6 @@ class VolumeStreamer:
                 prop.SetColor(color_tf)
                 prop.SetScalarOpacity(opacity_tf)
                 prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
-
-            if not self.renderer.HasViewProp(vol):
-                self.renderer.AddVolume(vol)
 
             self.state[ch] = ChannelState(component=component, roi=roi)
 
