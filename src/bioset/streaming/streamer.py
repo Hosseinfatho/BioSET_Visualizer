@@ -672,8 +672,7 @@ class VolumeStreamer:
                         prop = vol.GetProperty()
                         prop.SetColor(color_tf)
                         prop.SetScalarOpacity(opacity_tf)
-                        prop.SetScalarOpacityUnitDistance(
-                            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+                        prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
                     if not self.nov_renderer.HasViewProp(vol):
                         self.nov_renderer.AddVolume(vol)
                 except Exception:
@@ -707,8 +706,7 @@ class VolumeStreamer:
             prop.SetScalarOpacity(opacity_tf)
             if channel_id in self.nov_mappers and self.nov_mappers[channel_id].GetInput():
                 spacing = self.nov_mappers[channel_id].GetInput().GetSpacing()
-                prop.SetScalarOpacityUnitDistance(
-                    max(1e-6, 1.0 * min(spacing[0], spacing[1], spacing[2])))
+                prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
             if self.nov_render_window:
                 self.nov_render_window.Render()
             if self.render_callback:
@@ -800,8 +798,7 @@ class VolumeStreamer:
                         prop = vol.GetProperty()
                         prop.SetColor(color_tf)
                         prop.SetScalarOpacity(opacity_tf)
-                        prop.SetScalarOpacityUnitDistance(
-                            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+                        prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
                     if not self.nov_renderer.HasViewProp(vol):
                         self.nov_renderer.AddVolume(vol)
                 except Exception:
@@ -1066,6 +1063,15 @@ class VolumeStreamer:
             sy=self.cfg.base_sy * scale,
             sz=self.cfg.base_sz * z_scale,
         )
+
+    def _opacity_unit_distance(self) -> float:
+        """LOD-independent opacity unit distance = the finest (level-0) voxel
+        spacing. Opacity-per-distance is a property of the tissue, not of the
+        current sampling, so it must NOT use the current LOD's voxel size: for an
+        isotropic pyramid that grows at coarse levels and washes the volume out
+        (few cells visible across the thickness). Derived from base spacing only,
+        so it's consistent across datasets rather than tuned to one store."""
+        return max(1e-6, min(self.cfg.base_sx, self.cfg.base_sy, self.cfg.base_sz))
 
     def _level0_dims_zyx(self) -> Tuple[int, int, int]:
         """Cached level-0 (component 0) dims; used to derive per-level z spacing."""
@@ -1566,8 +1572,7 @@ class VolumeStreamer:
             prop = vol.GetProperty()
             prop.SetColor(color_tf)
             prop.SetScalarOpacity(opacity_tf)
-            prop.SetScalarOpacityUnitDistance(
-                max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+            prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
 
             self.renderer.AddVolume(vol)
             self.state[ch] = ChannelState(
@@ -1759,9 +1764,7 @@ class VolumeStreamer:
                 prop = vol.GetProperty()
                 prop.SetColor(color_tf)
                 prop.SetScalarOpacity(opacity_tf)
-                prop.SetScalarOpacityUnitDistance(
-                    max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
-                )
+                prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
 
             if not self.renderer.HasViewProp(vol):
                 self.renderer.AddVolume(vol)
