@@ -130,6 +130,13 @@ class VolumeStreamer:
         # instead of re-downloading whole ROIs.
         chunk_budget = int(getattr(cfg, "chunk_cache_gb", 1.0) * (1024**3))
         self._chunk_cache = ChunkCache(budget_bytes=chunk_budget)
+        # Dedicated cache for the coarsest LOD's tiles. Fine-tile churn (which can
+        # fill the main cache fast when zooming in) must never evict these, or the
+        # blurry base disappears and the volume blanks to the edges on zoom-out.
+        # Sized to comfortably hold the whole coarsest level for all channels;
+        # it only evicts (LRU) if that budget is genuinely exceeded.
+        lowres_budget = int(getattr(cfg, "lowres_cache_gb", 0.5) * (1024**3))
+        self._lowres_cache = ChunkCache(budget_bytes=lowres_budget)
         self._page_table = PageTable()
         self._grids: Dict[int, ChunkGrid] = {}     # comp -> ChunkGrid (lazy)
         self._grids_lock = threading.Lock()
@@ -185,6 +192,7 @@ class VolumeStreamer:
             cache_size_bytes=max_bytes,
         )
         self._chunk_cache.clear()
+        self._lowres_cache.clear()
         self._page_table.clear()
         with self._grids_lock:
             self._grids.clear()
@@ -345,9 +353,28 @@ class VolumeStreamer:
                     margin_vox=self.cfg.roi_margin_vox,
                 )
                 print(f"[stream] Computed view: comp={comp} roi={roi}")
-        
-        self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
-        
+
+        simple = is_first_volume or self._last_component is None
+        if simple:
+            self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
+        else:
+            # Coarse-first: paint the new channel instantly at the coarsest LOD
+            # (served from the pinned/warmed low-res cache), which also builds its
+            # transfer function, then refine to the current viewport asynchronously
+            # (progressive, centre-out) alongside the other channels. This stops a
+            # deep-zoom channel add from blocking on a full fine-resolution fetch.
+            coarse = self.cfg.max_component
+            if comp >= coarse:
+                self._load_and_display_channel(channel_id, comp, roi, reset_camera=False)
+            else:
+                roi_coarse = self._roi_at_component(roi, comp, coarse)
+                self._load_and_display_channel(channel_id, coarse, roi_coarse, reset_camera=False)
+                self._set_latest_request(comp, roi)
+
+        # Warm this channel's coarsest LOD in the background so its blurry base is
+        # always instantly available (zoom-out to edges, future re-adds).
+        VolumeStreamer._executor.submit(self._prefetch_lowres, channel_id)
+
     def deactivate_channel(self, channel_id: int):
         """
         Deactivate a channel - remove from rendering.
@@ -1213,6 +1240,11 @@ class VolumeStreamer:
                     self._grids[comp] = g
         return g
 
+    def _cache_for(self, comp: int) -> ChunkCache:
+        """Coarsest-level tiles live in the pinned low-res cache (never evicted by
+        fine-tile churn); every finer level uses the main byte-budget LRU."""
+        return self._lowres_cache if comp >= self.cfg.max_component else self._chunk_cache
+
     def _read_tile(self, comp: int, ch: int, cyi: int, cxi: int, grid: ChunkGrid) -> np.ndarray:
         """Fetch one tile's full-z column (one remote request) and cache it.
 
@@ -1220,7 +1252,8 @@ class VolumeStreamer:
         zarr store (which layers the on-disk compressed CacheStore beneath).
         """
         key = (comp, ch, cyi, cxi)
-        hit = self._chunk_cache.get(key)
+        cache = self._cache_for(comp)
+        hit = cache.get(key)
         if hit is not None:
             return hit
         b = grid.tile_bounds(cyi, cxi)
@@ -1228,9 +1261,26 @@ class VolumeStreamer:
             self.zsrc.raw_array(comp)[self.cfg.zarr_time_index, ch, :, b.y0:b.y1, b.x0:b.x1],
             dtype=np.uint16,
         )  # (z, ty, tx)
-        self._chunk_cache.put(key, arr)
+        cache.put(key, arr)
         self._bytes_fetched += arr.nbytes
         return arr
+
+    def _prefetch_lowres(self, ch: int) -> None:
+        """Background-warm the entire coarsest LOD for a channel into the pinned
+        low-res cache, so a complete blurry base is instantly available for any
+        viewport (zoom-out to the edges, or a newly added channel) without a
+        blocking fetch on the interaction path."""
+        try:
+            comp = self.cfg.max_component
+            grid = self._grid(comp)
+            full = ROI(0, grid.X, 0, grid.Y)
+            for (cyi, cxi) in grid.covering_tiles(full):
+                try:
+                    self._read_tile(comp, ch, cyi, cxi, grid)
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     @staticmethod
     def _place(out: np.ndarray, tile: np.ndarray, b: ROI, snapped: ROI) -> None:
@@ -1276,7 +1326,7 @@ class VolumeStreamer:
             f = 2 ** (coarse - comp)
             guarantee = (coarse == self.cfg.max_component)  # coarsest: ensure full cover
             for (cyi, cxi) in cg.covering_tiles(cg.snap_roi(cs)):
-                a = self._chunk_cache.get((coarse, ch, cyi, cxi))
+                a = self._cache_for(coarse).get((coarse, ch, cyi, cxi))
                 if a is None:
                     if not guarantee:
                         continue          # finer-coarse level: overlay only if cached
@@ -1291,13 +1341,15 @@ class VolumeStreamer:
         return covered
 
     def _chunk_cache_summary(self) -> str:
-        """One-line summary of the decoded-chunk cache for profiling logs."""
+        """One-line summary of both decoded-chunk caches for profiling logs."""
         s = self._chunk_cache.stats()
+        lo = self._lowres_cache.stats()
         return (
-            f"chunk-cache[hits={s['hits']} misses={s['misses']} "
+            f"chunk-cache[hi:hits={s['hits']} miss={s['misses']} "
             f"rate={s['hit_rate'] * 100:.0f}% evict={s['evictions']} "
-            f"entries={s['entries']} size={fmt_bytes(s['bytes'])} "
-            f"fetched={fmt_bytes(self._bytes_fetched)}]"
+            f"entries={s['entries']} size={fmt_bytes(s['bytes'])} | "
+            f"lo:entries={lo['entries']} size={fmt_bytes(lo['bytes'])} "
+            f"evict={lo['evictions']}] fetched={fmt_bytes(self._bytes_fetched)}]"
         )
 
     def _disk_cache_summary(self) -> str:
@@ -1411,6 +1463,10 @@ class VolumeStreamer:
         self.renderer.ResetCameraClippingRange()
         self.renderer.ResetCamera()
         self._render()
+
+        # Warm the pinned coarsest LOD for these channels in the background.
+        for ch in self.cfg.channels:
+            VolumeStreamer._executor.submit(self._prefetch_lowres, int(ch))
 
     # Update rates for the GPU ray-cast mapper (AutoAdjustSampleDistances on):
     # high rate -> coarse sampling -> fast/interactive; low rate -> best quality.
@@ -1667,8 +1723,9 @@ class VolumeStreamer:
             covered = self._seed_from_coarser(out, comp, ch, snapped, grid)
 
             missing = []
+            cache = self._cache_for(comp)
             for (cyi, cxi) in grid.covering_tiles(snapped):   # centre-out
-                a = self._chunk_cache.get((comp, ch, cyi, cxi))
+                a = cache.get((comp, ch, cyi, cxi))
                 if a is not None:
                     self._place(out, a, grid.tile_bounds(cyi, cxi), snapped)
                 else:

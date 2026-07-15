@@ -1,0 +1,189 @@
+# BioSET profiling started 2026-07-15T01:00:16
+01:00:25.226 [load] comp=6 ch=1 roi=(0:170,0:86) total=154.6ms | assemble=86.7ms | src=CHUNK bytes=5.4MB shape=(194, 86, 170) chunk=chunk-cache[hits=0 misses=1 rate=0% evict=0 entries=1 size=5.4MB fetched=5.4MB] disk=disk-cache[hits=198 misses(remote)=6 rate=97% evict=0 size=0.0B/8.0GB keys=0]
+01:00:25.227 [vtk-image] view=main total=1.0ms | ascontiguous=0.0ms numpy_to_vtk=0.9ms | shape=(194, 86, 170) bytes=5.4MB downsampled=False
+01:00:30.678 [load] comp=5 ch=0 roi=(0:340,0:172) total=180.0ms | assemble=117.2ms | src=CHUNK bytes=21.6MB shape=(194, 172, 340) chunk=chunk-cache[hits=0 misses=2 rate=0% evict=0 entries=2 size=27.0MB fetched=27.0MB] disk=disk-cache[hits=396 misses(remote)=12 rate=97% evict=0 size=0.0B/8.0GB keys=0]
+01:00:30.681 [vtk-image] view=main total=2.5ms | ascontiguous=0.0ms numpy_to_vtk=2.5ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:00:44.396 [vtk-image] view=main total=2.6ms | ascontiguous=0.0ms numpy_to_vtk=2.5ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:00:44.475 [apply-main] comp=5 channels=1 total=0.5ms | gpu-upload[ch1]=0.3ms | end_to_end_latency=313ms hires=False capped=False
+01:00:44.547 [render] kind=interactive total=71.3ms | gpu=53.1ms | 
+01:00:44.650 [vtk-image] view=main total=2.5ms | ascontiguous=0.0ms numpy_to_vtk=2.5ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:00:44.652 [vtk-image] view=main total=2.2ms | ascontiguous=0.0ms numpy_to_vtk=2.2ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:00:44.653 [background-load] comp=5 gen=1 total=281.4ms |  | channels=1 stage=1/1 queue_wait=210ms chunk=chunk-cache[hits=1 misses=4 rate=20% evict=0 entries=3 size=48.7MB fetched=48.7MB]
+01:00:45.878 [vtk-image] view=main total=118.5ms | ascontiguous=0.0ms downsample=111.8ms numpy_to_vtk=6.5ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:00:45.933 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=849ms hires=False capped=True
+01:00:46.004 [render] kind=interactive total=70.8ms | gpu=57.8ms | 
+01:00:46.448 [vtk-image] view=main total=78.8ms | ascontiguous=0.0ms downsample=74.0ms numpy_to_vtk=4.7ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:00:46.498 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=1413ms hires=False capped=True
+01:00:46.516 [vtk-image] view=main total=66.8ms | ascontiguous=0.0ms downsample=62.3ms numpy_to_vtk=4.4ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:00:46.527 [background-load] comp=3 gen=7 total=1239.9ms |  | channels=1 stage=1/1 queue_wait=203ms chunk=chunk-cache[hits=3 misses=7 rate=30% evict=0 entries=4 size=309.4MB fetched=309.4MB]
+01:00:46.556 [render] kind=interactive total=57.9ms | gpu=45.2ms | 
+01:00:46.672 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=1587ms hires=False capped=True
+01:00:46.711 [render] kind=interactive total=39.5ms | gpu=29.7ms | 
+01:00:47.486 [vtk-image] view=main total=36.5ms | ascontiguous=0.0ms numpy_to_vtk=36.4ms | shape=(194, 688, 1024) bytes=260.7MB downsampled=False
+01:00:47.533 [apply-main] comp=3 channels=1 total=0.5ms | gpu-upload[ch1]=0.3ms | end_to_end_latency=47ms hires=True capped=False
+01:00:47.825 [render] kind=interactive total=291.5ms | gpu=281.6ms | 
+01:00:48.133 [render] kind=still total=60.0ms | gpu=59.9ms | 
+01:00:56.695 [vtk-image] view=main total=67.4ms | ascontiguous=0.0ms downsample=62.6ms numpy_to_vtk=4.1ms | shape=(48, 432, 512) bytes=20.2MB downsampled=True
+01:00:57.439 [apply-main] comp=1 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=7728ms hires=False capped=True
+01:00:57.485 [render] kind=interactive total=45.5ms | gpu=36.3ms | 
+01:00:58.209 [vtk-image] view=main total=39.5ms | ascontiguous=0.0ms downsample=37.1ms numpy_to_vtk=2.3ms | shape=(48, 432, 512) bytes=20.2MB downsampled=True
+01:00:58.242 [apply-main] comp=1 channels=1 total=0.6ms | gpu-upload[ch1]=0.5ms | end_to_end_latency=8530ms hires=False capped=True
+01:00:58.293 [render] kind=interactive total=51.2ms | gpu=35.1ms | 
+01:01:21.150 [background-load] comp=1 gen=12 total=31253.5ms |  | channels=1 stage=1/1 queue_wait=185ms chunk=chunk-cache[hits=9 misses=21 rate=30% evict=0 entries=6 size=964.9MB fetched=964.9MB]
+01:01:21.283 [vtk-image] view=main total=2.7ms | ascontiguous=0.0ms numpy_to_vtk=2.6ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:01:21.284 [background-load] comp=5 gen=29 total=29.0ms |  | channels=1 stage=1/1 queue_wait=729ms chunk=chunk-cache[hits=11 misses=21 rate=34% evict=0 entries=6 size=964.9MB fetched=964.9MB]
+01:01:21.364 [apply-main] comp=5 channels=1 total=0.5ms | gpu-upload[ch1]=0.3ms | end_to_end_latency=838ms hires=False capped=False
+01:01:21.441 [render] kind=interactive total=76.8ms | gpu=57.9ms | 
+01:01:21.702 [render] kind=still total=30.4ms | gpu=30.3ms | 
+01:01:22.098 [render] kind=still total=59.2ms | gpu=28.3ms | 
+01:01:22.659 [vtk-image] view=main total=0.8ms | ascontiguous=0.0ms numpy_to_vtk=0.8ms | shape=(194, 86, 170) bytes=5.4MB downsampled=False
+01:01:22.659 [background-load] comp=6 gen=33 total=2.2ms |  | channels=1 stage=1/1 queue_wait=211ms chunk=chunk-cache[hits=12 misses=21 rate=36% evict=0 entries=6 size=964.9MB fetched=964.9MB]
+01:01:22.763 [apply-main] comp=6 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=317ms hires=False capped=False
+01:01:22.795 [render] kind=interactive total=31.5ms | gpu=18.3ms | 
+01:01:23.321 [vtk-image] view=main total=5.7ms | ascontiguous=0.0ms numpy_to_vtk=5.6ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:01:23.322 [background-load] comp=5 gen=34 total=35.6ms |  | channels=1 stage=1/1 queue_wait=220ms chunk=chunk-cache[hits=14 misses=21 rate=40% evict=0 entries=6 size=964.9MB fetched=964.9MB]
+01:01:23.396 [apply-main] comp=5 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=328ms hires=False capped=False
+01:01:23.463 [render] kind=interactive total=66.8ms | gpu=48.0ms | 
+01:01:24.168 [vtk-image] view=main total=75.0ms | ascontiguous=0.0ms downsample=68.1ms numpy_to_vtk=6.8ms | shape=(146, 259, 512) bytes=36.9MB downsampled=True
+01:01:24.185 [apply-main] comp=4 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=408ms hires=False capped=True
+01:01:24.292 [render] kind=interactive total=107.0ms | gpu=85.3ms | 
+01:01:24.455 [vtk-image] view=main total=74.5ms | ascontiguous=0.0ms downsample=70.0ms numpy_to_vtk=4.4ms | shape=(146, 259, 512) bytes=36.9MB downsampled=True
+01:01:24.532 [vtk-image] view=main total=75.8ms | ascontiguous=0.0ms downsample=71.6ms numpy_to_vtk=4.1ms | shape=(146, 259, 512) bytes=36.9MB downsampled=True
+01:01:24.536 [apply-main] comp=4 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=759ms hires=False capped=True
+01:01:24.537 [apply-main] comp=4 channels=1 total=0.9ms | gpu-upload[ch1]=0.9ms | end_to_end_latency=760ms hires=False capped=True
+01:01:24.536 [background-load] comp=4 gen=38 total=584.7ms |  | channels=1 stage=1/1 queue_wait=175ms chunk=chunk-cache[hits=16 misses=23 rate=41% evict=2 entries=5 size=769.2MB fetched=1.0GB]
+01:01:24.604 [render] kind=interactive total=66.9ms | gpu=51.1ms | 
+01:01:25.006 [vtk-image] view=main total=9.4ms | ascontiguous=0.0ms numpy_to_vtk=9.3ms | shape=(194, 344, 681) bytes=86.7MB downsampled=False
+01:01:25.070 [apply-main] comp=4 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=64ms hires=True capped=False
+01:01:25.189 [render] kind=interactive total=119.0ms | gpu=107.1ms | 
+01:01:26.358 [background-load] comp=3 gen=39 total=935.9ms |  | channels=1 stage=1/1 queue_wait=222ms chunk=chunk-cache[hits=22 misses=24 rate=48% evict=3 entries=5 size=648.7MB fetched=1.3GB]
+01:01:28.925 [vtk-image] view=main total=33.8ms | ascontiguous=0.0ms downsample=31.7ms numpy_to_vtk=2.0ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:01:28.996 [apply-main] comp=2 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=2794ms hires=False capped=True
+01:01:29.055 [render] kind=interactive total=59.1ms | gpu=42.9ms | 
+01:01:29.657 [vtk-image] view=main total=37.9ms | ascontiguous=0.0ms downsample=35.6ms numpy_to_vtk=2.2ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:01:29.726 [apply-main] comp=2 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=3525ms hires=False capped=True
+01:01:29.738 [vtk-image] view=main total=55.8ms | ascontiguous=0.0ms downsample=51.3ms numpy_to_vtk=4.3ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:01:29.769 [render] kind=interactive total=42.4ms | gpu=27.5ms | 
+01:01:29.896 [apply-main] comp=2 channels=1 total=0.5ms | gpu-upload[ch1]=0.3ms | end_to_end_latency=3694ms hires=False capped=True
+01:01:29.932 [render] kind=interactive total=35.9ms | gpu=24.3ms | 
+01:01:29.936 [vtk-image] view=main total=61.9ms | ascontiguous=0.0ms downsample=57.8ms numpy_to_vtk=3.4ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:01:30.053 [apply-main] comp=2 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=3851ms hires=False capped=True
+01:01:30.058 [vtk-image] view=main total=36.5ms | ascontiguous=0.0ms downsample=34.1ms numpy_to_vtk=2.4ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:01:30.083 [render] kind=interactive total=29.8ms | gpu=18.1ms | 
+01:01:30.097 [vtk-image] view=main total=39.1ms | ascontiguous=0.0ms downsample=35.9ms numpy_to_vtk=3.0ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:01:30.136 [background-load] comp=2 gen=42 total=3773.2ms |  | channels=1 stage=1/1 queue_wait=161ms chunk=chunk-cache[hits=25 misses=33 rate=43% evict=10 entries=3 size=909.8MB fetched=2.7GB]
+01:01:30.209 [apply-main] comp=2 channels=1 total=0.4ms | gpu-upload[ch1]=0.3ms | end_to_end_latency=4007ms hires=False capped=True
+01:01:30.210 [apply-main] comp=2 channels=1 total=1.0ms | gpu-upload[ch1]=1.0ms | end_to_end_latency=4008ms hires=False capped=True
+01:01:30.246 [render] kind=interactive total=36.1ms | gpu=25.1ms | 
+01:01:31.489 [vtk-image] view=main total=164.4ms | ascontiguous=0.0ms numpy_to_vtk=164.3ms | shape=(194, 1377, 2048) bytes=1.0GB downsampled=False
+01:01:31.600 [apply-main] comp=2 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=111ms hires=True capped=False
+01:01:31.855 [vtk-image] view=main total=137.2ms | ascontiguous=0.0ms numpy_to_vtk=137.0ms | shape=(194, 1377, 2048) bytes=1.0GB downsampled=False
+01:01:32.710 [render] kind=interactive total=1109.6ms | gpu=1097.3ms | 
+01:01:33.505 [background-load] comp=4 gen=46 total=388.9ms |  | channels=1 stage=1/1 queue_wait=306ms chunk=chunk-cache[hits=28 misses=43 rate=39% evict=12 entries=4 size=660.9MB fetched=2.8GB]
+01:01:33.724 [vtk-image] view=main total=89.6ms | ascontiguous=0.0ms downsample=84.5ms numpy_to_vtk=5.0ms | shape=(146, 259, 512) bytes=36.9MB downsampled=True
+01:01:33.787 [apply-main] comp=4 channels=1 total=0.2ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=531ms hires=False capped=True
+01:01:33.942 [vtk-image] view=main total=65.5ms | ascontiguous=0.0ms downsample=60.0ms numpy_to_vtk=5.3ms | shape=(146, 259, 512) bytes=36.9MB downsampled=True
+01:01:34.025 [render] kind=interactive total=237.1ms | gpu=212.9ms | 
+01:01:34.029 [vtk-image] view=main total=85.3ms | ascontiguous=0.0ms downsample=80.7ms numpy_to_vtk=4.4ms | shape=(146, 259, 512) bytes=36.9MB downsampled=True
+01:01:34.055 [background-load] comp=4 gen=47 total=487.2ms |  | channels=1 stage=1/1 queue_wait=312ms chunk=chunk-cache[hits=29 misses=46 rate=39% evict=12 entries=5 size=747.6MB fetched=2.9GB]
+01:01:34.273 [vtk-image] view=main total=0.8ms | ascontiguous=0.0ms numpy_to_vtk=0.8ms | shape=(194, 86, 170) bytes=5.4MB downsampled=False
+01:01:34.273 [background-load] comp=6 gen=49 total=1.9ms |  | channels=1 stage=1/1 queue_wait=193ms chunk=chunk-cache[hits=30 misses=46 rate=39% evict=12 entries=5 size=747.6MB fetched=2.9GB]
+01:01:34.381 [apply-main] comp=6 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=303ms hires=False capped=False
+01:01:34.429 [render] kind=interactive total=46.9ms | gpu=31.5ms | 
+01:01:34.711 [render] kind=still total=45.6ms | gpu=20.9ms | 
+01:01:36.479 [vtk-image] view=main total=83.4ms | ascontiguous=0.0ms downsample=77.3ms numpy_to_vtk=5.9ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:01:36.494 [background-load] comp=3 gen=62 total=785.0ms |  | channels=1 stage=1/2 queue_wait=257ms chunk=chunk-cache[hits=32 misses=48 rate=40% evict=12 entries=5 size=747.6MB fetched=2.9GB]
+01:01:37.373 [vtk-image] view=main total=78.4ms | ascontiguous=0.0ms downsample=74.0ms numpy_to_vtk=4.3ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:01:37.457 [apply-main] comp=3 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=1007ms hires=False capped=True
+01:01:37.559 [render] kind=interactive total=101.5ms | gpu=80.3ms | 
+01:01:37.729 [vtk-image] view=main total=75.7ms | ascontiguous=0.0ms downsample=71.2ms numpy_to_vtk=4.4ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:01:37.800 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=1350ms hires=False capped=True
+01:01:37.805 [vtk-image] view=main total=74.7ms | ascontiguous=0.0ms downsample=71.0ms numpy_to_vtk=3.6ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:01:37.812 [background-load] comp=3 gen=63 total=1150.8ms |  | channels=1 stage=1/2 queue_wait=211ms chunk=chunk-cache[hits=34 misses=51 rate=40% evict=12 entries=6 size=1008.3MB fetched=3.2GB]
+01:01:38.997 [render] kind=interactive total=1197.2ms | gpu=1174.4ms | 
+01:01:47.953 [background-load] comp=1 gen=63 total=10140.3ms |  | channels=1 stage=2/2 queue_wait=1362ms chunk=chunk-cache[hits=40 misses=57 rate=41% evict=12 entries=6 size=1008.3MB fetched=3.2GB]
+01:01:47.970 [vtk-image] view=main total=0.8ms | ascontiguous=0.0ms numpy_to_vtk=0.8ms | shape=(194, 86, 170) bytes=5.4MB downsampled=False
+01:01:47.970 [background-load] comp=6 gen=79 total=2.1ms |  | channels=1 stage=1/1 queue_wait=1470ms chunk=chunk-cache[hits=41 misses=57 rate=42% evict=12 entries=6 size=1008.3MB fetched=3.2GB]
+01:01:48.303 [vtk-image] view=main total=0.8ms | ascontiguous=0.0ms numpy_to_vtk=0.7ms | shape=(194, 86, 170) bytes=5.4MB downsampled=False
+01:01:48.304 [background-load] comp=6 gen=82 total=2.1ms |  | channels=1 stage=1/1 queue_wait=225ms chunk=chunk-cache[hits=42 misses=57 rate=42% evict=12 entries=6 size=1008.3MB fetched=3.2GB]
+01:01:48.409 [apply-main] comp=6 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=333ms hires=False capped=False
+01:01:48.451 [render] kind=interactive total=41.6ms | gpu=22.6ms | 
+01:01:48.738 [render] kind=still total=32.3ms | gpu=13.8ms | 
+01:02:10.189 [vtk-image] view=main total=91.5ms | ascontiguous=0.0ms downsample=86.6ms numpy_to_vtk=4.7ms | shape=(146, 259, 512) bytes=36.9MB downsampled=True
+01:02:10.192 [background-load] comp=4 gen=86 total=187.3ms |  | channels=1 stage=1/1 queue_wait=194ms chunk=chunk-cache[hits=44 misses=58 rate=43% evict=12 entries=6 size=1008.3MB fetched=3.2GB]
+01:02:10.225 [apply-main] comp=4 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=414ms hires=False capped=True
+01:02:10.331 [render] kind=interactive total=105.4ms | gpu=84.6ms | 
+01:02:10.658 [vtk-image] view=main total=9.8ms | ascontiguous=0.0ms numpy_to_vtk=9.7ms | shape=(194, 344, 681) bytes=86.7MB downsampled=False
+01:02:10.677 [apply-main] comp=4 channels=1 total=0.4ms | gpu-upload[ch1]=0.3ms | end_to_end_latency=19ms hires=True capped=False
+01:02:10.840 [render] kind=interactive total=162.4ms | gpu=148.0ms | 
+01:02:11.158 [render] kind=still total=91.9ms | gpu=52.4ms | 
+01:02:14.935 [vtk-image] view=main total=41.9ms | ascontiguous=0.0ms downsample=39.3ms numpy_to_vtk=2.4ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:02:15.004 [apply-main] comp=2 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=3384ms hires=False capped=True
+01:02:15.068 [render] kind=interactive total=63.6ms | gpu=46.6ms | 
+01:02:15.401 [vtk-image] view=main total=39.3ms | ascontiguous=0.0ms downsample=36.9ms numpy_to_vtk=2.3ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:02:15.426 [apply-main] comp=2 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=3806ms hires=False capped=True
+01:02:15.442 [vtk-image] view=main total=36.4ms | ascontiguous=0.0ms downsample=33.8ms numpy_to_vtk=2.5ms | shape=(48, 344, 512) bytes=16.1MB downsampled=True
+01:02:15.472 [background-load] comp=2 gen=90 total=3684.5ms |  | channels=1 stage=1/1 queue_wait=168ms chunk=chunk-cache[hits=52 misses=62 rate=46% evict=16 entries=3 size=655.5MB fetched=3.5GB]
+01:02:15.483 [render] kind=interactive total=57.0ms | gpu=46.6ms | 
+01:02:15.599 [apply-main] comp=2 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=3979ms hires=False capped=True
+01:02:15.633 [render] kind=interactive total=34.1ms | gpu=23.6ms | 
+01:02:17.112 [vtk-image] view=main total=121.1ms | ascontiguous=0.0ms numpy_to_vtk=121.1ms | shape=(194, 1377, 2048) bytes=1.0GB downsampled=False
+01:02:17.227 [apply-main] comp=2 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=115ms hires=True capped=False
+01:02:17.658 [vtk-image] view=main total=114.0ms | ascontiguous=0.0ms numpy_to_vtk=113.9ms | shape=(194, 1377, 2048) bytes=1.0GB downsampled=False
+01:02:18.435 [render] kind=interactive total=1207.3ms | gpu=1191.1ms | 
+01:02:18.558 [apply-main] comp=2 channels=1 total=0.1ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=901ms hires=True capped=False
+01:02:19.193 [render] kind=interactive total=634.6ms | gpu=634.5ms | 
+01:02:23.691 [vtk-image] view=main total=36.5ms | ascontiguous=0.0ms downsample=33.5ms numpy_to_vtk=2.9ms | shape=(48, 432, 512) bytes=20.2MB downsampled=True
+01:02:23.801 [apply-main] comp=1 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=4574ms hires=False capped=True
+01:02:24.013 [render] kind=interactive total=212.0ms | gpu=211.9ms | 
+01:02:24.865 [background-load] comp=1 gen=91 total=5455.5ms |  | channels=1 stage=1/1 queue_wait=182ms chunk=chunk-cache[hits=56 misses=84 rate=40% evict=22 entries=4 size=923.0MB fetched=4.8GB]
+01:02:25.607 [background-load] comp=2 gen=94 total=672.0ms |  | channels=1 stage=1/1 queue_wait=898ms chunk=chunk-cache[hits=56 misses=93 rate=38% evict=25 entries=4 size=928.4MB fetched=5.5GB]
+01:02:25.961 [vtk-image] view=main total=66.3ms | ascontiguous=0.0ms downsample=62.7ms numpy_to_vtk=3.4ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:02:26.048 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=721ms hires=False capped=True
+01:02:26.144 [render] kind=interactive total=95.2ms | gpu=74.7ms | 
+01:02:26.297 [vtk-image] view=main total=60.0ms | ascontiguous=0.0ms downsample=56.3ms numpy_to_vtk=3.6ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:02:26.350 [vtk-image] view=main total=51.9ms | ascontiguous=0.0ms downsample=48.3ms numpy_to_vtk=3.5ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:02:26.356 [background-load] comp=3 gen=96 total=668.1ms |  | channels=1 stage=1/1 queue_wait=362ms chunk=chunk-cache[hits=57 misses=97 rate=37% evict=26 entries=4 size=921.6MB fetched=5.7GB]
+01:02:26.374 [apply-main] comp=3 channels=1 total=0.4ms | gpu-upload[ch1]=0.3ms | end_to_end_latency=1047ms hires=False capped=True
+01:02:26.376 [apply-main] comp=3 channels=1 total=1.7ms | gpu-upload[ch1]=1.6ms | end_to_end_latency=1049ms hires=False capped=True
+01:02:26.431 [render] kind=interactive total=55.7ms | gpu=41.7ms | 
+01:02:26.891 [vtk-image] view=main total=26.5ms | ascontiguous=0.0ms numpy_to_vtk=26.4ms | shape=(194, 688, 1024) bytes=260.7MB downsampled=False
+01:02:26.904 [apply-main] comp=3 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=12ms hires=True capped=False
+01:02:27.159 [render] kind=interactive total=255.6ms | gpu=244.4ms | 
+01:02:27.479 [render] kind=still total=96.8ms | gpu=56.5ms | 
+01:02:29.103 [vtk-image] view=main total=92.0ms | ascontiguous=0.0ms downsample=63.9ms numpy_to_vtk=3.3ms | shape=(73, 258, 512) bytes=18.4MB downsampled=True
+01:02:29.229 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=699ms hires=False capped=True
+01:02:29.278 [render] kind=interactive total=48.8ms | gpu=37.8ms | 
+01:02:29.620 [vtk-image] view=main total=49.6ms | ascontiguous=0.0ms downsample=46.5ms numpy_to_vtk=3.0ms | shape=(73, 258, 512) bytes=18.4MB downsampled=True
+01:02:29.648 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=1119ms hires=False capped=True
+01:02:29.662 [vtk-image] view=main total=41.5ms | ascontiguous=0.0ms downsample=35.6ms numpy_to_vtk=5.7ms | shape=(73, 258, 512) bytes=18.4MB downsampled=True
+01:02:29.673 [background-load] comp=3 gen=97 total=898.8ms |  | channels=1 stage=1/1 queue_wait=245ms chunk=chunk-cache[hits=61 misses=103 rate=37% evict=26 entries=5 size=1007.9MB fetched=5.8GB]
+01:02:29.692 [render] kind=interactive total=44.0ms | gpu=32.5ms | 
+01:02:29.803 [apply-main] comp=3 channels=1 total=0.1ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=1274ms hires=False capped=True
+01:02:29.827 [render] kind=interactive total=23.3ms | gpu=23.2ms | 
+01:02:30.427 [vtk-image] view=main total=69.9ms | ascontiguous=0.0ms numpy_to_vtk=69.8ms | shape=(194, 688, 1363) bytes=347.0MB downsampled=False
+01:02:30.537 [vtk-image] view=main total=81.0ms | ascontiguous=0.0ms numpy_to_vtk=80.9ms | shape=(194, 688, 1363) bytes=347.0MB downsampled=False
+01:02:30.538 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=110ms hires=True capped=False
+01:02:30.559 [apply-main] comp=3 channels=1 total=12.4ms | gpu-upload[ch1]=12.2ms | end_to_end_latency=21ms hires=True capped=False
+01:02:30.962 [render] kind=interactive total=402.8ms | gpu=380.6ms | 
+01:02:31.335 [vtk-image] view=main total=2.8ms | ascontiguous=0.0ms numpy_to_vtk=2.7ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:02:31.413 [apply-main] comp=5 channels=1 total=0.3ms | gpu-upload[ch1]=0.2ms | end_to_end_latency=267ms hires=False capped=False
+01:02:31.434 [vtk-image] view=main total=2.9ms | ascontiguous=0.0ms numpy_to_vtk=2.8ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:02:31.437 [vtk-image] view=main total=2.6ms | ascontiguous=0.0ms numpy_to_vtk=2.5ms | shape=(194, 172, 340) bytes=21.6MB downsampled=False
+01:02:31.440 [background-load] comp=5 gen=102 total=136.6ms |  | channels=1 stage=1/1 queue_wait=157ms chunk=chunk-cache[hits=65 misses=107 rate=38% evict=27 entries=5 size=762.0MB fetched=5.8GB]
+01:02:31.495 [render] kind=interactive total=82.2ms | gpu=62.5ms | 
+01:02:31.633 [apply-main] comp=5 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=487ms hires=False capped=False
+01:02:31.634 [apply-main] comp=5 channels=1 total=1.0ms | gpu-upload[ch1]=1.0ms | end_to_end_latency=488ms hires=False capped=False
+01:02:31.676 [render] kind=interactive total=42.0ms | gpu=30.4ms | 
+01:02:31.980 [render] kind=still total=79.8ms | gpu=29.1ms | 
+01:02:33.702 [render] kind=still total=55.6ms | gpu=28.4ms | 
+01:02:34.732 [vtk-image] view=main total=66.2ms | ascontiguous=0.0ms downsample=61.1ms numpy_to_vtk=4.9ms | shape=(97, 344, 512) bytes=32.6MB downsampled=True
+01:02:34.778 [background-load] comp=3 gen=108 total=632.6ms |  | channels=1 stage=1/1 queue_wait=253ms chunk=chunk-cache[hits=68 misses=108 rate=39% evict=27 entries=5 size=762.0MB fetched=5.8GB]
+01:02:34.959 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=1066ms hires=False capped=True
+01:02:35.027 [render] kind=interactive total=68.7ms | gpu=55.9ms | 
+01:02:35.848 [vtk-image] view=main total=47.1ms | ascontiguous=0.0ms numpy_to_vtk=47.1ms | shape=(194, 688, 1024) bytes=260.7MB downsampled=False
+01:02:35.855 [apply-main] comp=3 channels=1 total=0.2ms | gpu-upload[ch1]=0.1ms | end_to_end_latency=7ms hires=True capped=False
+01:02:36.201 [render] kind=interactive total=345.3ms | gpu=331.5ms | 
+01:02:36.545 [render] kind=still total=108.3ms | gpu=64.3ms | 
+01:02:39.537 [load] comp=3 ch=0 roi=(0:1024,0:688) total=337.0ms | assemble=336.9ms | src=CHUNK bytes=260.7MB shape=(194, 688, 1024) chunk=chunk-cache[hits=71 misses=110 rate=39% evict=27 entries=6 size=1022.7MB fetched=6.1GB] disk=disk-cache[hits=5844 misses(remote)=618 rate=90% evict=0 size=536.7MB/8.0GB keys=582]
+01:02:39.573 [vtk-image] view=main total=36.3ms | ascontiguous=0.0ms numpy_to_vtk=36.2ms | shape=(194, 688, 1024) bytes=260.7MB downsampled=False
