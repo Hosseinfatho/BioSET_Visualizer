@@ -143,7 +143,13 @@ class VolumeStreamer:
         # Concurrent per-chunk fetch (tiles); separate from _channel_executor
         # (channels) so a channel task never waits on the pool it occupies.
         self._chunk_pool = ThreadPoolExecutor(
-            max_workers=32, thread_name_prefix="chunk_fetch")
+            max_workers=12, thread_name_prefix="chunk_fetch")
+
+        # Per-channel full-volume coarsest texture, shown instantly while the user
+        # interacts (never empty, cheap to render) and replaced by the sharp ROI
+        # texture once they settle. _showing_base = channels currently on the base.
+        self._base_images: Dict[int, "vtkImageData"] = {}
+        self._showing_base: set[int] = set()
         # Total bytes fetched from the store (decoded), for profiling. The TF is
         # built once from real activation data and reused per frame (see
         # _apply_loaded_data_on_main_thread), so a zero/blurry seed frame renders
@@ -194,6 +200,8 @@ class VolumeStreamer:
         self._chunk_cache.clear()
         self._lowres_cache.clear()
         self._page_table.clear()
+        self._base_images.clear()
+        self._showing_base.clear()
         with self._grids_lock:
             self._grids.clear()
         self._active_channels.clear()
@@ -358,21 +366,23 @@ class VolumeStreamer:
         if simple:
             self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
         else:
-            # Coarse-first: paint the new channel instantly at the coarsest LOD
-            # (served from the pinned/warmed low-res cache), which also builds its
-            # transfer function, then refine to the current viewport asynchronously
-            # (progressive, centre-out) alongside the other channels. This stops a
-            # deep-zoom channel add from blocking on a full fine-resolution fetch.
+            # Paint the new channel instantly at the FULL-volume coarsest LOD
+            # (served from the pinned/warmed low-res cache = no fine fetch on the
+            # main thread), which also builds its transfer function and covers the
+            # whole volume (never empty). Then refine to the current viewport
+            # asynchronously (progressive, centre-out) alongside the others.
             coarse = self.cfg.max_component
-            if comp >= coarse:
-                self._load_and_display_channel(channel_id, comp, roi, reset_camera=False)
-            else:
-                roi_coarse = self._roi_at_component(roi, comp, coarse)
-                self._load_and_display_channel(channel_id, coarse, roi_coarse, reset_camera=False)
+            _, ydim, xdim = self._dims_for_component(coarse)
+            self._load_and_display_channel(
+                channel_id, coarse, ROI(0, xdim, 0, ydim), reset_camera=False)
+            if comp < coarse:
                 self._set_latest_request(comp, roi)
 
-        # Warm this channel's coarsest LOD in the background so its blurry base is
-        # always instantly available (zoom-out to edges, future re-adds).
+        # The channel is showing a full-volume coarse texture; cache it as the
+        # interaction "base" and warm the low-res cache so it's instantly
+        # available while moving / on re-add.
+        self._showing_base.add(channel_id)
+        self._ensure_base_image(channel_id)
         VolumeStreamer._executor.submit(self._prefetch_lowres, channel_id)
 
     def deactivate_channel(self, channel_id: int):
@@ -403,10 +413,14 @@ class VolumeStreamer:
 
         if channel_id in self.state:
             del self.state[channel_id]
-        
+
         if channel_id in self._channel_tfs:
             del self._channel_tfs[channel_id]
-        
+
+        self._base_images.pop(channel_id, None)
+        self._showing_base.discard(channel_id)
+        self._capped_channels.discard(channel_id)
+
         self._render()
 
     @staticmethod
@@ -1115,6 +1129,77 @@ class VolumeStreamer:
         self.mappers[ch] = mapper
         return vol, mapper
 
+    # ------------------------------------------------------------------
+    # Full-volume coarse "base" texture: shown instantly while interacting so
+    # the volume is never empty and motion stays cheap; the sharp ROI texture
+    # replaces it once the user settles.
+    # ------------------------------------------------------------------
+    def _ensure_base_image(self, ch: int) -> Optional["vtkImageData"]:
+        """Build (once) the whole-volume coarsest-LOD texture for a channel.
+
+        Served from the pinned low-res cache, so this is cheap; it also warms
+        that cache for the seed. Returns None if the channel has no data yet.
+        """
+        img = self._base_images.get(ch)
+        if img is not None:
+            return img
+        comp = self.cfg.max_component
+        try:
+            _, ydim, xdim = self._dims_for_component(comp)
+            arr = self._load_channel_data(comp, ch, ROI(0, xdim, 0, ydim))
+            if arr.size == 0 or any(s <= 0 for s in arr.shape):
+                return None
+            spacing = self._spacing_for_component(comp)
+            img = self._create_vtk_image(arr, spacing, (0.0, 0.0, 0.0))
+        except Exception as e:
+            print(f"[stream] base image build failed ch={ch}: {e}")
+            return None
+        self._base_images[ch] = img
+        return img
+
+    def _display_base_only(self, ch: int) -> bool:
+        """Put the full-volume coarse base texture on a channel's mapper (main
+        thread). Used for instant, non-blocking channel activation and as the
+        while-interacting fallback. Returns True if the base was shown."""
+        img = self._ensure_base_image(ch)
+        if img is None:
+            return False
+        vol, mapper = self._get_or_create_volume(ch)
+        mapper.SetInputData(img)
+        mapper.Modified()
+        if ch in self._channel_tfs:
+            color_tf, opacity_tf = self._channel_tfs[ch]
+            prop = vol.GetProperty()
+            prop.SetColor(color_tf)
+            prop.SetScalarOpacity(opacity_tf)
+        if not self.renderer.HasViewProp(vol):
+            self.renderer.AddVolume(vol)
+        self._showing_base.add(ch)
+        return True
+
+    def on_interaction_start(self) -> None:
+        """Called on StartInteractionEvent (main thread). Swap every active
+        channel that's showing a fine ROI texture to its full-volume coarse base
+        so motion is cheap and never reveals empty space. Channels already on the
+        base are left untouched (no redundant upload)."""
+        swapped = False
+        for ch in list(self._active_channels):
+            if ch in self._showing_base:
+                continue
+            base = self._base_images.get(ch)
+            if base is None or ch not in self.mappers:
+                continue
+            self.mappers[ch].SetInputData(base)
+            self.mappers[ch].Modified()
+            self._showing_base.add(ch)
+            swapped = True
+        if swapped:
+            try:
+                self.renderer.ResetCameraClippingRange()
+            except Exception:
+                pass
+            self._render_interactive()
+
     def _get_or_create_nov_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
         """Get or create volume/mapper for the NOV popup renderer."""
         if self.nov_renderer is None:
@@ -1649,6 +1734,10 @@ class VolumeStreamer:
 
             self.state[ch] = ChannelState(component=component, roi=roi)
 
+            # A sharp ROI texture is now on this channel: it's no longer showing
+            # the coarse full-volume base.
+            self._showing_base.discard(ch)
+
             # Track which channels are showing a downsized (interactive) texture
             # so the idle loop knows what to upgrade to full resolution.
             if loaded.hires or not loaded.was_capped:
@@ -1771,7 +1860,10 @@ class VolumeStreamer:
                 # (comp is the coarsest level) we wait for the final full frame.
                 if complete:
                     now = time.time()
-                    if now - last >= 0.05:    # throttle re-assembly ~20 Hz
+                    # Motion already shows the coarse base, so the fine texture
+                    # only needs to sharpen as it settles: emit sparingly (~7 Hz)
+                    # to keep main-thread GPU uploads down.
+                    if now - last >= 0.15:
                         self._emit(request, comp, ch, snapped, out)
                         last = now
             if not self._is_superseded(request):
@@ -1898,10 +1990,12 @@ class VolumeStreamer:
     def check_and_apply_loaded_data(self):
         """Main thread: drain finished loads and swap them in.
 
-        Frames older than the newest generation are dropped so we never flash a
-        viewport the user has already moved away from.
+        Frames older than the newest generation are dropped (never flash a stale
+        viewport). Frames are also COALESCED to the newest one per channel, so a
+        burst of progressive intermediates costs one GPU upload per channel per
+        tick instead of N — the single-thread server can't afford N big uploads.
         """
-        applied_any = False
+        latest: Dict[int, LoadedData] = {}
         while True:
             try:
                 loaded = self._loaded_data_queue.get_nowait()
@@ -1911,13 +2005,21 @@ class VolumeStreamer:
                 stale = loaded.gen < self._max_gen
             if stale:
                 continue
-            self._apply_loaded_data_on_main_thread(loaded)
-            applied_any = True
+            # Queue is FIFO, so later frames are newer/higher-quality (more tiles,
+            # or the idle hires upgrade); last write per channel wins.
+            for ch, img in loaded.channel_images.items():
+                latest[ch] = LoadedData(
+                    component=loaded.component, roi=loaded.roi,
+                    channel_images={ch: img}, timestamp=loaded.timestamp,
+                    gen=loaded.gen, was_capped=loaded.was_capped, hires=loaded.hires)
+        if not latest:
+            return False
+        for ld in latest.values():
+            self._apply_loaded_data_on_main_thread(ld)
         # One render for the whole batch of swaps (keeps the event loop free).
-        if applied_any:
-            self.renderer.ResetCameraClippingRange()
-            self._render_interactive()
-        return applied_any
+        self.renderer.ResetCameraClippingRange()
+        self._render_interactive()
+        return True
 
     def on_interaction_end(self) -> int:
         """
