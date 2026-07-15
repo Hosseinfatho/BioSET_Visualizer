@@ -59,6 +59,8 @@ class LoadedData:
     channel_images: Dict[int, "vtkImageData"]
     timestamp: float
     gen: int
+    was_capped: bool = False   # this frame's texture was downsized for speed
+    hires: bool = False        # this frame is the idle full-resolution upgrade
 
 
 class VolumeStreamer:
@@ -111,6 +113,12 @@ class VolumeStreamer:
         # Idle-refine: after the user stops, re-render once at full quality.
         self._needs_still_render = False
         self._idle_ticks = 0
+
+        # Interactive resolution cap: while loading/interacting we upload a
+        # small (fast) texture; once idle we rebuild full-res from cached numpy
+        # and swap it in. _capped_channels = channels currently shown downsized.
+        self._capped_channels: set[int] = set()
+        self._hires_inflight = False
 
         self._loaded_data_queue: queue.Queue[LoadedData] = queue.Queue()
 
@@ -1094,6 +1102,10 @@ class VolumeStreamer:
 
     # OpenGL 3D texture limit (avoid "Invalid texture dimensions" / MAX_3D_TEXTURE_SIZE 2048)
     MAX_TEXTURE_DIM = 2048
+    # While interacting we cap the texture much smaller so the GPU upload+render
+    # (the only main-thread cost we can't move off-thread) is fast; full res is
+    # rebuilt from cached numpy once the user goes idle (see tick_idle).
+    INTERACTIVE_MAX_DIM = 512
 
     def _create_vtk_image(
         self,
@@ -1101,8 +1113,11 @@ class VolumeStreamer:
         spacing: SpacingConfig,
         origin_xyz: Tuple[float, float, float],
             for_nov_view: bool = False,
+            max_dim: Optional[int] = None,
     ) -> vtkImageData:
-        """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only)."""
+        """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only).
+        max_dim caps the largest texture axis (defaults to the OpenGL limit); pass a smaller value for a fast interactive texture."""
+        cap = int(max_dim) if max_dim is not None else self.MAX_TEXTURE_DIM
         timer = StageTimer("vtk-image", view=("nov" if for_nov_view else "main"))
         downsampled = False
         with timer.stage("ascontiguous"):
@@ -1115,10 +1130,10 @@ class VolumeStreamer:
             )
         sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
 
-        if max(x, y, z) > self.MAX_TEXTURE_DIM:
+        if max(x, y, z) > cap:
             downsampled = True
             with timer.stage("downsample"):
-                scale = self.MAX_TEXTURE_DIM / max(x, y, z)
+                scale = cap / max(x, y, z)
                 oz, oy, ox = z, y, x
                 nz = max(1, int(round(z * scale)))
                 ny = max(1, int(round(y * scale)))
@@ -1133,7 +1148,7 @@ class VolumeStreamer:
                     sy=sy * (oy / ny) if ny else sy,
                     sz=sz * (oz / nz) if nz else sz,
                 )
-            print(f"[stream] Downsampled volume to ({z},{y},{x}) for OpenGL 2048 limit")
+            print(f"[stream] Downsampled volume to ({z},{y},{x}) for texture cap {cap}")
 
         # Apply NOV lens clip only for NOV popup view (main view always shows full volume)
         clip = getattr(self, "_nov_lens_clip", None)
@@ -1353,34 +1368,41 @@ class VolumeStreamer:
 
         Flags that a full-quality 'still' render is owed once the user is idle.
         """
+        timer = StageTimer("render", kind="interactive")
         try:
             self.render_window.SetDesiredUpdateRate(self.INTERACTIVE_UPDATE_RATE)
         except Exception:
             pass
-        self.render_window.Render()
+        with timer.stage("gpu"):
+            self.render_window.Render()
         if self.render_callback is not None:
             self.render_callback()
         self._needs_still_render = True
         self._idle_ticks = 0
+        timer.log()
 
     def _render_still(self):
         """Full-quality render. Called from the poll loop after the user goes idle."""
+        timer = StageTimer("render", kind="still")
         try:
             self.render_window.SetDesiredUpdateRate(self.STILL_UPDATE_RATE)
         except Exception:
             pass
-        self.render_window.Render()
+        with timer.stage("gpu"):
+            self.render_window.Render()
         if self.render_callback is not None:
             self.render_callback()
         self._needs_still_render = False
+        timer.log()
 
     def tick_idle(self) -> bool:
-        """Main-thread poll-loop hook: re-render at full quality once idle.
+        """Main-thread poll-loop hook: once the user goes idle, (1) upgrade any
+        interactive (downsized) textures to full resolution, then (2) re-render
+        at full quality.
 
-        Returns True if a still render was performed (so the caller can push
-        the frame to the client).
+        Returns True if anything was pushed to the client.
         """
-        if not self._needs_still_render:
+        if not self._needs_still_render and not self._capped_channels:
             return False
         # Don't refine while work is pending or a new viewport is queued.
         with self._req_lock:
@@ -1391,8 +1413,62 @@ class VolumeStreamer:
         self._idle_ticks += 1
         if self._idle_ticks < 3:  # ~300ms of quiet at the 100ms poll cadence
             return False
-        self._render_still()
-        return True
+
+        # Step 1: full-resolution upgrade. Build off the main thread from cached
+        # numpy; the resulting hires frames are applied by check_and_apply, which
+        # clears _capped_channels and re-arms the still render.
+        if self._capped_channels and not self._hires_inflight:
+            self._hires_inflight = True
+            with self._req_lock:
+                gen = self._max_gen
+            VolumeStreamer._executor.submit(self._build_hires_upgrade, gen)
+            self._idle_ticks = 0
+            return False
+        if self._capped_channels:
+            return False  # upgrade in flight; wait for it before the still render
+
+        # Step 2: full-quality render once textures are full-res.
+        if self._needs_still_render:
+            self._render_still()
+            return True
+        return False
+
+    def _build_hires_upgrade(self, gen: int) -> None:
+        """Worker thread: rebuild full-resolution vtkImageData for the channels
+        currently shown downsized, from the (full-res) cached numpy, and enqueue
+        them. Skipped frames stay capped and get retried on the next idle tick.
+        """
+        try:
+            for ch in list(self._capped_channels):
+                if self._is_superseded_gen(gen):
+                    break
+                st = self.state.get(int(ch))
+                if st is None:
+                    continue
+                arr = self._get_cached_array(st.component, ch, st.roi)
+                if arr is None:
+                    continue  # numpy evicted; leave capped, retry later
+                spacing = self._spacing_for_component(st.component)
+                origin_xyz = (st.roi.x0 * spacing.sx, st.roi.y0 * spacing.sy, 0.0)
+                try:
+                    img = self._create_vtk_image(arr, spacing, origin_xyz)  # full res
+                except ValueError:
+                    continue
+                self._loaded_data_queue.put(LoadedData(
+                    component=st.component, roi=st.roi,
+                    channel_images={int(ch): img},
+                    timestamp=time.time(), gen=gen, hires=True,
+                ))
+        except Exception as e:
+            import traceback
+            print(f"[hires] upgrade error: {e}")
+            traceback.print_exc()
+        finally:
+            self._hires_inflight = False
+
+    def _is_superseded_gen(self, gen: int) -> bool:
+        with self._req_lock:
+            return self._max_gen > gen
 
     def _apply_loaded_data_on_main_thread(self, loaded: LoadedData):
         """
@@ -1432,11 +1508,19 @@ class VolumeStreamer:
 
             self.state[ch] = ChannelState(component=component, roi=roi)
 
+            # Track which channels are showing a downsized (interactive) texture
+            # so the idle loop knows what to upgrade to full resolution.
+            if loaded.hires or not loaded.was_capped:
+                self._capped_channels.discard(ch)
+            else:
+                self._capped_channels.add(ch)
+
         self._last_component = component
 
         # Latency from when the user finished interacting to this swap.
         latency = time.time() - loaded.timestamp
-        timer.log(end_to_end_latency=f"{latency * 1000:.0f}ms")
+        timer.log(end_to_end_latency=f"{latency * 1000:.0f}ms",
+                  hires=loaded.hires, capped=loaded.was_capped)
 
     # ------------------------------------------------------------------
     # Latest-wins async loader
@@ -1466,27 +1550,35 @@ class VolumeStreamer:
         )
         return ROI(d["x0"], d["x1"], d["y0"], d["y1"])
 
-    def _load_one_image(self, component: int, ch: int, roi: ROI):
-        """Worker-thread: fetch numpy and build vtkImageData (no GL needed)."""
+    def _load_one_image(self, component: int, ch: int, roi: ROI, max_dim: Optional[int] = None):
+        """Worker-thread: fetch numpy and build vtkImageData (no GL needed).
+        Returns (img, needs_hires_upgrade). needs_hires_upgrade is True when the
+        texture was capped below what a full-res build would produce, so the idle
+        loop should later re-upload at full resolution."""
         np_arr = self._load_channel_data(component, ch, roi)
         if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
-            return None
+            return None, False
+        # A full build would cap at MAX_TEXTURE_DIM; if the data already fits in
+        # `max_dim` there's nothing to upgrade later.
+        needs_upgrade = (max_dim is not None) and (max(np_arr.shape) > max_dim)
         spacing = self._spacing_for_component(component)
         origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
         try:
-            return self._create_vtk_image(np_arr, spacing, origin_xyz)
+            return self._create_vtk_image(np_arr, spacing, origin_xyz, max_dim=max_dim), needs_upgrade
         except ValueError:
-            return None
+            return None, False
 
-    def _load_one_image_task(self, request: LoadRequest, component: int, ch: int, roi: ROI):
+    def _load_one_image_task(self, request: LoadRequest, component: int, ch: int, roi: ROI,
+                             max_dim: Optional[int] = None):
         """Channel-pool task: skip if already superseded (avoids launching new
         remote fetches for a viewport the user has already left), else load."""
         if self._is_superseded(request):
-            return ch, None
+            return ch, None, False
         try:
-            return ch, self._load_one_image(component, ch, roi)
+            img, needs_upgrade = self._load_one_image(component, ch, roi, max_dim=max_dim)
+            return ch, img, needs_upgrade
         except Exception:
-            return ch, None
+            return ch, None, False
 
     def _background_load(self, request: LoadRequest):
         """Worker thread: load coarse->fine for the request, building VTK images
@@ -1524,7 +1616,8 @@ class VolumeStreamer:
                 # channel paints immediately instead of waiting for a slow one.
                 futures = {
                     self._channel_executor.submit(
-                        self._load_one_image_task, request, stage_comp, ch, stage_roi): ch
+                        self._load_one_image_task, request, stage_comp, ch, stage_roi,
+                        self.INTERACTIVE_MAX_DIM): ch
                     for ch in channels
                 }
                 done = 0
@@ -1534,7 +1627,7 @@ class VolumeStreamer:
                     # own; their now-stale frames are dropped on drain.
                     if self._is_superseded(request):
                         break
-                    ch, img = fut.result()
+                    ch, img, was_capped = fut.result()
                     if img is None:
                         continue
                     self._loaded_data_queue.put(LoadedData(
@@ -1543,6 +1636,7 @@ class VolumeStreamer:
                         channel_images={ch: img},
                         timestamp=request.timestamp,
                         gen=request.gen,
+                        was_capped=was_capped,
                     ))
                     done += 1
 
