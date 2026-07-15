@@ -26,6 +26,7 @@ dependencies = [
   "gradio-client",
   "fpdf2",
   "scipy",
+  "globus-sdk",
 ]
 
 [project.scripts]

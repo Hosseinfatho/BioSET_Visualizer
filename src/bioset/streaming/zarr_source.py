@@ -35,16 +35,37 @@ class ZarrMultiscaleSource:
     cache_enabled: bool
     cache_dir: Path
     cache_size_bytes: int
+    # Globus HTTPS streaming config (only used when `url` is a Globus URL).
+    globus_client_id: Optional[str] = None
+    globus_collection_id: Optional[str] = None
+    globus_https_base: Optional[str] = None
+    globus_token_file: str = "~/.bioset/globus_token.json"
 
     def __post_init__(self):
-        root = parse_url(self.url, mode="r")
-        source_store = root.store
+        from .globus_store import is_globus_url
+
+        # The Globus HTTPS interface can't list directories, so its stores are
+        # consolidated and must be opened with open_consolidated (below). Other
+        # sources (S3 / local) keep the ome-zarr parse_url path unchanged.
+        self._consolidated = is_globus_url(self.url)
+        if self._consolidated:
+            from .globus_store import (GlobusHTTPStore, make_globus_authorizer,
+                                       resolve_globus_url)
+            base = resolve_globus_url(self.url, self.globus_https_base)
+            print(f"[zarr_source] Globus HTTPS store: {base}")
+            authorizer = make_globus_authorizer(
+                self.globus_client_id, self.globus_collection_id,
+                self.globus_token_file)
+            source_store = GlobusHTTPStore(base, authorizer)
+        else:
+            root = parse_url(self.url, mode="r")
+            source_store = root.store
 
         if self.cache_enabled:
             cache_subdir = _url_to_cache_subdir(self.url)
             url_specific_cache_dir = self.cache_dir / cache_subdir
             print(f"[zarr_source] Using cache dir: {url_specific_cache_dir}")
-            
+
             self.store = wrap_store_with_cache(
                 source_store,
                 cache_dir=url_specific_cache_dir,
@@ -55,11 +76,22 @@ class ZarrMultiscaleSource:
 
         self._arrays: Dict[int, da.Array] = {}
         self._raw_arrays: Dict[int, Any] = {}
+        self._croot = None   # cached consolidated root group (Globus)
+
+    def _consolidated_root(self):
+        """Consolidated root group (opened once) for a non-listing store."""
+        if self._croot is None:
+            import zarr
+            self._croot = zarr.open_consolidated(self.store, mode="r")
+        return self._croot
 
     def array(self, component: int) -> da.Array:
         if component not in self._arrays:
-            self._arrays[component] = da.from_zarr(
-                self.store, component=str(component))
+            if self._consolidated:
+                self._arrays[component] = da.from_zarr(self.raw_array(component))
+            else:
+                self._arrays[component] = da.from_zarr(
+                    self.store, component=str(component))
         return self._arrays[component]
 
     def raw_array(self, component: int):
@@ -68,12 +100,17 @@ class ZarrMultiscaleSource:
         Opened through the *cached* ``self.store`` so chunk reads still hit the
         on-disk CacheStore (the decoded-chunk in-memory cache sits above this).
         The handle is memoized: reopening it per chunk would re-read ``.zarray``,
-        one wasted round-trip per chunk.
+        one wasted round-trip per chunk. Globus stores are opened consolidated
+        (no directory listing over HTTPS).
         """
         a = self._raw_arrays.get(component)
         if a is None:
             import zarr
-            a = zarr.open_group(self.store, mode="r")[str(component)]
+            if self._consolidated:
+                root = self._consolidated_root()
+            else:
+                root = zarr.open_group(self.store, mode="r")
+            a = root[str(component)]
             self._raw_arrays[component] = a
         return a
 

@@ -94,6 +94,10 @@ class VolumeStreamer:
             cache_enabled=cfg.cache_enabled,
             cache_dir=cfg.cache_dir,
             cache_size_bytes=max_bytes,
+            globus_client_id=getattr(cfg, "globus_client_id", None),
+            globus_collection_id=getattr(cfg, "globus_collection_id", None),
+            globus_https_base=getattr(cfg, "globus_https_base", None),
+            globus_token_file=getattr(cfg, "globus_token_file", "~/.bioset/globus_token.json"),
         )
 
         self.volumes: Dict[int, vtkVolume] = {}
@@ -196,12 +200,17 @@ class VolumeStreamer:
             cache_enabled=self.cfg.cache_enabled,
             cache_dir=self.cfg.cache_dir,
             cache_size_bytes=max_bytes,
+            globus_client_id=getattr(self.cfg, "globus_client_id", None),
+            globus_collection_id=getattr(self.cfg, "globus_collection_id", None),
+            globus_https_base=getattr(self.cfg, "globus_https_base", None),
+            globus_token_file=getattr(self.cfg, "globus_token_file", "~/.bioset/globus_token.json"),
         )
         self._chunk_cache.clear()
         self._lowres_cache.clear()
         self._page_table.clear()
         self._base_images.clear()
         self._showing_base.clear()
+        self._level0_dims = None
         with self._grids_lock:
             self._grids.clear()
         self._active_channels.clear()
@@ -1042,11 +1051,29 @@ class VolumeStreamer:
 
     def _spacing_for_component(self, component: int) -> SpacingConfig:
         scale = float(2 ** component)
+        # z spacing depends on the pyramid: xy-only stores (S3) keep z fixed;
+        # isotropic stores (the Globus rechunked_mis) halve z per level too.
+        # Derive the z factor from the real shape ratio so both render correctly:
+        # for xy-only z0/zc == 1 (unchanged); for isotropic z0/zc == 2**component.
+        try:
+            z0 = self._level0_dims_zyx()[0]
+            zc = self._dims_for_component(component)[0]
+            z_scale = (z0 / zc) if zc else 1.0
+        except Exception:
+            z_scale = 1.0
         return SpacingConfig(
             sx=self.cfg.base_sx * scale,
             sy=self.cfg.base_sy * scale,
-            sz=self.cfg.base_sz,
+            sz=self.cfg.base_sz * z_scale,
         )
+
+    def _level0_dims_zyx(self) -> Tuple[int, int, int]:
+        """Cached level-0 (component 0) dims; used to derive per-level z spacing."""
+        dims = getattr(self, "_level0_dims", None)
+        if dims is None:
+            dims = self._dims_for_component(0)
+            self._level0_dims = dims
+        return dims
 
     def _dims_for_component(self, component: int) -> Tuple[int, int, int]:
         shape = self.zsrc.shape_tczyx(component)
@@ -1419,7 +1446,14 @@ class VolumeStreamer:
                         a = self._read_tile(coarse, ch, cyi, cxi, cg)  # cheap coarsest fetch
                     except Exception:
                         continue
+                # Upsample the coarse tile in XY by f. For an ISOTROPIC pyramid
+                # the coarse level also has fewer z-slices, so resample z to the
+                # fine grid too (nearest-neighbour); for an xy-only pyramid the z
+                # dims already match and this is a no-op.
                 up = np.repeat(np.repeat(a, f, axis=2), f, axis=1)
+                if up.shape[0] != out.shape[0]:
+                    iz = np.linspace(0, up.shape[0] - 1, out.shape[0]).round().astype(np.intp)
+                    up = up[iz]
                 self._place_upsampled(out, up, cg.tile_bounds(cyi, cxi), f, snapped)
             if guarantee:
                 covered = True
