@@ -48,21 +48,45 @@ def data_sources_section(state, ctrl):
                             hide_details=True,
                         )
                         
-                with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                    with vuetify.VListItemIcon(v_if="drawer_mini"):
-                        with vuetify.VTooltip(right=True):
-                            with html.Template(v_slot_activator="{ on, attrs }"):
-                                vuetify.VIcon("mdi-file-document-outline", style="font-size: 25px;", v_bind="attrs", v_on="on")
-                            html.Span("{{ metadata_url || 'Metadata URL' }}")
-                    with vuetify.VListItemContent(v_if="!drawer_mini", class_="mt-0 pt-0 mb-0 pb-0"):
-                        vuetify.VTextField(
-                            v_model=("metadata_url", ""),
-                            label="Metadata URL",
-                            dense=True,
-                            clearable=True,
-                            hide_details=True,
-                        )
-                
+                # Metadata is normally baked into the zarr; the URL field stays
+                # collapsed behind this toggle for stores that lack it.
+                with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
+                    with vuetify.VListItemContent(class_="mt-0 pt-0 mb-0 pb-0"):
+                        with html.Div(classes="d-flex align-center"):
+                            html.Span(
+                                "Separate metadata",
+                                style="font-size: 11px; color: #9e9e9e;",
+                            )
+                            with vuetify.VBtn(
+                                icon=True,
+                                x_small=True,
+                                classes="ml-1",
+                                click="metadata_open = !metadata_open",
+                            ):
+                                vuetify.VIcon(
+                                    "{{ metadata_open ? 'mdi-minus' : 'mdi-plus' }}",
+                                    x_small=True,
+                                )
+
+                with vuetify.VExpandTransition():
+                    with vuetify.VListItem(
+                        class_="nav-item nav-item--nested",
+                        v_show=("metadata_open", False),
+                    ):
+                        with vuetify.VListItemIcon(v_if="drawer_mini"):
+                            with vuetify.VTooltip(right=True):
+                                with html.Template(v_slot_activator="{ on, attrs }"):
+                                    vuetify.VIcon("mdi-file-document-outline", style="font-size: 25px;", v_bind="attrs", v_on="on")
+                                html.Span("{{ metadata_url || 'Metadata URL' }}")
+                        with vuetify.VListItemContent(v_if="!drawer_mini", class_="mt-0 pt-0 mb-0 pb-0"):
+                            vuetify.VTextField(
+                                v_model=("metadata_url", ""),
+                                label="Metadata URL",
+                                dense=True,
+                                clearable=True,
+                                hide_details=True,
+                            )
+
                 with vuetify.VListItem(class_="nav-item nav-item--nested",v_if="!drawer_mini && !data_loaded"):
                     with vuetify.VListItemContent(class_="mt-2 pt-0"):
                         vuetify.VBtn(

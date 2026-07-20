@@ -121,7 +121,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         label, width_px = compute_scale_bar(
             renderer=s.renderer,
             render_window=s.render_window,
-            unit="µm",
+            unit=getattr(state, "size_unit", None) or "µm",
             component=comp,
             base_spacing_xy=base_xy,
         )
@@ -160,17 +160,44 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks]   Metadata URL: {state.metadata_url}")
         
         try:
-            from bioset.metadata import parse_ome_metadata
-            
-            metadata = parse_ome_metadata(state.metadata_url)
-            
-            state.physical_size_x = metadata.physical_size_x
-            state.physical_size_y = metadata.physical_size_y
-            state.physical_size_z = metadata.physical_size_z
-            
+            from bioset.metadata import parse_ome_metadata, parse_zarr_attrs_metadata
+
             streamer = _refs.get("streamer")
             if streamer:
                 streamer.set_zarr_url(state.zarr_url)
+
+            # Prefer metadata baked into the zarr store; only fall back to a
+            # separate OME-XML URL when the store carries none.
+            metadata = None
+            if streamer:
+                try:
+                    attrs = streamer.zsrc.root_attrs()
+                    channel_count = None
+                    try:
+                        channel_count = streamer.zsrc.shape_tczyx(0)[1]
+                    except Exception:
+                        pass
+                    metadata = parse_zarr_attrs_metadata(attrs, channel_count)
+                except Exception as e:
+                    print(f"[callbacks] Could not read embedded zarr metadata: {e}")
+
+            if metadata is None:
+                if not state.metadata_url:
+                    raise ValueError(
+                        "The zarr store has no embedded metadata and no separate "
+                        "metadata URL was provided."
+                    )
+                metadata = parse_ome_metadata(state.metadata_url)
+                state.metadata_source = "external"
+            else:
+                state.metadata_source = "embedded"
+
+            state.physical_size_x = metadata.physical_size_x
+            state.physical_size_y = metadata.physical_size_y
+            state.physical_size_z = metadata.physical_size_z
+            state.size_unit = metadata.size_unit or "µm"
+
+            if streamer:
                 streamer.set_spacing(
                     metadata.physical_size_x,
                     metadata.physical_size_y,
@@ -2409,7 +2436,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
         report_data = []
 
         if state.export_general:
-            general_content = GeneralContent(state.zarr_url, state.metadata_url, datetime.datetime.now())
+            # Report the URL only when the metadata actually came from it.
+            metadata_src = (
+                "Embedded in zarr store"
+                if getattr(state, "metadata_source", "") == "embedded"
+                else state.metadata_url
+            )
+            general_content = GeneralContent(state.zarr_url, metadata_src, datetime.datetime.now())
             general = General(general_content)
             report_data.append(general)
 

@@ -85,6 +85,24 @@ class ZarrMultiscaleSource:
             self._croot = zarr.open_consolidated(self.store, mode="r")
         return self._croot
 
+    def root_attrs(self) -> Dict[str, Any]:
+        """Attributes of the store's root group (OME-Zarr ``multiscales`` / ``omero``).
+
+        These live on the root group, not on the per-level arrays. Returns an
+        empty dict when the URL points straight at a level array (e.g. a URL
+        ending in ``/0``) or the store has no root ``.zattrs``.
+        """
+        try:
+            if self._consolidated:
+                root = self._consolidated_root()
+            else:
+                import zarr
+                root = zarr.open_group(self.store, mode="r")
+            return dict(root.attrs)
+        except Exception as e:
+            print(f"[zarr_source] No root attributes available: {e}")
+            return {}
+
     def array(self, component: int) -> da.Array:
         if component not in self._arrays:
             if self._consolidated:

@@ -34,6 +34,11 @@ def init_state(state):
     state.setdefault("metadata_url", "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml")
     state.setdefault("data_loading", False)
     state.setdefault("data_loaded", False)
+    # Separate-metadata field is collapsed by default; metadata baked into the
+    # zarr store is preferred and the URL is only a fallback.
+    state.setdefault("metadata_open", False)
+    state.setdefault("metadata_source", "")  # "embedded" | "external" once loaded
+    state.setdefault("size_unit", "µm")
     
     # Left drawer
     state.setdefault("drawer", True)
