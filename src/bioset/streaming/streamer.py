@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import queue
 import threading
 import time
@@ -21,6 +22,7 @@ from .lod import (
     camera_distance_to_focal,
     choose_component,
     compute_visible_xy_roi_vox,
+    derive_distance_rules,
     scale_roi_to_component,
 )
 from .profiling import StageTimer, fmt_bytes, log as plog
@@ -245,6 +247,47 @@ class VolumeStreamer:
                                         "base_sy": sy,
                                         "base_sz": sz})
         print(f"[stream] Updated spacing: ({sx}, {sy}, {sz})")
+
+    def configure_lod_from_source(self):
+        """Derive the LOD component range and zoom thresholds from the store.
+
+        Must run after `set_zarr_url` and `set_spacing`, since it reads the
+        pyramid depth from the zarr and scales the distance rules by the
+        volume's physical extent. Leaves the configured defaults in place if
+        the store can't be inspected.
+        """
+        try:
+            levels = self.zsrc.level_count()
+        except Exception as e:
+            print(f"[stream] Could not detect pyramid depth, keeping defaults: {e}")
+            return
+
+        max_component = max(0, levels - 1)
+        updates = {
+            "min_component": 0,
+            "max_component": max_component,
+            # Start coarse: the first frame should be cheap, LOD refines after.
+            "start_component": max_component,
+        }
+
+        try:
+            z, y, x = self._dims_for_component(0)
+            diagonal = math.sqrt(
+                (x * self.cfg.base_sx) ** 2
+                + (y * self.cfg.base_sy) ** 2
+                + (z * self.cfg.base_sz) ** 2
+            )
+            rules = derive_distance_rules(diagonal, max_component)
+            if rules:
+                updates["distance_rules"] = rules
+                print(f"[stream] World diagonal: {diagonal:.1f} "
+                      f"-> LOD distances: {[round(d) for d, _ in rules[:-1]]}")
+        except Exception as e:
+            print(f"[stream] Could not derive distance rules, keeping defaults: {e}")
+
+        self.cfg = self.cfg.__class__(**{**self.cfg.__dict__, **updates})
+        print(f"[stream] Detected {levels} resolution levels "
+              f"(components 0..{max_component})")
 
     def _hex_to_rgb(self, color_hex: str) -> Tuple[float, float, float]:
         """Convert hex color to RGB tuple (0-1 range)."""

@@ -203,6 +203,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     metadata.physical_size_y,
                     metadata.physical_size_z
                 )
+                # Pyramid depth and zoom thresholds come from the store itself,
+                # so they must be derived after the URL and spacing are set.
+                streamer.configure_lod_from_source()
 
             mesh_mgr = _refs.get("mesh_manager")
             if mesh_mgr:

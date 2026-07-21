@@ -40,6 +40,54 @@ def choose_heatmap_level(
     return max(min_level, min(max_level, chosen))
 
 
+# Distance thresholds that switch to component c, as a fraction of the volume's
+# world-space diagonal. Derived from the thresholds hand-tuned against the
+# melanoma dataset (2500/1900/1000/600/300/100 world units over its ~1711.6 µm
+# diagonal), so that dataset reproduces its original rules exactly while other
+# stores get the same *relative* zoom behaviour at their own physical scale.
+_DIAGONAL_FRACTIONS = {
+    6: 1.4606,
+    5: 1.1101,
+    4: 0.5842,
+    3: 0.3505,
+    2: 0.1753,
+    1: 0.0584,
+}
+_COARSEST_TUNED_COMPONENT = 6
+
+
+def derive_distance_rules(world_diagonal: float, max_component: int):
+    """
+    Build LOD distance rules scaled to this volume's physical size.
+
+    Each component's switch distance is a fixed fraction of the world-space
+    diagonal, so the same on-screen zoom picks the same level regardless of how
+    large the dataset is in microns. Pyramids shallower than the tuned six
+    levels simply stop early (``choose_component`` clamps to ``max_component``);
+    deeper ones extend geometrically, one doubling per extra level.
+
+    Returns rules as ``((distance, component), ...)`` sorted descending by
+    distance, matching what ``choose_component`` expects.
+    """
+    diag = float(world_diagonal)
+    if not (diag > 0) or not math.isfinite(diag):
+        return None
+
+    rules = []
+    for comp in range(max_component, 0, -1):
+        frac = _DIAGONAL_FRACTIONS.get(comp)
+        if frac is None:
+            # Beyond the tuned range: each coarser level doubles the distance.
+            frac = _DIAGONAL_FRACTIONS[_COARSEST_TUNED_COMPONENT] * (
+                2 ** (comp - _COARSEST_TUNED_COMPONENT)
+            )
+        rules.append((diag * frac, comp))
+
+    # Sentinel: anything closer than the finest threshold falls to component 0.
+    rules.append((-abs(diag), 0))
+    return tuple(rules)
+
+
 def choose_component(distance: float, rules, *, min_component: int, max_component: int) -> int:
     chosen = max_component
     for thresh, comp in rules:

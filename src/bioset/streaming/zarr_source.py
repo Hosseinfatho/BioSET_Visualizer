@@ -103,6 +103,29 @@ class ZarrMultiscaleSource:
             print(f"[zarr_source] No root attributes available: {e}")
             return {}
 
+    def level_count(self, max_probe: int = 24) -> int:
+        """Number of resolution levels in the pyramid.
+
+        Prefers the ``multiscales`` datasets list; falls back to probing for
+        consecutive ``0``, ``1``, ... arrays for stores without it. Returns at
+        least 1 so a single-level store still renders.
+        """
+        attrs = self.root_attrs()
+        multiscales = attrs.get("multiscales")
+        if multiscales:
+            datasets = multiscales[0].get("datasets") or []
+            if datasets:
+                return len(datasets)
+
+        count = 0
+        for component in range(max_probe):
+            try:
+                self.array(component)
+            except Exception:
+                break
+            count += 1
+        return max(1, count)
+
     def array(self, component: int) -> da.Array:
         if component not in self._arrays:
             if self._consolidated:
