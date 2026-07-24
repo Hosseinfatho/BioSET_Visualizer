@@ -361,13 +361,20 @@ class VolumeStreamer:
         )
         
         print(f"[stream] Scheduling LOD update: comp={desired_comp} roi={roi}")
-        
+
+        # Safety net: never replace the live texture with a degenerate (needle)
+        # ROI — that would blank the volume (the edge-on vanish bug). Keep the
+        # currently displayed frame instead.
+        if self._roi_is_degenerate(roi):
+            print(f"[stream] Skipping degenerate ROI {roi} (keeping current frame)")
+            return
+
         request = LoadRequest(
             component=desired_comp,
             roi=roi,
             timestamp=time.time(),
         )
-        
+
         self._schedule_load(request)
 
     def activate_channel(self, channel_id: int, color_hex: str):
@@ -1099,6 +1106,14 @@ class VolumeStreamer:
             if st is None:
                 continue
             self._load_and_display_channel(ch, st.component, st.roi, reset_camera=False)
+
+    def _roi_is_degenerate(self, roi: ROI) -> bool:
+        """True if an ROI is too thin to be a real viewport (a 'needle').
+        Uploading such an ROI would blank the volume edge-on (the vanish bug).
+        `compute_visible_xy_roi_vox` already clamps to >=1 voxel per axis, so
+        this only trips on sub-2-voxel slivers — never a realistic zoomed view.
+        """
+        return (roi.x1 - roi.x0) < 2 or (roi.y1 - roi.y0) < 2
 
     def _spacing_for_component(self, component: int) -> SpacingConfig:
         # Derive per-axis spacing from the REAL level-0/level shape ratios rather
@@ -2254,6 +2269,13 @@ class VolumeStreamer:
 
         print(
             f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
+
+        # Safety net: never replace the live texture with a degenerate (needle)
+        # ROI — that would blank the volume (the edge-on vanish bug). Keep the
+        # currently displayed frame instead.
+        if self._roi_is_degenerate(roi):
+            print(f"[interaction] skipping degenerate ROI {roi} (keeping current frame)")
+            return desired_comp
 
         request = LoadRequest(component=desired_comp, roi=roi, timestamp=time.time())
         if self._displayed_matches(request):

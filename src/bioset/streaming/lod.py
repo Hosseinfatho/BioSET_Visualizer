@@ -147,6 +147,36 @@ def _display_to_world(renderer, x: float, y: float, z_norm: float):
     return (wx, wy, wz)
 
 
+def _clip_segment_to_box(near, far, lo, hi, eps: float = 1e-9):
+    """Clip the segment near->far (parametrised t in [0,1]) against the axis-
+    aligned box [lo, hi] using the slab method.
+
+    Returns (t0, t1) with 0 <= t0 <= t1 <= 1 for the portion of the segment
+    inside the box, or None if the segment never enters it. Well-conditioned for
+    any ray orientation, including rays parallel to a face (handled per axis).
+    """
+    t0, t1 = 0.0, 1.0
+    for axis in range(3):
+        o = near[axis]
+        d = far[axis] - near[axis]
+        if abs(d) < eps:
+            # Parallel to this pair of slabs: reject if the origin is outside.
+            if o < lo[axis] - eps or o > hi[axis] + eps:
+                return None
+            continue
+        ta = (lo[axis] - o) / d
+        tb = (hi[axis] - o) / d
+        if ta > tb:
+            ta, tb = tb, ta
+        if ta > t0:
+            t0 = ta
+        if tb < t1:
+            t1 = tb
+        if t0 > t1:
+            return None
+    return (t0, t1)
+
+
 def compute_visible_xy_roi_vox(
     renderer,
     *,
@@ -179,20 +209,28 @@ def compute_visible_xy_roi_vox(
                 dy = (h - 1) * iy / denom
                 display_pts.append((dx, dy))
 
+    lo = (xmin, ymin, zmin)
+    hi = (xmax, ymax, zmax)
+
     pts = []
     for (dx, dy) in display_pts:
         near = _display_to_world(renderer, dx, dy, 0.0)
         far = _display_to_world(renderer, dx, dy, 1.0)
 
-        nz = near[2]
-        fz = far[2]
-        if abs(fz - nz) < 1e-9:
+        # Clip the near->far frustum segment against the volume AABB (slab test)
+        # instead of intersecting only the z=zmin/z=zmax planes. The z-plane
+        # method is ill-conditioned when the view direction is nearly parallel to
+        # XY (looking along the depth): fz-nz -> 0 makes the intersection blow up
+        # and the ROI collapse to a sliver, so the volume vanishes edge-on. The
+        # slab clip is stable at every orientation and stays viewport-tight: it
+        # limits the ROI to the on-screen band in the in-plane axis while
+        # (correctly) spanning the full extent along the axis being looked
+        # through.
+        seg = _clip_segment_to_box(near, far, lo, hi)
+        if seg is None:
             continue
-
-        for z_plane in (zmin, zmax):
-            t = (z_plane - nz) / (fz - nz)
-            if t < -0.25 or t > 1.25:
-                continue
+        t0, t1 = seg
+        for t in (t0, 0.5 * (t0 + t1), t1):
             xw = near[0] + t * (far[0] - near[0])
             yw = near[1] + t * (far[1] - near[1])
             pts.append((xw, yw))
