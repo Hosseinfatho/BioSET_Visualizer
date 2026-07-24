@@ -246,8 +246,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 streamer.renderer.ResetCameraClippingRange()
                 update_main_scale_bar()
             if _refs["view"]:
+                # Resync the server render-window size/aspect to the client on
+                # first load (a remote client can otherwise render stretched
+                # until it resizes the browser); then push the frame.
+                try:
+                    _refs["view"].resize()
+                except Exception:
+                    pass
                 _refs["view"].update()
-            
+
         except Exception as e:
             print(f"[callbacks] Error loading data: {e}")
             import traceback
@@ -1264,9 +1271,18 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 streamer.renderer.ResetCamera()
                 streamer.renderer.ResetCameraClippingRange()
         update_main_scale_bar()
-        if _refs.get("view"):
-            _refs["view"].update()
-    
+        view = _refs.get("view")
+        if view:
+            # Force the client to re-measure and resync the server render-window
+            # size/aspect. On a remote client the offscreen window can be left at
+            # a stale aspect, which renders the volume stretched until the user
+            # resizes the browser; resize() does that resync programmatically.
+            try:
+                view.resize()
+            except Exception:
+                pass
+            view.update()
+
     def update_background_color(color_hex):
         """Update renderer background color."""
         print(f"[callbacks] Updating background color to {color_hex}")

@@ -622,6 +622,21 @@ class VolumeStreamer:
         is always correct — used by the Reset Camera button and to return to the
         default view after opening a bookmark."""
         self.frame_default_view()
+        # The camera has moved (usually zooming out to frame the whole volume),
+        # so the previously loaded fine ROI no longer matches the view. Show the
+        # complete coarse base immediately (never a stale partial ROI), then
+        # schedule the LOD/ROI stream for the new view — the same settle pipeline
+        # a drag/zoom uses. Without this the volume for the reset view never loads.
+        if self._active_channels:
+            try:
+                self._update_interaction_textures()
+                iren = self._interactor()
+                if iren is not None:
+                    iren.InvokeEvent("EndInteractionEvent")
+                else:
+                    self.on_interaction_end()
+            except Exception as e:
+                print(f"[stream] reset re-stream failed: {e}")
 
     def channel_same_lod_roi(self, channel_id: int, component: int, roi_dict: dict) -> bool:
         """True if this channel is already shown at the same component and XY ROI (bookmark restore fast path)."""
