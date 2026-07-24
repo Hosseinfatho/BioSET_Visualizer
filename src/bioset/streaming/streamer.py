@@ -568,47 +568,55 @@ class VolumeStreamer:
         self._last_component = component
         
         if reset_camera:
-            print(f"[stream] Resetting camera for first volume")
-            self.renderer.ResetCamera()
-            cam = self.renderer.GetActiveCamera()
-            pos = list(cam.GetPosition())
-            fp = list(cam.GetFocalPoint())
-            vup = list(cam.GetViewUp())
-            zoom = getattr(self.__class__, "INITIAL_CAMERA_ZOOM", 1.0)
-            if zoom != 1.0 and 0 < zoom <= 1.0:
-                pos = [fp[i] + (pos[i] - fp[i]) * zoom for i in range(3)]
-                cam.SetPosition(pos[0], pos[1], pos[2])
-            self._initial_camera = {
-                "position": pos,
-                "focalPoint": fp,
-                "viewUp": vup,
-            }
+            print(f"[stream] Framing default view for first volume")
+            self.frame_default_view()
+        else:
+            self.renderer.ResetCameraClippingRange()
+            self._render()
 
-        self.renderer.ResetCameraClippingRange()
-        self._render()
-        
         print(f"[stream] Channel {channel_id} displayed")
 
-    def reset_camera_to_initial(self) -> None:
-        """Restore camera to initial position (saved when data was first loaded). If none saved, call ResetCamera()."""
+    def frame_default_view(self) -> None:
+        """Position the camera at the canonical default view of the CURRENT
+        volume: top-down (looking along -Z, +Y up), framed to the live world
+        bounds and pulled in by INITIAL_CAMERA_ZOOM.
+
+        Computed from the renderer's live bounds every call, so it is correct
+        regardless of dataset physical size, spacing, load order, or how the
+        camera was oriented beforehand — no dataset-specific magic distance and
+        no reliance on a snapshot captured at some earlier moment. Also records
+        the result as the reset target for any code that reads `_initial_camera`.
+        """
         if not self.renderer:
             return
         cam = self.renderer.GetActiveCamera()
-        if self._initial_camera:
-            pos = self._initial_camera.get("position")
-            fp = self._initial_camera.get("focalPoint")
-            vup = self._initial_camera.get("viewUp")
-            if pos and len(pos) >= 3:
-                cam.SetPosition(pos[0], pos[1], pos[2])
-            if fp and len(fp) >= 3:
-                cam.SetFocalPoint(fp[0], fp[1], fp[2])
-            if vup and len(vup) >= 3:
-                cam.SetViewUp(vup[0], vup[1], vup[2])
-            cam.Modified()
-        else:
-            self.renderer.ResetCamera()
+        # Set the canonical direction BEFORE ResetCamera so ResetCamera only
+        # fits the distance/centre along it (it preserves the view direction).
+        fp = cam.GetFocalPoint()
+        cam.SetPosition(fp[0], fp[1], fp[2] + 1.0)  # camera above -> looks down -Z
+        cam.SetViewUp(0.0, 1.0, 0.0)
+        cam.OrthogonalizeViewUp()
+        # Fit the current visible bounds along that direction (dataset-agnostic).
+        self.renderer.ResetCamera()
+        zoom = getattr(self.__class__, "INITIAL_CAMERA_ZOOM", 1.0)
+        if zoom != 1.0 and 0 < zoom <= 1.0:
+            pos = list(cam.GetPosition())
+            fpz = list(cam.GetFocalPoint())
+            cam.SetPosition(*[fpz[i] + (pos[i] - fpz[i]) * zoom for i in range(3)])
+        self._initial_camera = {
+            "position": list(cam.GetPosition()),
+            "focalPoint": list(cam.GetFocalPoint()),
+            "viewUp": list(cam.GetViewUp()),
+        }
         self.renderer.ResetCameraClippingRange()
         self._render()
+
+    def reset_camera_to_initial(self) -> None:
+        """Return the camera to the canonical default view of the current volume
+        (top-down, framed to bounds). Recomputed from live bounds each call so it
+        is always correct — used by the Reset Camera button and to return to the
+        default view after opening a bookmark."""
+        self.frame_default_view()
 
     def channel_same_lod_roi(self, channel_id: int, component: int, roi_dict: dict) -> bool:
         """True if this channel is already shown at the same component and XY ROI (bookmark restore fast path)."""
