@@ -173,6 +173,12 @@ class VolumeStreamer:
         # texture once they settle. _showing_base = channels currently on the base.
         self._base_images: Dict[int, "vtkImageData"] = {}
         self._showing_base: set[int] = set()
+        # Per-channel last SHARP (fine ROI) texture, retained so an interaction
+        # can toggle a port back to it (fine<->base) without re-streaming. Used
+        # by the adaptive interaction LOD (keep sharp while the viewport stays
+        # inside the loaded ROI; drop to the coarse base only when it doesn't).
+        self._fine_images: Dict[int, "vtkImageData"] = {}
+        self._interaction_move_last = 0.0  # throttle for on_interaction_move
         # Total bytes fetched from the store (decoded), for profiling. The TF is
         # built once from real activation data and reused per frame (see
         # _apply_loaded_data_on_main_thread), so a zero/blurry seed frame renders
@@ -226,6 +232,7 @@ class VolumeStreamer:
         self._lowres_cache.clear()
         self._page_table.clear()
         self._base_images.clear()
+        self._fine_images.clear()
         self._showing_base.clear()
         self._level0_dims = None
         with self._grids_lock:
@@ -477,6 +484,7 @@ class VolumeStreamer:
         self.volumes.pop(channel_id, None)
         self.mappers.pop(channel_id, None)
         self._current_input.pop(channel_id, None)
+        self._fine_images.pop(channel_id, None)
         self._rebuild_multivolume()
 
         if channel_id in self.nov_volumes and self.nov_renderer:
@@ -1365,27 +1373,89 @@ class VolumeStreamer:
         self._showing_base.add(ch)
         return True
 
-    def on_interaction_start(self) -> None:
-        """Called on StartInteractionEvent (main thread). Swap every active
-        channel that's showing a fine ROI texture to its full-volume coarse base
-        so motion is cheap and never reveals empty space. Channels already on the
-        base are left untouched (no redundant upload)."""
+    # How far the interaction texture selector may fire (Hz). The camera has to
+    # move a lot to cross the loaded-ROI boundary, so a coarse cadence is plenty
+    # and keeps the per-move containment check off the hot path.
+    INTERACTION_MOVE_HZ = 15.0
+
+    def _viewport_within_loaded(self, component: int, roi: ROI) -> bool:
+        """True when the currently visible XY region fits inside the already-
+        loaded `roi` at `component` — i.e. the sharp texture still covers the
+        whole viewport, so we can keep showing it during interaction.
+
+        Rotate-in-place and zoom-in keep the viewport inside the loaded ROI (→
+        True, stay sharp); zoom-out, a large pan, or rotating to a very oblique
+        angle grow it past the ROI (→ False, fall back to the coarse base). The
+        loaded ROI already carries `roi_margin_vox` + chunk snapping, so small
+        pans stay within the margin without flip-flopping."""
+        try:
+            spacing = self._spacing_for_component(component)
+            _, ydim, xdim = self._dims_for_component(component)
+            bounds = self._volume_bounds_world(component)
+            vis = compute_visible_xy_roi_vox(
+                self.renderer, bounds_world=bounds,
+                sx=spacing.sx, sy=spacing.sy, x_dim=xdim, y_dim=ydim,
+                margin_vox=0, display_samples=5,
+            )
+        except Exception:
+            return False
+        return (vis.x0 >= roi.x0 and vis.x1 <= roi.x1
+                and vis.y0 >= roi.y0 and vis.y1 <= roi.y1)
+
+    def _update_interaction_textures(self) -> bool:
+        """Point each active channel's port at its SHARP texture while the
+        viewport stays inside the loaded ROI, or at its coarse full-volume base
+        when the viewport has moved past it. Renders once (interactive) if any
+        port changed. Returns whether anything swapped."""
         swapped = False
         for ch in list(self._active_channels):
-            if ch in self._showing_base:
+            if ch not in self._channel_port:
                 continue
+            st = self.state.get(ch)
+            fine = self._fine_images.get(ch)
             base = self._base_images.get(ch)
-            if base is None or ch not in self._channel_port:
-                continue
-            self._set_channel_input(ch, base)
-            self._showing_base.add(ch)
-            swapped = True
+            keep_fine = (
+                st is not None and fine is not None
+                and self._viewport_within_loaded(st.component, st.roi)
+            )
+            if keep_fine:
+                target, on_base = fine, False
+            elif base is not None:
+                target, on_base = base, True
+            else:
+                continue  # no base yet (nothing better) — leave the port as is
+            if self._current_input.get(ch) is not target:
+                self._set_channel_input(ch, target)
+                swapped = True
+            if on_base:
+                self._showing_base.add(ch)
+            else:
+                self._showing_base.discard(ch)
         if swapped:
             try:
                 self.renderer.ResetCameraClippingRange()
             except Exception:
                 pass
             self._render_interactive()
+        return swapped
+
+    def on_interaction_start(self) -> None:
+        """Called on StartInteractionEvent (main thread). Keep each channel's
+        sharp texture (the viewport still matches the loaded ROI at the very
+        start); the per-move handler drops to the coarse base only once an
+        interaction actually pushes the viewport past the loaded region."""
+        self._update_interaction_textures()
+
+    def on_interaction_move(self) -> None:
+        """Called on InteractionEvent (main thread, high frequency). Throttled
+        re-evaluation of the sharp/base texture per channel so a swap to the
+        coarse base happens the moment a zoom-out or large pan crosses the
+        loaded-ROI boundary — and back to sharp if it re-enters."""
+        now = time.time()
+        if now - self._interaction_move_last < 1.0 / self.INTERACTION_MOVE_HZ:
+            return
+        self._interaction_move_last = now
+        self._update_interaction_textures()
 
     def _get_or_create_nov_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
         """Get or create volume/mapper for the NOV popup renderer."""
@@ -1914,6 +1984,9 @@ class VolumeStreamer:
             vol, mapper = self._get_or_create_volume(ch)
             with timer.stage(f"gpu-upload[ch{ch}]"):
                 self._set_channel_input(ch, img)
+            # Retain this sharp texture so an interaction can toggle the port
+            # back to it (fine<->base) without re-streaming.
+            self._fine_images[ch] = img
 
             if ch in self._channel_tfs:
                 color_tf, opacity_tf = self._channel_tfs[ch]

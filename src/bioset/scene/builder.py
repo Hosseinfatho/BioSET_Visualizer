@@ -290,15 +290,26 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                         pass
 
             def _on_start_interaction(obj, evt):
-                # Show each channel's cheap full-volume coarse base while moving:
-                # never empty, fast to render; the sharp ROI texture returns once
-                # the user settles (on_interaction_end -> async stream -> apply).
+                # Keep each channel's sharp texture while interacting as long as
+                # the viewport stays inside the loaded ROI; the per-move handler
+                # drops to the coarse base only when a zoom-out/large pan pushes
+                # past it. The sharp ROI for the settled viewport streams in via
+                # on_interaction_end -> async stream -> apply.
                 try:
                     streamer.on_interaction_start()
                 except Exception:
                     pass
 
+            def _on_interaction(obj, evt):
+                # Throttled inside the streamer; re-evaluates sharp<->base per
+                # channel as the camera moves.
+                try:
+                    streamer.on_interaction_move()
+                except Exception:
+                    pass
+
             interactor.AddObserver("StartInteractionEvent", _on_start_interaction)
+            interactor.AddObserver("InteractionEvent", _on_interaction)
             interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
             nov_interactor.AddObserver("EndInteractionEvent", _on_nov_end_interaction)
             nov_interactor.AddObserver("InteractionEvent", _on_nov_interaction)
