@@ -276,7 +276,11 @@ class VolumeStreamer:
 
         max_component = max(0, levels - 1)
         updates = {
-            "min_component": 0,
+            # Respect a configured floor (don't force 0): loading the finest
+            # level (comp 0) is ~8x the data of comp 1 for a near-identical
+            # on-screen result and cost 8-12s/settle in profiling. Set
+            # cfg.min_component=1 to cap the finest LOD and keep high zoom snappy.
+            "min_component": max(0, min(self.cfg.min_component, max_component)),
             "max_component": max_component,
             # Start coarse: the first frame should be cheap, LOD refines after.
             "start_component": max_component,
@@ -1619,20 +1623,18 @@ class VolumeStreamer:
         if max(x, y, z) > cap:
             downsampled = True
             with timer.stage("downsample"):
-                scale = cap / max(x, y, z)
+                # Uniform integer-stride decimation. This replaces linspace +
+                # np.ix_ fancy indexing (a cache-unfriendly gather that cost
+                # 20-90ms/channel in profiling): `arr[::s, ::s, ::s]` is a view,
+                # and the single ascontiguousarray copies only the capped-size
+                # result. `s = ceil(max_dim / cap)` scales every axis together
+                # (same as the old uniform `cap/max` scale).
                 oz, oy, ox = z, y, x
-                nz = max(1, int(round(z * scale)))
-                ny = max(1, int(round(y * scale)))
-                nx = max(1, int(round(x * scale)))
-                iz = np.linspace(0, z - 1, nz).round().astype(np.intp)
-                iy = np.linspace(0, y - 1, ny).round().astype(np.intp)
-                ix = np.linspace(0, x - 1, nx).round().astype(np.intp)
-                np_vol_zyx = np_vol_zyx[np.ix_(iz, iy, ix)]
-                z, y, x = nz, ny, nx
+                s = int(math.ceil(max(x, y, z) / cap))
+                np_vol_zyx = np.ascontiguousarray(np_vol_zyx[::s, ::s, ::s])
+                z, y, x = np_vol_zyx.shape
                 spacing = SpacingConfig(
-                    sx=sx * (ox / nx) if nx else sx,
-                    sy=sy * (oy / ny) if ny else sy,
-                    sz=sz * (oz / nz) if nz else sz,
+                    sx=sx * (ox / x), sy=sy * (oy / y), sz=sz * (oz / z),
                 )
             print(f"[stream] Downsampled volume to ({z},{y},{x}) for texture cap {cap}")
 
@@ -1777,15 +1779,33 @@ class VolumeStreamer:
                         a = self._read_tile(coarse, ch, cyi, cxi, cg)  # cheap coarsest fetch
                     except Exception:
                         continue
-                # Upsample the coarse tile in XY by f. For an ISOTROPIC pyramid
-                # the coarse level also has fewer z-slices, so resample z to the
-                # fine grid too (nearest-neighbour); for an xy-only pyramid the z
-                # dims already match and this is a no-op.
-                up = np.repeat(np.repeat(a, f, axis=2), f, axis=1)
+                # Upsample the coarse tile in XY by f, then place it into `out`.
+                # CRITICAL: crop the coarse tile to just the sub-block that
+                # overlaps the ROI *before* upsampling. Upsampling the whole tile
+                # first (old behaviour) allocated `tile_area * f**2` — at comp 0,
+                # f reaches 64, so a single coarse tile ballooned to multi-GB
+                # temporaries just to drop a small corner into `out`. Cropping
+                # first bounds the temporary to ~ROI size regardless of f.
+                tb = cg.tile_bounds(cyi, cxi)
+                fy0, fx0 = tb.y0 * f, tb.x0 * f            # tile extent on the fine grid
+                tyc, txc = a.shape[1], a.shape[2]
+                fy_s, fy_e = max(fy0, snapped.y0), min(fy0 + tyc * f, snapped.y1)
+                fx_s, fx_e = max(fx0, snapped.x0), min(fx0 + txc * f, snapped.x1)
+                if fy_e <= fy_s or fx_e <= fx_s:
+                    continue                              # this tile is outside the ROI
+                ay0, ay1 = (fy_s - fy0) // f, (fy_e - fy0 + f - 1) // f
+                ax0, ax1 = (fx_s - fx0) // f, (fx_e - fx0 + f - 1) // f
+                sub = a[:, ay0:ay1, ax0:ax1]
+                up = np.repeat(np.repeat(sub, f, axis=2), f, axis=1)
+                # Isotropic pyramid: coarse level has fewer z-slices — resample z
+                # to the fine grid (no-op for an xy-only pyramid where z matches).
                 if up.shape[0] != out.shape[0]:
                     iz = np.linspace(0, up.shape[0] - 1, out.shape[0]).round().astype(np.intp)
                     up = up[iz]
-                self._place_upsampled(out, up, cg.tile_bounds(cyi, cxi), f, snapped)
+                # Shift the tile bounds to the cropped sub-block's global coarse
+                # origin so _place_upsampled maps it to the right fine location.
+                b2 = ROI(tb.x0 + ax0, tb.x0 + ax1, tb.y0 + ay0, tb.y0 + ay1)
+                self._place_upsampled(out, up, b2, f, snapped)
             if guarantee:
                 covered = True
         return covered

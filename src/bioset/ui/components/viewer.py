@@ -19,7 +19,12 @@ def viewer(ctrl, render_window):
         with html.Div(style="position: relative; width: 100%; height: 100%; min-height: 200px;"):
             view = vtk.VtkRemoteView(
                 render_window,
-                interactive_ratio=1.0,
+                # Render/encode/push at half resolution WHILE INTERACTING so the
+                # server-side JPEG encode + network transfer stay cheap (this is
+                # CPU-bound and matters on both local and remote viewing); still
+                # frames go back to full resolution once the user settles.
+                interactive_ratio=0.5,
+                still_ratio=1.0,
             )
             # Client-side mouse tracker: emits hover + right-click on the VTK canvas and forwards to server triggers.
             vuetify.Template(
