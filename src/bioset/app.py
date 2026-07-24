@@ -131,10 +131,14 @@ def main():
                     print(f"[error] check_loaded_data: {e}")
 
         async def _nov_animation_loop():
-            """Drive NOV camera transition and bookmark camera animation: one frame every 40ms."""
+            """Drive NOV camera transition, bookmark camera animation, and eased
+            mouse-wheel zoom: one frame every 40ms."""
             while True:
                 await asyncio.sleep(0.04)
                 try:
+                    # Eased mouse-wheel zoom; it pushes its own frames via the
+                    # streamer render callback, so no extra view.update() here.
+                    scene.streamer.zoom_animation_tick()
                     if hasattr(ctrl, "nov_animation_tick"):
                         ctrl.nov_animation_tick()
                     if hasattr(ctrl, "bookmark_camera_animation_tick"):

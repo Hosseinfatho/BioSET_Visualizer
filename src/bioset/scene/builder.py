@@ -10,7 +10,10 @@ from typing import Optional
 from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
 from vtkmodules.vtkFiltersSources import vtkArrowSource
-from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa
+from vtkmodules.vtkInteractionStyle import (  # noqa
+    vtkInteractorStyleSwitch,
+    vtkInteractorStyleTrackballCamera,
+)
 from vtkmodules.vtkRenderingCore import (
     vtkRenderer,
     vtkRenderWindow,
@@ -39,6 +42,31 @@ from .meshes import MeshManager
 # Axis length (smaller = smaller arrows) and camera distance (larger = more margin, no clipping when rotating).
 NOV_AXIS_LENGTH = 0.5
 NOV_AXIS_CAMERA_DIST = 2.5
+
+
+class _SmoothZoomStyle(vtkInteractorStyleTrackballCamera):
+    """Trackball camera style whose mouse-wheel zoom is handed to the streamer's
+    eased-zoom animation (glide fast -> slow -> stop) instead of an instant
+    per-notch dolly. Rotate / pan / right-drag behaviour is inherited unchanged.
+    Falls back to the default instant dolly when no streamer is attached."""
+
+    def SetStreamer(self, streamer):
+        self._streamer = streamer
+
+    def _sz(self):
+        return getattr(self, "_streamer", None)
+
+    def OnMouseWheelForward(self):
+        s = self._sz()
+        if s is not None and s.queue_zoom(+1):
+            return
+        super().OnMouseWheelForward()
+
+    def OnMouseWheelBackward(self):
+        s = self._sz()
+        if s is not None and s.queue_zoom(-1):
+            return
+        super().OnMouseWheelBackward()
 
 
 def _make_axis_arrow(scale, rotate_axis, rotate_deg, r, g, b):
@@ -185,8 +213,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     interactor = vtkRenderWindowInteractor()
     interactor.SetRenderWindow(render_window)
     interactor.Initialize()
-    style = vtkInteractorStyleSwitch()
-    style.SetCurrentStyleToTrackballCamera()
+    # Trackball camera with eased mouse-wheel zoom (streamer attached below).
+    style = _SmoothZoomStyle()
     interactor.SetInteractorStyle(style)
 
     renderer.SetBackground(colors.GetColor3d(cfg.background))
@@ -212,6 +240,8 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         try:
             streamer = VolumeStreamer(
                 cfg=cfg, renderer=renderer, render_window=render_window)
+            # Route mouse-wheel zoom through the streamer's eased-zoom animation.
+            style.SetStreamer(streamer)
 
             nov_renderer = vtkRenderer()
             nov_render_window = vtkRenderWindow()

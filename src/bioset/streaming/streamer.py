@@ -179,6 +179,11 @@ class VolumeStreamer:
         # inside the loaded ROI; drop to the coarse base only when it doesn't).
         self._fine_images: Dict[int, "vtkImageData"] = {}
         self._interaction_move_last = 0.0  # throttle for on_interaction_move
+        # Eased mouse-wheel zoom: `_zoom_target` is the dolly factor still owed
+        # (1.0 = nothing pending); the animation tick glides the camera toward it
+        # (fast -> slow -> stop). See queue_zoom / zoom_animation_tick.
+        self._zoom_target = 1.0
+        self._zoom_animating = False
         # Total bytes fetched from the store (decoded), for profiling. The TF is
         # built once from real activation data and reused per frame (see
         # _apply_loaded_data_on_main_thread), so a zero/blurry seed frame renders
@@ -1464,6 +1469,79 @@ class VolumeStreamer:
             return
         self._interaction_move_last = now
         self._update_interaction_textures()
+
+    # ------------------------------------------------------------------
+    # Eased mouse-wheel zoom
+    #
+    # Each wheel notch multiplies a *target* dolly factor; zoom_animation_tick
+    # (driven by the app's ~40ms animation loop) glides the camera toward it,
+    # applying a constant FRACTION of the remaining log-distance each frame ->
+    # fast at first, slowing to a stop (ease-out). Rotate/pan are untouched.
+    # ------------------------------------------------------------------
+    ZOOM_WHEEL_STEP = 2.0   # per-notch dolly magnitude (>1 = zoom in)
+    ZOOM_EASE = 0.5        # fraction of remaining log-distance applied per tick
+    ZOOM_EPS = 1e-3          # |log(remaining)| below this -> settled
+
+    def _interactor(self):
+        return self.render_window.GetInteractor() if self.render_window else None
+
+    def queue_zoom(self, notches: int) -> bool:
+        """Add `notches` mouse-wheel steps (+1 in / -1 out) to the pending eased
+        zoom and start the glide if idle. Returns True when handled (so the
+        interactor style suppresses its instant dolly)."""
+        if not self.renderer:
+            return False
+        try:
+            self._zoom_target *= self.ZOOM_WHEEL_STEP ** int(notches)
+        except Exception:
+            return False
+        if not self._zoom_animating:
+            self._zoom_animating = True
+            iren = self._interactor()
+            if iren is not None:
+                # Drive the same LOD/label bookkeeping as a drag interaction.
+                iren.InvokeEvent("StartInteractionEvent")
+        return True
+
+    def zoom_animation_tick(self) -> bool:
+        """One eased-zoom frame. Call from the animation loop; returns True if a
+        frame was rendered (so the caller can push the view)."""
+        if not self._zoom_animating or not self.renderer:
+            return False
+        remaining = self._zoom_target
+        try:
+            log_left = math.log(remaining)
+        except (ValueError, TypeError):
+            log_left = 0.0
+
+        if abs(log_left) < self.ZOOM_EPS:
+            # Settled: drop the sub-ZOOM_EPS residual (< ~0.1% dolly, imperceptible)
+            # and finish cleanly, so the last motion is the final eased step.
+            self._zoom_target = 1.0
+            self._zoom_animating = False
+            try:
+                self.renderer.ResetCameraClippingRange()
+            except Exception:
+                pass
+            iren = self._interactor()
+            if iren is not None:
+                # Stream the sharp ROI for the settled zoom (+ label refresh).
+                iren.InvokeEvent("EndInteractionEvent")
+            return False
+
+        step = math.exp(log_left * self.ZOOM_EASE)   # this frame's dolly factor
+        cam = self.renderer.GetActiveCamera()
+        cam.Dolly(step)
+        self._zoom_target = remaining / step          # log-remaining *= (1 - EASE)
+        try:
+            self.renderer.ResetCameraClippingRange()
+        except Exception:
+            pass
+        # Re-evaluate sharp/base as the zoom crosses the loaded-ROI boundary;
+        # it renders on a swap, otherwise render the dolly ourselves (once).
+        if not self._update_interaction_textures():
+            self._render_interactive()
+        return True
 
     def _get_or_create_nov_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
         """Get or create volume/mapper for the NOV popup renderer."""
