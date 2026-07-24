@@ -382,6 +382,10 @@ class VolumeStreamer:
             margin_vox=self.cfg.roi_margin_vox,
         )
         
+        # Bound the load size (see _fit_component_to_budget): a coarser LOD for a
+        # huge oblique/zoomed-out ROI so we don't decode thousands of fine tiles.
+        desired_comp, roi = self._fit_component_to_budget(desired_comp, roi)
+
         print(f"[stream] Scheduling LOD update: comp={desired_comp} roi={roi}")
 
         # Safety net: never replace the live texture with a degenerate (needle)
@@ -2170,6 +2174,23 @@ class VolumeStreamer:
         )
         return ROI(d["x0"], d["x1"], d["y0"], d["y1"])
 
+    # Cap a single load's XY size (voxels). Distance-based LOD alone picks a fine
+    # component even when the visible ROI is huge — which happens when a thin,
+    # wide slab (a whole-slide image) is rotated to an oblique angle: the footprint
+    # balloons to span the whole slab, so a fine LOD would decode thousands of
+    # full-Z tiles (hundreds of MB/channel, multi-second, worse over the network).
+    # The region is foreshortened on screen there, so a coarser LOD looks the same.
+    MAX_LOAD_XY = 1280
+
+    def _fit_component_to_budget(self, comp: int, roi: ROI) -> Tuple[int, ROI]:
+        """Step to a coarser component until the ROI's XY span fits MAX_LOAD_XY,
+        so an oblique/zoomed-out view can't trigger an enormous fine-LOD decode."""
+        while (comp < self.cfg.max_component
+               and max(roi.x1 - roi.x0, roi.y1 - roi.y0) > self.MAX_LOAD_XY):
+            roi = self._roi_at_component(roi, comp, comp + 1)
+            comp += 1
+        return comp, roi
+
     def _emit(self, request: LoadRequest, comp: int, ch: int, snapped: ROI,
               out: np.ndarray) -> None:
         """Build a capped (interactive) vtkImageData off-thread from the current
@@ -2478,6 +2499,11 @@ class VolumeStreamer:
             y_dim=ydim,
             margin_vox=self.cfg.roi_margin_vox,
         )
+
+        # Bound the load size: an oblique view of a thin wide slab balloons the
+        # ROI, so step to a coarser LOD until it fits the budget (looks the same
+        # on screen, but decodes far fewer tiles).
+        desired_comp, roi = self._fit_component_to_budget(desired_comp, roi)
 
         print(
             f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
