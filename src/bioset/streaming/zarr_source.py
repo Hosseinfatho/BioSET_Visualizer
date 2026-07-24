@@ -11,6 +11,26 @@ from ome_zarr.io import parse_url
 from ..cache import wrap_store_with_cache
 
 
+# Schemes whose data lives off-device and benefits from a local disk cache.
+# Anything else (a bare filesystem path, file://, or a Windows drive letter) is
+# already-local and must NOT be disk-cached (that just copies local chunks into
+# a second local dir — double I/O and space for zero benefit).
+_REMOTE_SCHEMES = frozenset(
+    {"globus", "http", "https", "s3", "gs", "gcs", "az", "abfs", "abfss"})
+
+
+def _is_remote_url(url: str) -> bool:
+    """True for off-device sources that should be disk-cached: ``globus://…``,
+    ``http(s)://…`` (incl. S3), ``s3/gs/az://``. A local path, ``file://``, or a
+    Windows drive (``C:\\…``) has no remote scheme and returns False."""
+    if not url:
+        return False
+    i = url.find("://")
+    if i <= 0:  # no scheme separator -> local filesystem path
+        return False
+    return url[:i].lower() in _REMOTE_SCHEMES
+
+
 def _url_to_cache_subdir(url: str) -> str:
     """Generate a unique cache subdirectory name from the URL."""
     url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
@@ -61,7 +81,11 @@ class ZarrMultiscaleSource:
             root = parse_url(self.url, mode="r")
             source_store = root.store
 
-        if self.cache_enabled:
+        # Only disk-cache REMOTE sources (Globus / S3 / http). A local zarr is
+        # already on fast local disk, so caching it just duplicates chunks into a
+        # second dir — read it straight from the source instead.
+        remote = self._consolidated or _is_remote_url(self.url)
+        if self.cache_enabled and remote:
             cache_subdir = _url_to_cache_subdir(self.url)
             url_specific_cache_dir = self.cache_dir / cache_subdir
             print(f"[zarr_source] Using cache dir: {url_specific_cache_dir}")
@@ -72,6 +96,8 @@ class ZarrMultiscaleSource:
                 max_size_bytes=self.cache_size_bytes,
             )
         else:
+            if self.cache_enabled and not remote:
+                print(f"[zarr_source] Local source — reading directly (no disk cache)")
             self.store = source_store
 
         self._arrays: Dict[int, da.Array] = {}
