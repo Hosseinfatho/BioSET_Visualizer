@@ -70,7 +70,7 @@ class VolumeConfig:
     # In-memory decoded-chunk LRU budgets (RAM). Fine full-Z tiles are large, so
     # too small a budget thrashes (re-decoding tiles every settle). Tune up on a
     # workstation with spare RAM; down on a memory-constrained box.
-    chunk_cache_gb: float = 3.0
+    chunk_cache_gb: float = 6.0
     lowres_cache_gb: float = 0.5
 
     # Globus HTTPS streaming (for `globus://<path>` or *.gaccess.io URLs).

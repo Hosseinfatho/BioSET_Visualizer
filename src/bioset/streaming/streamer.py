@@ -69,6 +69,12 @@ class LoadedData:
 
 class VolumeStreamer:
     DEBOUNCE_DELAY = 0.15
+    # The finest LODs (comp 0/1) cost seconds to decode, so only dispatch them
+    # once the user has genuinely settled — a brief pause mid-rotation shouldn't
+    # kick off a multi-second load that's immediately superseded (which also
+    # clogs the decode pool). Coarse LODs keep the snappy 0.15s debounce.
+    FINE_DEBOUNCE_DELAY = 0.35
+    FINE_COMPONENT_MAX = 1
     # Initial camera distance: 1.0 = VTK default. Use e.g. 0.7 to move camera a little closer, 0.5 for more zoom.
     INITIAL_CAMERA_ZOOM = 1.0
 
@@ -2237,7 +2243,14 @@ class VolumeStreamer:
                     continue
                 self._page_table.mark_resident((comp, ch, cyi, cxi), request.gen, comp)
                 if self._is_superseded(request):
-                    return   # fetched tiles remain cached; not wasted
+                    # Cancel still-queued tile reads so their decode doesn't keep
+                    # occupying the 12-worker pool after we've moved on — that
+                    # head-of-line clog is what makes the *next* view wait seconds
+                    # (queue_wait). Already-running reads finish (cancel is a
+                    # no-op for them) and land in the cache, so nothing is wasted.
+                    for f in futs:
+                        f.cancel()
+                    return
                 self._place(out, arr, grid.tile_bounds(cyi, cxi), snapped)
                 # Throttled sharpening emits are only safe once we have a
                 # complete base (each is still a hole-free frame). Without one
@@ -2301,6 +2314,8 @@ class VolumeStreamer:
                 }
                 for fut in as_completed(futures):
                     if self._is_superseded(request):
+                        for f in futures:      # drop not-yet-started channels
+                            f.cancel()
                         break
                     try:
                         fut.result()
@@ -2362,8 +2377,11 @@ class VolumeStreamer:
             if self._inflight or self._latest_request is None:
                 return
             req = self._latest_request
-            if (time.time() - req.timestamp) < self.DEBOUNCE_DELAY:
-                return  # still settling; wait for quiet
+            settle = (self.FINE_DEBOUNCE_DELAY
+                      if req.component <= self.FINE_COMPONENT_MAX
+                      else self.DEBOUNCE_DELAY)
+            if (time.time() - req.timestamp) < settle:
+                return  # still settling; wait for quiet (longer for fine LODs)
             if self._displayed_matches(req):
                 self._latest_request = None
                 return
