@@ -186,13 +186,23 @@ def compute_visible_xy_roi_vox(
     x_dim: int,
     y_dim: int,
     margin_vox: int = 0,
-        display_samples: int = 2,
+        display_samples: int = 17,
 ) -> ROI:
     """
-    Estimate visible XY region by casting rays from display points into the volume.
-    - display_samples: n for an n×n grid (2 = 4 corners; 3 = 9 pts; 5 = 25 pts). More = more accurate.
-    - For each (dx, dy): ray near->far, intersect with z=zmin and z=zmax, collect world x,y.
-    - Visible ROI = min/max x,y of all intersections, converted to voxel indices.
+    Estimate the visible XY region by casting a grid of rays into the volume and
+    taking the XY bounding box of where they pass through it.
+
+    - display_samples: n for an n×n grid of screen points (n=2 is 4 corners only).
+      Corners alone badly under-sample when the volume only PARTIALLY fills the
+      viewport (a tissue edge is on screen): the corner rays land on empty space,
+      miss the volume, and the ROI collapses to a narrow strip wherever the few
+      hitting corners happen to fall — so the sharp region "jumps" as you pan and
+      thin oblique slivers vanish. A dense interior grid samples the actual
+      on-screen footprint, so the ROI tracks it smoothly. Rays are cheap and this
+      runs once per interaction-settle, so the density costs nothing noticeable.
+    - For each (dx, dy): clip the near->far ray to the volume AABB and collect the
+      world XY where it enters/exits (see `_clip_segment_to_box`).
+    - Visible ROI = min/max x,y of all those points, converted to voxel indices.
     """
     xmin, xmax, ymin, ymax, zmin, zmax = bounds_world
 
