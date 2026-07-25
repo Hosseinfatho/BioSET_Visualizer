@@ -166,64 +166,91 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if streamer:
                 streamer.set_zarr_url(state.zarr_url)
 
-            # Prefer metadata baked into the zarr store; only fall back to a
-            # separate OME-XML URL when the store carries none.
-            metadata = None
+            # Metadata precedence:
+            #  - Dimensions / units / channel COUNT: the ZARR store is the single
+            #    source of truth. Read them from its embedded metadata; fall back
+            #    to a separate OME-XML only when the store carries none.
+            #  - Channel NAMES: come from the separate metadata ONLY when the
+            #    "Separate metadata" panel is open. Otherwise use the store's own
+            #    names (omero labels) or a generic default.
+            embedded = None
+            channel_count = None
             if streamer:
                 try:
                     attrs = streamer.zsrc.root_attrs()
-                    channel_count = None
                     try:
                         channel_count = streamer.zsrc.shape_tczyx(0)[1]
                     except Exception:
-                        pass
-                    metadata = parse_zarr_attrs_metadata(attrs, channel_count)
+                        channel_count = None
+                    embedded = parse_zarr_attrs_metadata(attrs, channel_count)
                 except Exception as e:
                     print(f"[callbacks] Could not read embedded zarr metadata: {e}")
 
-            if metadata is None:
-                if not state.metadata_url:
-                    raise ValueError(
-                        "The zarr store has no embedded metadata and no separate "
-                        "metadata URL was provided."
-                    )
-                metadata = parse_ome_metadata(state.metadata_url)
-                state.metadata_source = "external"
-            else:
-                state.metadata_source = "embedded"
+            # Consult the separate OME-XML when the panel is open (for channel
+            # names) or when the store has no embedded metadata at all (then it is
+            # the only available source, including for dimensions).
+            external = None
+            if (state.metadata_open or embedded is None) and state.metadata_url:
+                try:
+                    external = parse_ome_metadata(state.metadata_url)
+                except Exception as e:
+                    print(f"[callbacks] Could not read separate metadata: {e}")
 
-            state.physical_size_x = metadata.physical_size_x
-            state.physical_size_y = metadata.physical_size_y
-            state.physical_size_z = metadata.physical_size_z
-            state.size_unit = metadata.size_unit or "µm"
+            if embedded is None and external is None:
+                raise ValueError(
+                    "The zarr store has no embedded metadata and no separate "
+                    "metadata is available (open the Separate metadata panel and "
+                    "provide a URL)."
+                )
+
+            # Dimensions/units: the zarr wins; the separate file only fills in when
+            # the store carries nothing.
+            dims_src = embedded if embedded is not None else external
+            phys_x = dims_src.physical_size_x
+            phys_y = dims_src.physical_size_y
+            phys_z = dims_src.physical_size_z
+            size_unit = dims_src.size_unit or "µm"
+
+            # Channel names from the separate file only when it is open (or is the
+            # sole source); otherwise from the store. Channel COUNT is the zarr's.
+            use_external_names = external is not None and (state.metadata_open or embedded is None)
+            channel_count = channel_count or len(dims_src.channels)
+
+            def _channel_name(i):
+                if use_external_names and i < len(external.channels):
+                    return external.channels[i].name
+                if embedded is not None and i < len(embedded.channels):
+                    return embedded.channels[i].name
+                return f"Channel {i}"
+
+            state.metadata_source = "external" if (
+                external is not None and (use_external_names or embedded is None)
+            ) else "embedded"
+
+            state.physical_size_x = phys_x
+            state.physical_size_y = phys_y
+            state.physical_size_z = phys_z
+            state.size_unit = size_unit
 
             if streamer:
-                streamer.set_spacing(
-                    metadata.physical_size_x,
-                    metadata.physical_size_y,
-                    metadata.physical_size_z
-                )
+                streamer.set_spacing(phys_x, phys_y, phys_z)
                 # Pyramid depth and zoom thresholds come from the store itself,
                 # so they must be derived after the URL and spacing are set.
                 streamer.configure_lod_from_source()
 
             mesh_mgr = _refs.get("mesh_manager")
             if mesh_mgr:
-                mesh_mgr.update_spacing(
-                    metadata.physical_size_x,
-                    metadata.physical_size_y,
-                    metadata.physical_size_z
-                )
+                mesh_mgr.update_spacing(phys_x, phys_y, phys_z)
 
             channels = [
                 {
-                    "id": ch.id,
-                    "name": ch.name,
-                    "color": get_channel_color(ch.id),
+                    "id": i,
+                    "name": _channel_name(i),
+                    "color": get_channel_color(i),
                     "color_dialog": False,
                     "range": [0, 100],
                 }
-                for ch in metadata.channels
+                for i in range(channel_count)
             ]
             
             state.channels = channels
