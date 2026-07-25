@@ -194,11 +194,15 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     render_window.SetOffScreenRendering(1)
     render_window.SetShowWindow(False)
 
-    # Heatmap fill renderer (behind)
+    # Heatmap fill renderer (behind). As the layer-0 renderer it is the ONLY one
+    # that clears the window's color buffer (layers >0 are transparent overlays),
+    # so it owns the visible background. It must therefore carry the configured
+    # background color, opaque — otherwise the window always reads back black and
+    # background-color changes never show. Heatmap fill actors draw over it.
     heatmap_fill_renderer = vtkRenderer()
     heatmap_fill_renderer.SetLayer(0)
-    heatmap_fill_renderer.SetBackground(0.0, 0.0, 0.0)
-    heatmap_fill_renderer.SetBackgroundAlpha(0.0)
+    heatmap_fill_renderer.SetBackground(colors.GetColor3d(cfg.background))
+    heatmap_fill_renderer.SetBackgroundAlpha(1.0)
     heatmap_fill_renderer.SetActiveCamera(renderer.GetActiveCamera())  # share camera
     render_window.AddRenderer(heatmap_fill_renderer)
 

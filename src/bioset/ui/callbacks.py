@@ -1284,16 +1284,44 @@ def register_callbacks(ctrl, state, view, streamer=None):
             view.update()
 
     def update_background_color(color_hex):
-        """Update renderer background color."""
+        """Update renderer background color.
+
+        The main window is layered (heatmap fill = layer 0, volume = layer 1,
+        heatmap outline = layer 2). Only the layer-0 renderer clears the window's
+        color buffer, so the visible background comes from IT, not the volume
+        renderer — setting the volume renderer's background alone has no effect.
+        Set every renderer, and make the bottom (lowest-layer) one opaque so the
+        chosen color actually shows."""
         print(f"[callbacks] Updating background color to {color_hex}")
         streamer = _refs.get("streamer")
-        if streamer and hasattr(streamer, 'renderer'):
-            color_hex = color_hex.lstrip('#')
-            if len(color_hex) >= 6:
-                r = int(color_hex[0:2], 16) / 255.0
-                g = int(color_hex[2:4], 16) / 255.0
-                b = int(color_hex[4:6], 16) / 255.0
-                streamer.renderer.SetBackground(r, g, b)
+        if not streamer:
+            return
+        color_hex = color_hex.lstrip('#')
+        if len(color_hex) < 6:
+            return
+        r = int(color_hex[0:2], 16) / 255.0
+        g = int(color_hex[2:4], 16) / 255.0
+        b = int(color_hex[4:6], 16) / 255.0
+
+        rw = getattr(streamer, 'render_window', None)
+        renderers = []
+        if rw is not None:
+            coll = rw.GetRenderers()
+            coll.InitTraversal()
+            ren = coll.GetNextItem()
+            while ren is not None:
+                renderers.append(ren)
+                ren = coll.GetNextItem()
+        if not renderers and hasattr(streamer, 'renderer'):
+            renderers = [streamer.renderer]
+
+        for ren in renderers:
+            ren.SetBackground(r, g, b)
+        if renderers:
+            bottom = min(renderers, key=lambda re: re.GetLayer())
+            bottom.SetBackgroundAlpha(1.0)  # the layer that clears the window
+        if rw is not None:
+            rw.Render()
         if _refs["view"]:
             _refs["view"].update()
     
