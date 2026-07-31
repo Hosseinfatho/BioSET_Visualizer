@@ -357,6 +357,21 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                         "step_interval": _cam_total_s / float(max(1, _num_cam_steps - 1)),
                         "last_step_at": 0.0,
                     }
+                    # Front-load the DESTINATION's data NOW so it streams during the
+                    # fly instead of only after it. Point the streamer at the end
+                    # camera (no frame pushed), schedule the async load for that view,
+                    # then restore the start camera for the animation. Nothing
+                    # competes with this request during the fly, so even a cold, far-
+                    # away second bookmark is ready by ~arrival instead of only
+                    # starting to load ~5s later (the old intermediate-ROI scheduler
+                    # kept superseding it on the single-flight loader).
+                    try:
+                        _apply_camera(streamer, camera_end, reset_clipping_range=True, update_view=False)
+                        if getattr(streamer, "on_interaction_end", None):
+                            streamer.on_interaction_end()
+                        _apply_camera(streamer, start_cam, reset_clipping_range=True, update_view=False)
+                    except Exception:
+                        pass
                     if _refs.get("view"):
                         _refs["view"].update()
                 else:
@@ -413,52 +428,21 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             update_view=True,
         )
 
-        # Background LOD upgrade scheduling (coarse→fine) during camera motion.
-        # This avoids blocking the UI tick loop while letting higher resolution appear as you zoom in.
+        # Keep the complete coarse base showing during the fly and swap to the
+        # destination's sharp texture exactly when the camera enters it. The
+        # destination was front-loaded, so its sharp texture is ready by arrival;
+        # without this, that texture (applied mid-fly) would replace the base and
+        # leave everything outside it blank while flying over it.
         try:
-            last_at = float(_refs.get("bookmark_last_bg_lod_schedule_at", 0.0) or 0.0)
-            if now - last_at > 0.6:
-                from bioset.streaming.lod import camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
-                from bioset.streaming.streamer import LoadRequest
-
-                ren = streamer.renderer
-                if ren:
-                    dist = camera_distance_to_focal(ren.GetActiveCamera())
-                    desired_comp = choose_component(
-                        dist,
-                        streamer.cfg.distance_rules,
-                        min_component=streamer.cfg.min_component,
-                        max_component=streamer.cfg.max_component,
-                    )
-                    spacing = streamer._spacing_for_component(desired_comp)
-                    zdim, ydim, xdim = streamer._dims_for_component(desired_comp)
-                    bounds = streamer._volume_bounds_world(desired_comp)
-                    roi = compute_visible_xy_roi_vox(
-                        streamer.renderer,
-                        bounds_world=bounds,
-                        sx=spacing.sx,
-                        sy=spacing.sy,
-                        x_dim=xdim,
-                        y_dim=ydim,
-                        margin_vox=streamer.cfg.roi_margin_vox,
-                    )
-                    # Cap the load size like the interactive path so a big oblique
-                    # ROI during the fly doesn't decode thousands of fine tiles.
-                    if getattr(streamer, "_fit_component_to_budget", None):
-                        desired_comp, roi = streamer._fit_component_to_budget(desired_comp, roi)
-                    req = LoadRequest(component=desired_comp, roi=roi, timestamp=time.time())
-                    streamer._schedule_load(req)
-                    _refs["bookmark_last_bg_lod_schedule_at"] = now
+            streamer._update_interaction_textures()
         except Exception:
             pass
 
-        # NOTE: high-res channel upgrades are intentionally NOT done during camera motion
-        # to avoid blocking the render/tick loop and freezing the camera.
-
-        # When camera motion is finished, the tick loop will naturally proceed to the
-        # `bookmark_camera_apply_once` branch, and the next tick can upgrade channels safely.
-
-        # (High-res upgrades block the tick loop, so they must be delayed until after camera animation.)
+        # NOTE: we intentionally do NOT schedule per-frame intermediate-ROI loads
+        # during the fly. The destination's load was front-loaded once when the
+        # animation was set up, so it streams uninterrupted while the camera flies;
+        # scheduling intermediate ROIs here would keep superseding it on the single-
+        # flight loader and delay the destination until the fly finished.
 
     def _apply_nov_view(streamer, nov_data):
         """Apply NOV view: set lens, sync volumes, apply camera to nov_renderer, open popup."""
