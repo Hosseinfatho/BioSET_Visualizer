@@ -65,18 +65,29 @@ def parse_zarr_attrs_metadata(
     datasets = ms.get("datasets") or []
     if not datasets:
         return None
-    # Level 0 is the finest level; datasets are ordered coarsest-last by spec,
-    # but sort by path to be safe against writers that don't order them.
-    try:
-        level0 = min(datasets, key=lambda d: int(str(d.get("path", "0"))))
-    except (TypeError, ValueError):
-        level0 = datasets[0]
 
-    scale = None
-    for tf in level0.get("coordinateTransformations") or []:
-        if tf.get("type") == "scale" and tf.get("scale"):
-            scale = tf["scale"]
-            break
+    # Pick the FINEST level by voxel scale (smallest scale product), not by name:
+    # level names may be non-numeric (``s0..sN``) and are not guaranteed ordered.
+    def _scale_of(d):
+        for tf in d.get("coordinateTransformations") or []:
+            if tf.get("type") == "scale" and tf.get("scale"):
+                return tf["scale"]
+        return None
+
+    def _scale_prod(d):
+        s = _scale_of(d)
+        if not s:
+            return float("inf")
+        p = 1.0
+        for v in s:
+            try:
+                p *= float(v)
+            except (TypeError, ValueError):
+                pass
+        return p
+
+    level0 = min(datasets, key=_scale_prod)
+    scale = _scale_of(level0)
     if scale is None:
         return None
 

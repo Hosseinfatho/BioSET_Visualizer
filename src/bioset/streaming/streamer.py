@@ -1219,9 +1219,8 @@ class VolumeStreamer:
         return dims
 
     def _dims_for_component(self, component: int) -> Tuple[int, int, int]:
-        shape = self.zsrc.shape_tczyx(component)
-        _, _, z, y, x = shape
-        return (z, y, x)
+        # Canonical (z,y,x) regardless of stored layout (3D/4D/5D, any axis order).
+        return self.zsrc.canonical_shape(component)
 
     def _volume_bounds_world(self, component: int):
         spacing = self._spacing_for_component(component)
@@ -1701,7 +1700,9 @@ class VolumeStreamer:
             with self._grids_lock:
                 g = self._grids.get(comp)
                 if g is None:
-                    g = ChunkGrid(self.zsrc.raw_array(comp))
+                    g = ChunkGrid.from_dims(
+                        *self.zsrc.canonical_shape(comp),
+                        *self.zsrc.canonical_chunks(comp))
                     self._grids[comp] = g
         return g
 
@@ -1723,7 +1724,8 @@ class VolumeStreamer:
             return hit
         b = grid.tile_bounds(cyi, cxi)
         arr = np.ascontiguousarray(
-            self.zsrc.raw_array(comp)[self.cfg.zarr_time_index, ch, :, b.y0:b.y1, b.x0:b.x1],
+            self.zsrc.read_region(comp, ch, b.y0, b.y1, b.x0, b.x1,
+                                   t=self.cfg.zarr_time_index),
             dtype=np.uint16,
         )  # (z, ty, tx)
         cache.put(key, arr)
@@ -1870,7 +1872,7 @@ class VolumeStreamer:
         """Assemble the snapped (tile-aligned) ROI by fetching its covering
         tiles concurrently and placing them. Used by both the blocking path and
         the progressive stream (which seeds/emits around this)."""
-        z = self.zsrc.raw_array(component).shape[2]
+        z = self.zsrc.canonical_shape(component)[0]
         out = np.zeros((z, snapped.y1 - snapped.y0, snapped.x1 - snapped.x0),
                        dtype=np.uint16)
         tiles = grid.covering_tiles(snapped)
@@ -1920,13 +1922,12 @@ class VolumeStreamer:
 
         print(f"[stream] init: loading FULL volumes at component={comp}")
 
-        darr = self.zsrc.array(comp)
-        _, _, z, y, x = darr.shape
+        z, y, x = self.zsrc.canonical_shape(comp)
 
         for i, ch in enumerate(self.cfg.channels):
             ch = int(ch)
 
-            np_vol = darr[self.cfg.zarr_time_index, ch, :, :, :].compute()
+            np_vol = self.zsrc.read_full(comp, ch, t=self.cfg.zarr_time_index)
             img = self._create_vtk_image(np_vol, spacing, (0.0, 0.0, 0.0))
 
             color_tf, opacity_tf = self._precompute_transfer_function(ch, img)
@@ -2069,7 +2070,7 @@ class VolumeStreamer:
                     continue
                 grid = self._grid(st.component)
                 out = np.zeros(
-                    (self.zsrc.raw_array(st.component).shape[2],
+                    (self.zsrc.canonical_shape(st.component)[0],
                      st.roi.y1 - st.roi.y0, st.roi.x1 - st.roi.x0),
                     dtype=np.uint16)
                 # Complete blurry base so any not-yet-placed tile isn't a hole.
@@ -2227,7 +2228,7 @@ class VolumeStreamer:
         throttled as they land. On supersede it returns at once; tiles already
         fetched stay in the cache (not wasted)."""
         try:
-            z = self.zsrc.raw_array(comp).shape[2]
+            z = self.zsrc.canonical_shape(comp)[0]
             out = np.zeros((z, snapped.y1 - snapped.y0, snapped.x1 - snapped.x0),
                            dtype=np.uint16)
             covered = self._seed_from_coarser(out, comp, ch, snapped, grid)

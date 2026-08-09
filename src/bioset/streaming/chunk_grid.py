@@ -27,8 +27,22 @@ class ChunkGrid:
     """
 
     def __init__(self, zarr_array):
+        # Back-compat path: assumes a 5D (t,c,z,y,x) array. Prefer `from_dims`
+        # (fed by ZarrMultiscaleSource.canonical_shape/chunks), which works for
+        # 3D/4D/5D stores with any axis order.
         _, _, z, y, x = zarr_array.shape
         _, _, cz, ty, tx = zarr_array.chunks
+        self._set_dims(z, y, x, cz, ty, tx)
+
+    @classmethod
+    def from_dims(cls, z, y, x, cz, ty, tx) -> "ChunkGrid":
+        """Build a grid from canonical (z,y,x) sizes and (cz,ty,tx) chunk sizes,
+        independent of how many/which axes the underlying array has."""
+        self = cls.__new__(cls)
+        self._set_dims(z, y, x, cz, ty, tx)
+        return self
+
+    def _set_dims(self, z, y, x, cz, ty, tx) -> None:
         self.Z, self.Y, self.X = int(z), int(y), int(x)
         self.cz, self.ty, self.tx = int(cz), int(ty), int(tx)
         self.n_cz = math.ceil(self.Z / self.cz)   # 1 for full-z columns

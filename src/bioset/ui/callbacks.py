@@ -179,7 +179,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 try:
                     attrs = streamer.zsrc.root_attrs()
                     try:
-                        channel_count = streamer.zsrc.shape_tczyx(0)[1]
+                        # Channel count from the store's axis layout — 1 for a
+                        # bare 3D (z,y,x) volume with no channel axis.
+                        channel_count = streamer.zsrc.num_channels()
                     except Exception:
                         channel_count = None
                     embedded = parse_zarr_attrs_metadata(attrs, channel_count)
@@ -255,8 +257,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             
             state.channels = channels
             state.active_channels = []
-            initial_visible = channels if len(channels) < state.default_num_channels else [ch["id"] for ch in channels[:state.default_num_channels]]
-            state.visible_channel_ids = initial_visible
+            # visible_channel_ids must be a list of channel IDs (the list UI does
+            # visible_channel_ids.includes(ch.id)). Slicing covers both cases:
+            # fewer channels than the default shows them all. (The old code
+            # assigned the channel *dicts* when there were fewer than the default,
+            # so a single-channel store rendered an empty list.)
+            state.visible_channel_ids = [
+                ch["id"] for ch in channels[:state.default_num_channels]]
             state.data_loaded = True
             # Per-dataset folder for bookmark recordings (one folder per dataset link)
             try:

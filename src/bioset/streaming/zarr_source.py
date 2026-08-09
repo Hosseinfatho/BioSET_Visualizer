@@ -103,6 +103,13 @@ class ZarrMultiscaleSource:
         self._arrays: Dict[int, da.Array] = {}
         self._raw_arrays: Dict[int, Any] = {}
         self._croot = None   # cached consolidated root group (Globus)
+        # Inferred layout (lazy): real level names ordered finest→coarsest, and a
+        # map from canonical axis (t/c/z/y/x) to the array's dimension index.
+        # These make the source work with ANY OME-Zarr — level names like
+        # ``s0..sN`` (not just ``0..N``), levels in any stored order, and arrays
+        # that are 3D (z,y,x), 4D (c,z,y,x), or 5D (t,c,z,y,x).
+        self._level_paths: Optional[list] = None
+        self._axis_index: Optional[Dict[str, Optional[int]]] = None
 
     def _consolidated_root(self):
         """Consolidated root group (opened once) for a non-listing store."""
@@ -129,19 +136,76 @@ class ZarrMultiscaleSource:
             print(f"[zarr_source] No root attributes available: {e}")
             return {}
 
-    def level_count(self, max_probe: int = 24) -> int:
-        """Number of resolution levels in the pyramid.
+    # ------------------------------------------------------------------
+    # Level (resolution) discovery — names + order inferred from the store.
+    # ------------------------------------------------------------------
+    def _level_paths_list(self) -> Optional[list]:
+        """Real level names ordered finest→coarsest (component 0 = finest).
 
-        Prefers the ``multiscales`` datasets list; falls back to probing for
-        consecutive ``0``, ``1``, ... arrays for stores without it. Returns at
-        least 1 so a single-level store still renders.
+        We do NOT assume numeric names (``0..N``) or that the first listed level
+        is the finest: order by voxel scale from the ``multiscales`` metadata
+        (smallest scale = finest). Falls back to spec order, then to listing the
+        group's arrays ordered by size (largest = finest). Returns None only when
+        nothing can be discovered (caller then probes numeric names).
         """
+        if self._level_paths is not None:
+            return self._level_paths or None
+
+        paths: Optional[list] = None
         attrs = self.root_attrs()
-        multiscales = attrs.get("multiscales")
-        if multiscales:
-            datasets = multiscales[0].get("datasets") or []
+        ms = attrs.get("multiscales")
+        if ms:
+            datasets = ms[0].get("datasets") or []
             if datasets:
-                return len(datasets)
+                def _scale_prod(d):
+                    for tf in d.get("coordinateTransformations") or []:
+                        if tf.get("type") == "scale" and tf.get("scale"):
+                            p = 1.0
+                            for v in tf["scale"]:
+                                try:
+                                    p *= float(v)
+                                except (TypeError, ValueError):
+                                    pass
+                            return p
+                    return None
+                keyed = [(_scale_prod(d), str(d.get("path"))) for d in datasets]
+                if all(k is not None for k, _ in keyed):
+                    keyed.sort(key=lambda t: t[0])  # ascending scale = finest first
+                    paths = [p for _, p in keyed]
+                else:
+                    # No scale info: trust NGFF ordering (datasets are finest-first).
+                    paths = [str(d.get("path")) for d in datasets]
+
+        if paths is None:
+            # No multiscales block: list the group's arrays and order by size
+            # (largest = finest). Robust to any naming.
+            try:
+                import numpy as _np
+                import zarr
+                g = self._consolidated_root() if self._consolidated \
+                    else zarr.open_group(self.store, mode="r")
+                keys = list(g.array_keys())
+                if keys:
+                    keys.sort(key=lambda k: int(_np.prod(g[k].shape)), reverse=True)
+                    paths = keys
+            except Exception:
+                paths = None
+
+        self._level_paths = paths or []
+        return paths
+
+    def _path_for(self, component: int) -> str:
+        """Real dataset name for a component index (0 = finest)."""
+        paths = self._level_paths_list()
+        if paths and 0 <= component < len(paths):
+            return paths[component]
+        return str(component)  # last-resort legacy numeric name
+
+    def level_count(self, max_probe: int = 24) -> int:
+        """Number of resolution levels (inferred from the store, never assumed)."""
+        paths = self._level_paths_list()
+        if paths is not None:
+            return max(1, len(paths))
 
         count = 0
         for component in range(max_probe):
@@ -158,7 +222,7 @@ class ZarrMultiscaleSource:
                 self._arrays[component] = da.from_zarr(self.raw_array(component))
             else:
                 self._arrays[component] = da.from_zarr(
-                    self.store, component=str(component))
+                    self.store, component=self._path_for(component))
         return self._arrays[component]
 
     def raw_array(self, component: int):
@@ -177,12 +241,114 @@ class ZarrMultiscaleSource:
                 root = self._consolidated_root()
             else:
                 root = zarr.open_group(self.store, mode="r")
-            a = root[str(component)]
+            a = root[self._path_for(component)]
             self._raw_arrays[component] = a
         return a
 
     def shape_tczyx(self, component: int) -> Tuple[int, ...]:
         return tuple(self.array(component).shape)
+
+    # ------------------------------------------------------------------
+    # Axis-aware access — works for 3D/4D/5D arrays with any axis order.
+    # ------------------------------------------------------------------
+    def _axes(self) -> Dict[str, Optional[int]]:
+        """Map canonical axis {t,c,z,y,x} → dimension index (or None if absent).
+
+        Prefers the ``multiscales`` ``axes`` names; if absent, infers from the
+        array's dimensionality (5D→tczyx, 4D→czyx, 3D→zyx, 2D→yx)."""
+        if self._axis_index is not None:
+            return self._axis_index
+
+        names = None
+        attrs = self.root_attrs()
+        ms = attrs.get("multiscales")
+        if ms:
+            axes = ms[0].get("axes")
+            if axes:
+                names = [
+                    (a.get("name") if isinstance(a, dict) else str(a)) or ""
+                    for a in axes
+                ]
+        if not names:
+            try:
+                ndim = self.raw_array(0).ndim
+            except Exception:
+                ndim = 5
+            names = {
+                5: ["t", "c", "z", "y", "x"],
+                4: ["c", "z", "y", "x"],
+                3: ["z", "y", "x"],
+                2: ["y", "x"],
+                1: ["x"],
+            }.get(ndim, ["z", "y", "x"])
+
+        idx: Dict[str, Optional[int]] = {k: None for k in ("t", "c", "z", "y", "x")}
+        for i, n in enumerate(names):
+            k = str(n).strip().lower()[:1]  # NGFF names: t/c/z/y/x (or channel/time)
+            if k in idx:
+                idx[k] = i
+        self._axis_index = idx
+        return idx
+
+    def num_channels(self) -> int:
+        """Channel count from the 'c' axis; 1 when the store has no channel axis
+        (e.g. a bare 3D z,y,x volume — treated as a single channel)."""
+        ci = self._axes().get("c")
+        if ci is None:
+            return 1
+        try:
+            return int(self.raw_array(0).shape[ci])
+        except Exception:
+            return 1
+
+    def canonical_shape(self, component: int) -> Tuple[int, int, int]:
+        """(z, y, x) sizes for a component, regardless of stored axis layout.
+        A missing spatial axis (e.g. a 2D image) reports size 1 for that axis."""
+        sh = self.raw_array(component).shape
+        ax = self._axes()
+        z = int(sh[ax["z"]]) if ax["z"] is not None else 1
+        y = int(sh[ax["y"]]) if ax["y"] is not None else 1
+        x = int(sh[ax["x"]]) if ax["x"] is not None else 1
+        return (z, y, x)
+
+    def canonical_chunks(self, component: int) -> Tuple[int, int, int]:
+        """(cz, ty, tx) chunk sizes for a component (defaults to the full extent
+        on any axis without chunk info)."""
+        arr = self.raw_array(component)
+        ax = self._axes()
+        z, y, x = self.canonical_shape(component)
+        chunks = getattr(arr, "chunks", None)
+        if not chunks:
+            return (z, y, x)
+        cz = int(chunks[ax["z"]]) if ax["z"] is not None else z
+        ty = int(chunks[ax["y"]]) if ax["y"] is not None else y
+        tx = int(chunks[ax["x"]]) if ax["x"] is not None else x
+        return (cz, ty, tx)
+
+    def read_region(self, component: int, ch: int,
+                    y0: int, y1: int, x0: int, x1: int, t: int = 0):
+        """Read a full-z column for one channel over [y0:y1, x0:x1] as a (z,y,x)
+        numpy array, selecting the t/c axes only if the store actually has them."""
+        arr = self.raw_array(component)
+        ax = self._axes()
+        idx: list = [slice(None)] * arr.ndim
+        if ax["t"] is not None:
+            idx[ax["t"]] = int(t)
+        if ax["c"] is not None:
+            idx[ax["c"]] = int(ch)
+        if ax["y"] is not None:
+            idx[ax["y"]] = slice(int(y0), int(y1))
+        if ax["x"] is not None:
+            idx[ax["x"]] = slice(int(x0), int(x1))
+        # z axis stays a full slice. NGFF orders spatial axes z,y,x, so after the
+        # scalar t/c selections the remaining axes are already (z, y, x).
+        import numpy as _np
+        return _np.asarray(arr[tuple(idx)])
+
+    def read_full(self, component: int, ch: int, t: int = 0):
+        """Read a whole channel volume at a component as a (z,y,x) numpy array."""
+        _z, y, x = self.canonical_shape(component)
+        return self.read_region(component, ch, 0, y, 0, x, t=t)
 
     def cache_stats(self) -> Optional[Dict[str, Any]]:
         """On-disk CacheStore performance counters (hits/misses/evictions/hit_rate).
