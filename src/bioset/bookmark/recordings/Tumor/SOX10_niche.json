@@ -3,7 +3,7 @@
   "title": "SOX10 niche",
   "category": "Tumor",
   "created": "2026-03-15T23:57:32Z",
-  "updated": "2026-03-19T17:28:16Z",
+  "updated": "2026-07-31T00:06:52Z",
   "notes": "starting  interaction between SOX10 and MART1 in high density",
   "description": "starting  interaction between SOX10 and MART1 in high density",
   "camera": {
@@ -162,5 +162,8 @@
       "y0": 710,
       "y1": 1234
     }
-  }
+  },
+  "chat_history_enabled": true,
+  "chat_history": [],
+  "chat_history_updated": "2026-07-31T00:06:52Z"
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Sequence, Optional, Tuple
@@ -66,6 +67,18 @@ class VolumeConfig:
     cache_enabled: bool = True
     cache_dir: Path = Path.home() / ".cache" / "bioset_zarr_cache"
     cache_size_gb: float = 8.0
+    # In-memory decoded-chunk LRU budgets (RAM). Fine full-Z tiles are large, so
+    # too small a budget thrashes (re-decoding tiles every settle). Tune up on a
+    # workstation with spare RAM; down on a memory-constrained box.
+    chunk_cache_gb: float = 6.0
+    lowres_cache_gb: float = 0.5
+
+    # Globus HTTPS streaming (for `globus://<path>` or *.gaccess.io URLs).
+    # Collection/host differ per collection; token file caches the refresh token.
+    globus_client_id: Optional[str] = None
+    globus_collection_id: Optional[str] = None
+    globus_https_base: Optional[str] = None
+    globus_token_file: str = "~/.bioset/globus_token.json"
 
     # surfaces directory
     mesh_dir: Optional[Path] = None
@@ -100,4 +113,13 @@ def default_config() -> VolumeConfig:
         base_sy=0.14,
         base_sz=0.28,
         mesh_dir=data_dir / "output_meshes",
+        # Globus HTTPS: env-overridable, with the known working collection as default.
+        globus_client_id=os.environ.get(
+            "BIOSET_GLOBUS_CLIENT_ID", "6be7e29d-6cf6-42a0-bf49-90ccba4bf8a3"),
+        globus_collection_id=os.environ.get(
+            "BIOSET_GLOBUS_COLLECTION_ID", "31fa4572-cd84-489b-8008-0bf0e52bb4d4"),
+        globus_https_base=os.environ.get(
+            "BIOSET_GLOBUS_HTTPS_BASE", "https://m-b2c38a.183192.b160.gaccess.io"),
+        globus_token_file=os.environ.get(
+            "BIOSET_GLOBUS_TOKEN_FILE", "~/.bioset/globus_token.json"),
     )

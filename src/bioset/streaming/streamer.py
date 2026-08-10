@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 import queue
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Callable
 
@@ -12,9 +13,19 @@ from vtkmodules.util.numpy_support import numpy_to_vtk
 from vtkmodules.vtkCommonDataModel import vtkImageData
 from vtkmodules.vtkCommonDataModel import vtkPiecewiseFunction
 from vtkmodules.vtkRenderingCore import vtkColorTransferFunction, vtkVolume, vtkVolumeProperty
-from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper
+from vtkmodules.vtkRenderingVolume import vtkGPUVolumeRayCastMapper, vtkMultiVolume
 
-from .lod import ROI, camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
+from .chunk_cache import ChunkCache, PageTable
+from .chunk_grid import ChunkGrid
+from .lod import (
+    ROI,
+    camera_distance_to_focal,
+    choose_component,
+    compute_visible_xy_roi_vox,
+    derive_distance_rules,
+    scale_roi_to_component,
+)
+from .profiling import StageTimer, fmt_bytes, log as plog
 from .zarr_source import ZarrMultiscaleSource
 from ..scene.volumes import SpacingConfig, color_name_to_rgb, build_histogram_tf, build_tf_with_range
 
@@ -27,23 +38,43 @@ class ChannelState:
 
 @dataclass
 class LoadRequest:
-    """Represents a pending load operation"""
+    """Represents a pending load operation.
+
+    gen is a monotonically increasing generation id. A request is stale the
+    moment a newer one is created, which lets in-flight work bail early and
+    lets the apply step drop results that no longer match the viewport.
+    """
     component: int
     roi: ROI
     timestamp: float
+    gen: int = 0
 
 
 @dataclass
 class LoadedData:
-    """Data loaded in background thread, ready for VTK update on main thread"""
+    """Result built in the worker thread, ready for a cheap main-thread swap.
+
+    The heavy numpy->vtk conversion is done in the worker, so channel_images
+    already hold fully-built vtkImageData. The main thread only does
+    SetInputData + Render.
+    """
     component: int
     roi: ROI
-    channel_arrays: Dict[int, np.ndarray]
+    channel_images: Dict[int, "vtkImageData"]
     timestamp: float
+    gen: int
+    was_capped: bool = False   # this frame's texture was downsized for speed
+    hires: bool = False        # this frame is the idle full-resolution upgrade
 
 
 class VolumeStreamer:
     DEBOUNCE_DELAY = 0.15
+    # The finest LODs (comp 0/1) cost seconds to decode, so only dispatch them
+    # once the user has genuinely settled — a brief pause mid-rotation shouldn't
+    # kick off a multi-second load that's immediately superseded (which also
+    # clogs the decode pool). Coarse LODs keep the snappy 0.15s debounce.
+    FINE_DEBOUNCE_DELAY = 0.35
+    FINE_COMPONENT_MAX = 1
     # Initial camera distance: 1.0 = VTK default. Use e.g. 0.7 to move camera a little closer, 0.5 for more zoom.
     INITIAL_CAMERA_ZOOM = 1.0
 
@@ -58,31 +89,112 @@ class VolumeStreamer:
         if VolumeStreamer._executor is None:
             VolumeStreamer._executor = ThreadPoolExecutor(max_workers=2)
 
+        # Dedicated pool so the channels of a single viewport load concurrently
+        # (one slow/remote channel no longer blocks the fast cached ones). Kept
+        # separate from the shared _executor (which also serves NOV) to avoid
+        # a worker waiting on the same pool it occupies.
+        self._channel_executor = ThreadPoolExecutor(
+            max_workers=6, thread_name_prefix="channel_load")
+
         max_bytes = int(cfg.cache_size_gb * (1024**3))
         self.zsrc = ZarrMultiscaleSource(
             url=cfg.zarr_url,
             cache_enabled=cfg.cache_enabled,
             cache_dir=cfg.cache_dir,
             cache_size_bytes=max_bytes,
+            globus_client_id=getattr(cfg, "globus_client_id", None),
+            globus_collection_id=getattr(cfg, "globus_collection_id", None),
+            globus_https_base=getattr(cfg, "globus_https_base", None),
+            globus_token_file=getattr(cfg, "globus_token_file", "~/.bioset/globus_token.json"),
         )
 
         self.volumes: Dict[int, vtkVolume] = {}
         self.mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
         self.state: Dict[int, ChannelState] = {}
 
+        # Multi-channel blending: all active channels share ONE GPU mapper via a
+        # vtkMultiVolume (one input port per channel), so the ray-caster composites
+        # them per sample instead of the last-added volume occluding the others.
+        # Each port is still an independently-updated texture, so per-channel
+        # streaming (base swap, coalescing, ROI refine) is unchanged.
+        self._blend_mode = "composite"
+        # A single real volume triggers a vtkMultiVolume bug that ignores the
+        # image origin (content renders shifted); >=2 volumes render correctly.
+        # A permanent transparent 1^3 dummy keeps the count >=2 for a lone channel.
+        self._dummy_volume, self._dummy_image = self._make_dummy_volume()
+        self._multi_mapper = self._new_multi_mapper()
+        self._multi_volume = self._new_multi_volume()
+        self._multi_volume.SetMapper(self._multi_mapper)
+        self.renderer.AddVolume(self._multi_volume)
+        self._channel_port: Dict[int, int] = {}          # ch -> port index
+        self._current_input: Dict[int, "vtkImageData"] = {}  # last texture per ch (for rebuilds)
+
         self._channel_tfs: Dict[int,
                                 Tuple[vtkColorTransferFunction, vtkPiecewiseFunction]] = {}
         self._channel_percentile_bounds: Dict[int, Tuple[float, float, float]] = {}
 
-        self._pending_request: Optional[LoadRequest] = None
-        self._debounce_lock = threading.Lock()
-        self._loading_lock = threading.Lock()
-        self._is_loading = False
+        # --- Latest-wins async loader state ---
+        # on_interaction_end stores the newest desired (comp, roi) here; the
+        # main-thread poll loop (service_loads) debounces and dispatches it.
+        self._req_lock = threading.Lock()
+        self._latest_request: Optional[LoadRequest] = None
+        self._max_gen = 0                       # newest generation handed out
+        self._inflight = False                  # a worker load is running
+
+        # Idle-refine: after the user stops, re-render once at full quality.
+        self._needs_still_render = False
+        self._idle_ticks = 0
+
+        # Interactive resolution cap: while loading/interacting we upload a
+        # small (fast) texture; once idle we rebuild full-res from cached numpy
+        # and swap it in. _capped_channels = channels currently shown downsized.
+        self._capped_channels: set[int] = set()
+        self._hires_inflight = False
 
         self._loaded_data_queue: queue.Queue[LoadedData] = queue.Queue()
 
-        self._array_cache: Dict[Tuple[int, int, ROI], np.ndarray] = {}
-        self._cache_max_entries = 32
+        # --- Chunk page-table cache (replaces the exact-ROI array cache) ---
+        # Decoded chunks keyed by (comp, ch, cyi, cxi), byte-budget LRU, over the
+        # on-disk compressed CacheStore. Overlapping pans/zooms reuse tiles
+        # instead of re-downloading whole ROIs.
+        chunk_budget = int(getattr(cfg, "chunk_cache_gb", 1.0) * (1024**3))
+        self._chunk_cache = ChunkCache(budget_bytes=chunk_budget)
+        # Dedicated cache for the coarsest LOD's tiles. Fine-tile churn (which can
+        # fill the main cache fast when zooming in) must never evict these, or the
+        # blurry base disappears and the volume blanks to the edges on zoom-out.
+        # Sized to comfortably hold the whole coarsest level for all channels;
+        # it only evicts (LRU) if that budget is genuinely exceeded.
+        lowres_budget = int(getattr(cfg, "lowres_cache_gb", 0.5) * (1024**3))
+        self._lowres_cache = ChunkCache(budget_bytes=lowres_budget)
+        self._page_table = PageTable()
+        self._grids: Dict[int, ChunkGrid] = {}     # comp -> ChunkGrid (lazy)
+        self._grids_lock = threading.Lock()
+        # Concurrent per-chunk fetch (tiles); separate from _channel_executor
+        # (channels) so a channel task never waits on the pool it occupies.
+        self._chunk_pool = ThreadPoolExecutor(
+            max_workers=12, thread_name_prefix="chunk_fetch")
+
+        # Per-channel full-volume coarsest texture, shown instantly while the user
+        # interacts (never empty, cheap to render) and replaced by the sharp ROI
+        # texture once they settle. _showing_base = channels currently on the base.
+        self._base_images: Dict[int, "vtkImageData"] = {}
+        self._showing_base: set[int] = set()
+        # Per-channel last SHARP (fine ROI) texture, retained so an interaction
+        # can toggle a port back to it (fine<->base) without re-streaming. Used
+        # by the adaptive interaction LOD (keep sharp while the viewport stays
+        # inside the loaded ROI; drop to the coarse base only when it doesn't).
+        self._fine_images: Dict[int, "vtkImageData"] = {}
+        self._interaction_move_last = 0.0  # throttle for on_interaction_move
+        # Eased mouse-wheel zoom: `_zoom_target` is the dolly factor still owed
+        # (1.0 = nothing pending); the animation tick glides the camera toward it
+        # (fast -> slow -> stop). See queue_zoom / zoom_animation_tick.
+        self._zoom_target = 1.0
+        self._zoom_animating = False
+        # Total bytes fetched from the store (decoded), for profiling. The TF is
+        # built once from real activation data and reused per frame (see
+        # _apply_loaded_data_on_main_thread), so a zero/blurry seed frame renders
+        # transparent through the frozen TF — no solid-block, no per-frame flicker.
+        self._bytes_fetched = 0
 
         self._last_component: Optional[int] = None
         self._initial_camera: Optional[dict] = None  # position, focalPoint, viewUp after first load
@@ -116,21 +228,33 @@ class VolumeStreamer:
     def set_zarr_url(self, url: str):
         """Update the zarr URL and reinitialize the source."""
         print(f"[stream] Setting zarr URL: {url}")
-        for vol in self.volumes.values():
-            self.renderer.RemoveVolume(vol)
         max_bytes = int(self.cfg.cache_size_gb * (1024**3))
         self.zsrc = ZarrMultiscaleSource(
             url=url,
             cache_enabled=self.cfg.cache_enabled,
             cache_dir=self.cfg.cache_dir,
             cache_size_bytes=max_bytes,
+            globus_client_id=getattr(self.cfg, "globus_client_id", None),
+            globus_collection_id=getattr(self.cfg, "globus_collection_id", None),
+            globus_https_base=getattr(self.cfg, "globus_https_base", None),
+            globus_token_file=getattr(self.cfg, "globus_token_file", "~/.bioset/globus_token.json"),
         )
-        self._array_cache.clear()
+        self._chunk_cache.clear()
+        self._lowres_cache.clear()
+        self._page_table.clear()
+        self._base_images.clear()
+        self._fine_images.clear()
+        self._showing_base.clear()
+        self._level0_dims = None
+        with self._grids_lock:
+            self._grids.clear()
         self._active_channels.clear()
         self._channel_colors.clear()
         self._channel_tfs.clear()
         self.volumes.clear()
         self.mappers.clear()
+        self._current_input.clear()
+        self._rebuild_multivolume()   # drops all ports (volumes now empty)
         self.state.clear()
         self._initial_camera = None
 
@@ -141,6 +265,51 @@ class VolumeStreamer:
                                         "base_sy": sy,
                                         "base_sz": sz})
         print(f"[stream] Updated spacing: ({sx}, {sy}, {sz})")
+
+    def configure_lod_from_source(self):
+        """Derive the LOD component range and zoom thresholds from the store.
+
+        Must run after `set_zarr_url` and `set_spacing`, since it reads the
+        pyramid depth from the zarr and scales the distance rules by the
+        volume's physical extent. Leaves the configured defaults in place if
+        the store can't be inspected.
+        """
+        try:
+            levels = self.zsrc.level_count()
+        except Exception as e:
+            print(f"[stream] Could not detect pyramid depth, keeping defaults: {e}")
+            return
+
+        max_component = max(0, levels - 1)
+        updates = {
+            # Respect a configured floor (don't force 0): loading the finest
+            # level (comp 0) is ~8x the data of comp 1 for a near-identical
+            # on-screen result and cost 8-12s/settle in profiling. Set
+            # cfg.min_component=1 to cap the finest LOD and keep high zoom snappy.
+            "min_component": max(0, min(self.cfg.min_component, max_component)),
+            "max_component": max_component,
+            # Start coarse: the first frame should be cheap, LOD refines after.
+            "start_component": max_component,
+        }
+
+        try:
+            z, y, x = self._dims_for_component(0)
+            diagonal = math.sqrt(
+                (x * self.cfg.base_sx) ** 2
+                + (y * self.cfg.base_sy) ** 2
+                + (z * self.cfg.base_sz) ** 2
+            )
+            rules = derive_distance_rules(diagonal, max_component)
+            if rules:
+                updates["distance_rules"] = rules
+                print(f"[stream] World diagonal: {diagonal:.1f} "
+                      f"-> LOD distances: {[round(d) for d, _ in rules[:-1]]}")
+        except Exception as e:
+            print(f"[stream] Could not derive distance rules, keeping defaults: {e}")
+
+        self.cfg = self.cfg.__class__(**{**self.cfg.__dict__, **updates})
+        print(f"[stream] Detected {levels} resolution levels "
+              f"(components 0..{max_component})")
 
     def _hex_to_rgb(self, color_hex: str) -> Tuple[float, float, float]:
         """Convert hex color to RGB tuple (0-1 range)."""
@@ -213,14 +382,25 @@ class VolumeStreamer:
             margin_vox=self.cfg.roi_margin_vox,
         )
         
+        # Bound the load size (see _fit_component_to_budget): a coarser LOD for a
+        # huge oblique/zoomed-out ROI so we don't decode thousands of fine tiles.
+        desired_comp, roi = self._fit_component_to_budget(desired_comp, roi)
+
         print(f"[stream] Scheduling LOD update: comp={desired_comp} roi={roi}")
-        
+
+        # Safety net: never replace the live texture with a degenerate (needle)
+        # ROI — that would blank the volume (the edge-on vanish bug). Keep the
+        # currently displayed frame instead.
+        if self._roi_is_degenerate(roi):
+            print(f"[stream] Skipping degenerate ROI {roi} (keeping current frame)")
+            return
+
         request = LoadRequest(
             component=desired_comp,
             roi=roi,
             timestamp=time.time(),
         )
-        
+
         self._schedule_load(request)
 
     def activate_channel(self, channel_id: int, color_hex: str):
@@ -283,9 +463,30 @@ class VolumeStreamer:
                     margin_vox=self.cfg.roi_margin_vox,
                 )
                 print(f"[stream] Computed view: comp={comp} roi={roi}")
-        
-        self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
-        
+
+        simple = is_first_volume or self._last_component is None
+        if simple:
+            self._load_and_display_channel(channel_id, comp, roi, reset_camera=is_first_volume)
+        else:
+            # Paint the new channel instantly at the FULL-volume coarsest LOD
+            # (served from the pinned/warmed low-res cache = no fine fetch on the
+            # main thread), which also builds its transfer function and covers the
+            # whole volume (never empty). Then refine to the current viewport
+            # asynchronously (progressive, centre-out) alongside the others.
+            coarse = self.cfg.max_component
+            _, ydim, xdim = self._dims_for_component(coarse)
+            self._load_and_display_channel(
+                channel_id, coarse, ROI(0, xdim, 0, ydim), reset_camera=False)
+            if comp < coarse:
+                self._set_latest_request(comp, roi)
+
+        # The channel is showing a full-volume coarse texture; cache it as the
+        # interaction "base" and warm the low-res cache so it's instantly
+        # available while moving / on re-add.
+        self._showing_base.add(channel_id)
+        self._ensure_base_image(channel_id)
+        VolumeStreamer._executor.submit(self._prefetch_lowres, channel_id)
+
     def deactivate_channel(self, channel_id: int):
         """
         Deactivate a channel - remove from rendering.
@@ -297,14 +498,14 @@ class VolumeStreamer:
         print(f"[stream] Deactivating channel {channel_id}")
         
         self._active_channels.discard(channel_id)
-        
-        if channel_id in self.volumes:
-            vol = self.volumes[channel_id]
-            self.renderer.RemoveVolume(vol)
-            del self.volumes[channel_id]
-        
-        if channel_id in self.mappers:
-            del self.mappers[channel_id]
+
+        # Drop the channel's volume and re-pack the multi-volume ports.
+        self.volumes.pop(channel_id, None)
+        self.mappers.pop(channel_id, None)
+        self._current_input.pop(channel_id, None)
+        self._fine_images.pop(channel_id, None)
+        self._rebuild_multivolume()
+
         if channel_id in self.nov_volumes and self.nov_renderer:
             self.nov_renderer.RemoveVolume(self.nov_volumes[channel_id])
         if channel_id in self.nov_volumes:
@@ -314,10 +515,14 @@ class VolumeStreamer:
 
         if channel_id in self.state:
             del self.state[channel_id]
-        
+
         if channel_id in self._channel_tfs:
             del self._channel_tfs[channel_id]
-        
+
+        self._base_images.pop(channel_id, None)
+        self._showing_base.discard(channel_id)
+        self._capped_channels.discard(channel_id)
+
         self._render()
 
     @staticmethod
@@ -366,8 +571,8 @@ class VolumeStreamer:
         self._channel_histograms[channel_id] = self._compute_histogram(np_arr, (r0, r1))
 
         vol, mapper = self._get_or_create_volume(channel_id)
-        mapper.SetInputData(img)
-        
+        self._set_channel_input(channel_id, img)
+
         tint_rgb = self._channel_colors.get(channel_id, (1.0, 1.0, 1.0))
         color_tf, opacity_tf, pct_range = build_histogram_tf(img, tint_rgb=tint_rgb)
         self._channel_tfs[channel_id] = (color_tf, opacity_tf)
@@ -376,58 +581,86 @@ class VolumeStreamer:
         prop = vol.GetProperty()
         prop.SetColor(color_tf)
         prop.SetScalarOpacity(opacity_tf)
-        # prop.SetScalarOpacityUnitDistance(
-        #     max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
-        # )
-        
-        if not self.renderer.HasViewProp(vol):
-            self.renderer.AddVolume(vol)
-        
+        # Membership is handled by the shared multi-volume (no per-channel AddVolume).
+
         self.state[channel_id] = ChannelState(component=component, roi=roi)
         self._last_component = component
         
         if reset_camera:
-            print(f"[stream] Resetting camera for first volume")
-            self.renderer.ResetCamera()
-            cam = self.renderer.GetActiveCamera()
-            pos = list(cam.GetPosition())
-            fp = list(cam.GetFocalPoint())
-            vup = list(cam.GetViewUp())
-            zoom = getattr(self.__class__, "INITIAL_CAMERA_ZOOM", 1.0)
-            if zoom != 1.0 and 0 < zoom <= 1.0:
-                pos = [fp[i] + (pos[i] - fp[i]) * zoom for i in range(3)]
-                cam.SetPosition(pos[0], pos[1], pos[2])
-            self._initial_camera = {
-                "position": pos,
-                "focalPoint": fp,
-                "viewUp": vup,
-            }
+            print(f"[stream] Framing default view for first volume")
+            self.frame_default_view()
+        else:
+            self.renderer.ResetCameraClippingRange()
+            self._render()
 
-        self.renderer.ResetCameraClippingRange()
-        self._render()
-        
         print(f"[stream] Channel {channel_id} displayed")
 
-    def reset_camera_to_initial(self) -> None:
-        """Restore camera to initial position (saved when data was first loaded). If none saved, call ResetCamera()."""
+    def frame_default_view(self) -> None:
+        """Position the camera at the canonical default view of the CURRENT
+        volume: top-down (looking along -Z, +Y up), framed to the live world
+        bounds and pulled in by INITIAL_CAMERA_ZOOM.
+
+        Computed from the renderer's live bounds every call, so it is correct
+        regardless of dataset physical size, spacing, load order, or how the
+        camera was oriented beforehand — no dataset-specific magic distance and
+        no reliance on a snapshot captured at some earlier moment. Also records
+        the result as the reset target for any code that reads `_initial_camera`.
+        """
         if not self.renderer:
             return
         cam = self.renderer.GetActiveCamera()
-        if self._initial_camera:
-            pos = self._initial_camera.get("position")
-            fp = self._initial_camera.get("focalPoint")
-            vup = self._initial_camera.get("viewUp")
-            if pos and len(pos) >= 3:
-                cam.SetPosition(pos[0], pos[1], pos[2])
-            if fp and len(fp) >= 3:
-                cam.SetFocalPoint(fp[0], fp[1], fp[2])
-            if vup and len(vup) >= 3:
-                cam.SetViewUp(vup[0], vup[1], vup[2])
-            cam.Modified()
-        else:
-            self.renderer.ResetCamera()
+        # Set the canonical direction BEFORE ResetCamera so ResetCamera only
+        # fits the distance/centre along it (it preserves the view direction).
+        fp = cam.GetFocalPoint()
+        cam.SetPosition(fp[0], fp[1], fp[2] + 1.0)  # camera above -> looks down -Z
+        cam.SetViewUp(0.0, 1.0, 0.0)
+        cam.OrthogonalizeViewUp()
+        # Fit the current visible bounds along that direction (dataset-agnostic).
+        self.renderer.ResetCamera()
+        zoom = getattr(self.__class__, "INITIAL_CAMERA_ZOOM", 1.0)
+        if zoom != 1.0 and 0 < zoom <= 1.0:
+            pos = list(cam.GetPosition())
+            fpz = list(cam.GetFocalPoint())
+            cam.SetPosition(*[fpz[i] + (pos[i] - fpz[i]) * zoom for i in range(3)])
+        self._initial_camera = {
+            "position": list(cam.GetPosition()),
+            "focalPoint": list(cam.GetFocalPoint()),
+            "viewUp": list(cam.GetViewUp()),
+        }
         self.renderer.ResetCameraClippingRange()
         self._render()
+
+    def reset_camera_to_initial(self) -> None:
+        """Return the camera to the canonical default view of the current volume
+        (top-down, framed to bounds). Recomputed from live bounds each call so it
+        is always correct — used by the Reset Camera button and to return to the
+        default view after opening a bookmark."""
+        self.frame_default_view()
+        # The camera has moved (usually zooming out to frame the whole volume),
+        # so the previously loaded fine ROI no longer matches the view. Re-stream
+        # the full visible region for the new camera.
+        self.restream_visible_view()
+
+    def restream_visible_view(self) -> None:
+        """Stream the FULL currently-visible region for the current camera, without
+        moving the camera. Shows the complete coarse base immediately (never a stale
+        partial ROI), then schedules the async LOD/ROI stream for the visible view —
+        the same non-blocking settle pipeline a drag/zoom uses.
+
+        Used after the camera is repositioned programmatically (Reset Camera,
+        bookmark restore) so the whole visible viewport loads rather than only a
+        previously-loaded sub-ROI."""
+        if not self._active_channels:
+            return
+        try:
+            self._update_interaction_textures()
+            iren = self._interactor()
+            if iren is not None:
+                iren.InvokeEvent("EndInteractionEvent")
+            else:
+                self.on_interaction_end()
+        except Exception as e:
+            print(f"[stream] restream_visible_view failed: {e}")
 
     def channel_same_lod_roi(self, channel_id: int, component: int, roi_dict: dict) -> bool:
         """True if this channel is already shown at the same component and XY ROI (bookmark restore fast path)."""
@@ -560,8 +793,7 @@ class VolumeStreamer:
                         prop = vol.GetProperty()
                         prop.SetColor(color_tf)
                         prop.SetScalarOpacity(opacity_tf)
-                        prop.SetScalarOpacityUnitDistance(
-                            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+                        prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
                     if not self.nov_renderer.HasViewProp(vol):
                         self.nov_renderer.AddVolume(vol)
                 except Exception:
@@ -595,8 +827,7 @@ class VolumeStreamer:
             prop.SetScalarOpacity(opacity_tf)
             if channel_id in self.nov_mappers and self.nov_mappers[channel_id].GetInput():
                 spacing = self.nov_mappers[channel_id].GetInput().GetSpacing()
-                prop.SetScalarOpacityUnitDistance(
-                    max(1e-6, 1.0 * min(spacing[0], spacing[1], spacing[2])))
+                prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
             if self.nov_render_window:
                 self.nov_render_window.Render()
             if self.render_callback:
@@ -688,8 +919,7 @@ class VolumeStreamer:
                         prop = vol.GetProperty()
                         prop.SetColor(color_tf)
                         prop.SetScalarOpacity(opacity_tf)
-                        prop.SetScalarOpacityUnitDistance(
-                            max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+                        prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
                     if not self.nov_renderer.HasViewProp(vol):
                         self.nov_renderer.AddVolume(vol)
                 except Exception:
@@ -937,18 +1167,60 @@ class VolumeStreamer:
                 continue
             self._load_and_display_channel(ch, st.component, st.roi, reset_camera=False)
 
+    def _roi_is_degenerate(self, roi: ROI) -> bool:
+        """True if an ROI is too thin to be a real viewport (a 'needle').
+        Uploading such an ROI would blank the volume edge-on (the vanish bug).
+        `compute_visible_xy_roi_vox` already clamps to >=1 voxel per axis, so
+        this only trips on sub-2-voxel slivers — never a realistic zoomed view.
+        """
+        return (roi.x1 - roi.x0) < 2 or (roi.y1 - roi.y0) < 2
+
     def _spacing_for_component(self, component: int) -> SpacingConfig:
-        scale = float(2 ** component)
-        return SpacingConfig(
-            sx=self.cfg.base_sx * scale,
-            sy=self.cfg.base_sy * scale,
-            sz=self.cfg.base_sz,
-        )
+        # Derive per-axis spacing from the REAL level-0/level shape ratios rather
+        # than assuming 2**component. Level dims aren't exact powers of two (e.g.
+        # x: 10908 -> 170 at comp 6, and 170*64 != 10908), so a 2**component scale
+        # gives each component a slightly different world extent and the volume
+        # visibly shifts when the LOD changes on zoom. Real ratios make every
+        # component span the identical physical extent (xdim*sx == x0*base_sx),
+        # and they correctly handle both xy-only (z0/zc==1) and isotropic (z halves)
+        # pyramids. Dataset-agnostic.
+        # Use (dim-1) ratios, not dim ratios: VTK renders a volume's extent as
+        # (dim-1)*spacing (voxels are point samples), so to make every LOD span
+        # the identical physical extent — and not shift/scale when the LOD changes
+        # on zoom — we need (dimc-1)*sx == (dim0-1)*base_sx. This matters most for
+        # z on the isotropic Globus store (zc as small as 3): with dim ratios the
+        # base's z-extent was (3-1)*sz vs the fine's (24-1)*sz, a big jump.
+        try:
+            z0, y0, x0 = self._level0_dims_zyx()
+            zc, yc, xc = self._dims_for_component(component)
+            sx = self.cfg.base_sx * (x0 - 1) / (xc - 1) if (xc > 1 and x0 > 1) else self.cfg.base_sx
+            sy = self.cfg.base_sy * (y0 - 1) / (yc - 1) if (yc > 1 and y0 > 1) else self.cfg.base_sy
+            sz = self.cfg.base_sz * (z0 - 1) / (zc - 1) if (zc > 1 and z0 > 1) else self.cfg.base_sz
+        except Exception:
+            scale = float(2 ** component)
+            sx, sy, sz = self.cfg.base_sx * scale, self.cfg.base_sy * scale, self.cfg.base_sz
+        return SpacingConfig(sx=sx, sy=sy, sz=sz)
+
+    def _opacity_unit_distance(self) -> float:
+        """LOD-independent opacity unit distance = the finest (level-0) voxel
+        spacing. Opacity-per-distance is a property of the tissue, not of the
+        current sampling, so it must NOT use the current LOD's voxel size: for an
+        isotropic pyramid that grows at coarse levels and washes the volume out
+        (few cells visible across the thickness). Derived from base spacing only,
+        so it's consistent across datasets rather than tuned to one store."""
+        return max(1e-6, min(self.cfg.base_sx, self.cfg.base_sy, self.cfg.base_sz))
+
+    def _level0_dims_zyx(self) -> Tuple[int, int, int]:
+        """Cached level-0 (component 0) dims; used to derive per-level z spacing."""
+        dims = getattr(self, "_level0_dims", None)
+        if dims is None:
+            dims = self._dims_for_component(0)
+            self._level0_dims = dims
+        return dims
 
     def _dims_for_component(self, component: int) -> Tuple[int, int, int]:
-        shape = self.zsrc.shape_tczyx(component)
-        _, _, z, y, x = shape
-        return (z, y, x)
+        # Canonical (z,y,x) regardless of stored layout (3D/4D/5D, any axis order).
+        return self.zsrc.canonical_shape(component)
 
     def _volume_bounds_world(self, component: int):
         spacing = self._spacing_for_component(component)
@@ -995,36 +1267,319 @@ class VolumeStreamer:
         
         self._render()
 
-    def _get_or_create_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
-        """Get existing VTK volume/mapper or create new ones."""
-        if ch in self.volumes:
-            return self.volumes[ch], self.mappers[ch]
+    # vtkMultiVolume caps at ~10 input ports; refuse extra channels gracefully.
+    MAX_BLEND_CHANNELS = 10
 
-        mapper = vtkGPUVolumeRayCastMapper()
-        mapper.SetAutoAdjustSampleDistances(True)
+    def _get_or_create_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
+        """Get or create the channel's vtkVolume and register it as a port on the
+        shared multi-volume mapper. The mapper is shared across all channels so
+        they blend per-sample; the returned mapper is that shared one."""
+        if ch in self.volumes:
+            return self.volumes[ch], self._multi_mapper
 
         prop = vtkVolumeProperty()
         if self.cfg.linear_interpolation:
             prop.SetInterpolationTypeToLinear()
         else:
             prop.SetInterpolationTypeToNearest()
-
-        if self.cfg.shade:
-            prop.ShadeOn()
-            prop.SetAmbient(0.5)
-            prop.SetDiffuse(0.8)
-            prop.SetSpecular(0.1)
-            prop.SetSpecularPower(8.0)
-        else:
-            prop.ShadeOff()
+        # vtkMultiVolume does not support per-volume gradient shading; force off.
+        prop.ShadeOff()
 
         vol = vtkVolume()
-        vol.SetMapper(mapper)
+        # Note: no per-channel mapper — the vtkMultiVolume drives one shared mapper.
         vol.SetProperty(prop)
 
         self.volumes[ch] = vol
-        self.mappers[ch] = mapper
-        return vol, mapper
+        self.mappers[ch] = self._multi_mapper   # back-compat for callers reading .mappers
+        # Registration (port assignment) happens on the channel's first
+        # _set_channel_input, once it actually has a texture.
+        return vol, self._multi_mapper
+
+    def _new_multi_mapper(self):
+        m = vtkGPUVolumeRayCastMapper()
+        m.SetAutoAdjustSampleDistances(True)
+        if self._blend_mode == "additive":
+            m.SetBlendModeToAdditive()
+        else:
+            m.SetBlendModeToComposite()
+        return m
+
+    def _new_multi_volume(self):
+        return vtkMultiVolume()
+
+    def _make_dummy_volume(self):
+        """A transparent 1^3 volume used to keep the multi-volume at >=2 inputs
+        (a lone real volume hits a vtkMultiVolume origin bug -> shifted render)."""
+        arr = np.zeros((1, 1, 1), dtype=np.uint16)
+        vtk_arr = numpy_to_vtk(arr.ravel(order="C"), deep=True)
+        img = vtkImageData()
+        img.SetDimensions(1, 1, 1)
+        img.SetExtent(0, 0, 0, 0, 0, 0)
+        img.SetSpacing(1.0, 1.0, 1.0)
+        img.SetOrigin(0.0, 0.0, 0.0)
+        img.GetPointData().SetScalars(vtk_arr)
+        img.Modified()
+        prop = vtkVolumeProperty()
+        prop.ShadeOff()
+        ctf = vtkColorTransferFunction(); ctf.AddRGBPoint(0.0, 0.0, 0.0, 0.0)
+        otf = vtkPiecewiseFunction(); otf.AddPoint(0.0, 0.0)
+        prop.SetColor(ctf); prop.SetScalarOpacity(otf)
+        vol = vtkVolume(); vol.SetProperty(prop)
+        return vol, img
+
+    def _channel_image(self, ch: int) -> Optional["vtkImageData"]:
+        return self._current_input.get(ch) or self._base_images.get(ch)
+
+    def _rebuild_multivolume(self) -> None:
+        """Rebuild the shared multi-volume from scratch on a membership change
+        (channel add/remove — rare, a user action).
+
+        We recreate BOTH the vtkMultiVolume and its GPU mapper rather than
+        mutating ports in place: VTK does NOT reliably drop a mapper input port
+        (RemoveAllInputs leaves it), which leaves a port with an input but no
+        volume and makes vtkMultiVolume abort at render ("Failed to query
+        vtkVolume instance for port N"). Verified empirically. Re-setting the
+        <=10 active textures here is cheap enough for a rare event. Only channels
+        that already have a texture are registered (contiguous ports 0..N-1)."""
+        try:
+            self.renderer.RemoveVolume(self._multi_volume)
+        except Exception:
+            pass
+        self._multi_mapper = self._new_multi_mapper()
+        self._multi_volume = self._new_multi_volume()
+        self._multi_volume.SetMapper(self._multi_mapper)
+        self.renderer.AddVolume(self._multi_volume)
+        self._channel_port.clear()
+        ready = [c for c in self.volumes.keys() if self._channel_image(c) is not None]
+        if len(ready) > self.MAX_BLEND_CHANNELS:
+            print(f"[stream] blend cap {self.MAX_BLEND_CHANNELS}; "
+                  f"{len(ready) - self.MAX_BLEND_CHANNELS} channel(s) not rendered")
+            ready = ready[:self.MAX_BLEND_CHANNELS]
+        for port, ch in enumerate(ready):
+            self._multi_volume.SetVolume(self.volumes[ch], port)
+            self._multi_mapper.SetInputDataObject(port, self._channel_image(ch))
+            self._channel_port[ch] = port
+            self.mappers[ch] = self._multi_mapper
+        # Keep the multi-volume at >=2 inputs (see _make_dummy_volume): with 0 or
+        # 1 real channel, append the transparent dummy so a lone real volume
+        # doesn't hit the origin-shift bug.
+        if len(ready) <= 1:
+            dport = len(ready)
+            self._multi_volume.SetVolume(self._dummy_volume, dport)
+            self._multi_mapper.SetInputDataObject(dport, self._dummy_image)
+
+    def _set_channel_input(self, ch: int, img: "vtkImageData") -> None:
+        """Point a channel's port at a new texture (the per-frame hot path)."""
+        self._current_input[ch] = img
+        port = self._channel_port.get(ch)
+        if port is None:
+            # First texture for this channel → it can now be registered.
+            if ch in self.volumes:
+                self._rebuild_multivolume()
+            return
+        self._multi_mapper.SetInputDataObject(port, img)
+
+    # ------------------------------------------------------------------
+    # Full-volume coarse "base" texture: shown instantly while interacting so
+    # the volume is never empty and motion stays cheap; the sharp ROI texture
+    # replaces it once the user settles.
+    # ------------------------------------------------------------------
+    def _ensure_base_image(self, ch: int) -> Optional["vtkImageData"]:
+        """Build (once) the whole-volume coarsest-LOD texture for a channel.
+
+        Served from the pinned low-res cache, so this is cheap; it also warms
+        that cache for the seed. Returns None if the channel has no data yet.
+        """
+        img = self._base_images.get(ch)
+        if img is not None:
+            return img
+        comp = self.cfg.max_component
+        try:
+            _, ydim, xdim = self._dims_for_component(comp)
+            arr = self._load_channel_data(comp, ch, ROI(0, xdim, 0, ydim))
+            if arr.size == 0 or any(s <= 0 for s in arr.shape):
+                return None
+            spacing = self._spacing_for_component(comp)
+            img = self._create_vtk_image(arr, spacing, (0.0, 0.0, 0.0))
+        except Exception as e:
+            print(f"[stream] base image build failed ch={ch}: {e}")
+            return None
+        self._base_images[ch] = img
+        return img
+
+    def _display_base_only(self, ch: int) -> bool:
+        """Put the full-volume coarse base texture on a channel's mapper (main
+        thread). Used for instant, non-blocking channel activation and as the
+        while-interacting fallback. Returns True if the base was shown."""
+        img = self._ensure_base_image(ch)
+        if img is None:
+            return False
+        vol, mapper = self._get_or_create_volume(ch)
+        self._set_channel_input(ch, img)
+        if ch in self._channel_tfs:
+            color_tf, opacity_tf = self._channel_tfs[ch]
+            prop = vol.GetProperty()
+            prop.SetColor(color_tf)
+            prop.SetScalarOpacity(opacity_tf)
+        self._showing_base.add(ch)
+        return True
+
+    # How far the interaction texture selector may fire (Hz). The camera has to
+    # move a lot to cross the loaded-ROI boundary, so a coarse cadence is plenty
+    # and keeps the per-move containment check off the hot path.
+    INTERACTION_MOVE_HZ = 15.0
+
+    def _viewport_within_loaded(self, component: int, roi: ROI) -> bool:
+        """True when the currently visible XY region fits inside the already-
+        loaded `roi` at `component` — i.e. the sharp texture still covers the
+        whole viewport, so we can keep showing it during interaction.
+
+        Rotate-in-place and zoom-in keep the viewport inside the loaded ROI (→
+        True, stay sharp); zoom-out, a large pan, or rotating to a very oblique
+        angle grow it past the ROI (→ False, fall back to the coarse base). The
+        loaded ROI already carries `roi_margin_vox` + chunk snapping, so small
+        pans stay within the margin without flip-flopping."""
+        try:
+            spacing = self._spacing_for_component(component)
+            _, ydim, xdim = self._dims_for_component(component)
+            bounds = self._volume_bounds_world(component)
+            vis = compute_visible_xy_roi_vox(
+                self.renderer, bounds_world=bounds,
+                sx=spacing.sx, sy=spacing.sy, x_dim=xdim, y_dim=ydim,
+                margin_vox=0, display_samples=5,
+            )
+        except Exception:
+            return False
+        return (vis.x0 >= roi.x0 and vis.x1 <= roi.x1
+                and vis.y0 >= roi.y0 and vis.y1 <= roi.y1)
+
+    def _update_interaction_textures(self) -> bool:
+        """Point each active channel's port at its SHARP texture while the
+        viewport stays inside the loaded ROI, or at its coarse full-volume base
+        when the viewport has moved past it. Renders once (interactive) if any
+        port changed. Returns whether anything swapped."""
+        swapped = False
+        for ch in list(self._active_channels):
+            if ch not in self._channel_port:
+                continue
+            st = self.state.get(ch)
+            fine = self._fine_images.get(ch)
+            base = self._base_images.get(ch)
+            keep_fine = (
+                st is not None and fine is not None
+                and self._viewport_within_loaded(st.component, st.roi)
+            )
+            if keep_fine:
+                target, on_base = fine, False
+            elif base is not None:
+                target, on_base = base, True
+            else:
+                continue  # no base yet (nothing better) — leave the port as is
+            if self._current_input.get(ch) is not target:
+                self._set_channel_input(ch, target)
+                swapped = True
+            if on_base:
+                self._showing_base.add(ch)
+            else:
+                self._showing_base.discard(ch)
+        if swapped:
+            try:
+                self.renderer.ResetCameraClippingRange()
+            except Exception:
+                pass
+            self._render_interactive()
+        return swapped
+
+    def on_interaction_start(self) -> None:
+        """Called on StartInteractionEvent (main thread). Keep each channel's
+        sharp texture (the viewport still matches the loaded ROI at the very
+        start); the per-move handler drops to the coarse base only once an
+        interaction actually pushes the viewport past the loaded region."""
+        self._update_interaction_textures()
+
+    def on_interaction_move(self) -> None:
+        """Called on InteractionEvent (main thread, high frequency). Throttled
+        re-evaluation of the sharp/base texture per channel so a swap to the
+        coarse base happens the moment a zoom-out or large pan crosses the
+        loaded-ROI boundary — and back to sharp if it re-enters."""
+        now = time.time()
+        if now - self._interaction_move_last < 1.0 / self.INTERACTION_MOVE_HZ:
+            return
+        self._interaction_move_last = now
+        self._update_interaction_textures()
+
+    # ------------------------------------------------------------------
+    # Eased mouse-wheel zoom
+    #
+    # Each wheel notch multiplies a *target* dolly factor; zoom_animation_tick
+    # (driven by the app's ~40ms animation loop) glides the camera toward it,
+    # applying a constant FRACTION of the remaining log-distance each frame ->
+    # fast at first, slowing to a stop (ease-out). Rotate/pan are untouched.
+    # ------------------------------------------------------------------
+    ZOOM_WHEEL_STEP = 2.0   # per-notch dolly magnitude (>1 = zoom in)
+    ZOOM_EASE = 0.5        # fraction of remaining log-distance applied per tick
+    ZOOM_EPS = 1e-3          # |log(remaining)| below this -> settled
+
+    def _interactor(self):
+        return self.render_window.GetInteractor() if self.render_window else None
+
+    def queue_zoom(self, notches: int) -> bool:
+        """Add `notches` mouse-wheel steps (+1 in / -1 out) to the pending eased
+        zoom and start the glide if idle. Returns True when handled (so the
+        interactor style suppresses its instant dolly)."""
+        if not self.renderer:
+            return False
+        try:
+            self._zoom_target *= self.ZOOM_WHEEL_STEP ** int(notches)
+        except Exception:
+            return False
+        if not self._zoom_animating:
+            self._zoom_animating = True
+            iren = self._interactor()
+            if iren is not None:
+                # Drive the same LOD/label bookkeeping as a drag interaction.
+                iren.InvokeEvent("StartInteractionEvent")
+        return True
+
+    def zoom_animation_tick(self) -> bool:
+        """One eased-zoom frame. Call from the animation loop; returns True if a
+        frame was rendered (so the caller can push the view)."""
+        if not self._zoom_animating or not self.renderer:
+            return False
+        remaining = self._zoom_target
+        try:
+            log_left = math.log(remaining)
+        except (ValueError, TypeError):
+            log_left = 0.0
+
+        if abs(log_left) < self.ZOOM_EPS:
+            # Settled: drop the sub-ZOOM_EPS residual (< ~0.1% dolly, imperceptible)
+            # and finish cleanly, so the last motion is the final eased step.
+            self._zoom_target = 1.0
+            self._zoom_animating = False
+            try:
+                self.renderer.ResetCameraClippingRange()
+            except Exception:
+                pass
+            iren = self._interactor()
+            if iren is not None:
+                # Stream the sharp ROI for the settled zoom (+ label refresh).
+                iren.InvokeEvent("EndInteractionEvent")
+            return False
+
+        step = math.exp(log_left * self.ZOOM_EASE)   # this frame's dolly factor
+        cam = self.renderer.GetActiveCamera()
+        cam.Dolly(step)
+        self._zoom_target = remaining / step          # log-remaining *= (1 - EASE)
+        try:
+            self.renderer.ResetCameraClippingRange()
+        except Exception:
+            pass
+        # Re-evaluate sharp/base as the zoom crosses the loaded-ROI boundary;
+        # it renders on a swap, otherwise render the dolly ourselves (once).
+        if not self._update_interaction_textures():
+            self._render_interactive()
+        return True
 
     def _get_or_create_nov_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
         """Get or create volume/mapper for the NOV popup renderer."""
@@ -1056,6 +1611,10 @@ class VolumeStreamer:
 
     # OpenGL 3D texture limit (avoid "Invalid texture dimensions" / MAX_3D_TEXTURE_SIZE 2048)
     MAX_TEXTURE_DIM = 2048
+    # While interacting we cap the texture much smaller so the GPU upload+render
+    # (the only main-thread cost we can't move off-thread) is fast; full res is
+    # rebuilt from cached numpy once the user goes idle (see tick_idle).
+    INTERACTIVE_MAX_DIM = 512
 
     def _create_vtk_image(
         self,
@@ -1063,9 +1622,15 @@ class VolumeStreamer:
         spacing: SpacingConfig,
         origin_xyz: Tuple[float, float, float],
             for_nov_view: bool = False,
+            max_dim: Optional[int] = None,
     ) -> vtkImageData:
-        """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only)."""
-        np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)
+        """Create vtkImageData from numpy array. When for_nov_view=True and NOV box is set, clip to box (for popup only).
+        max_dim caps the largest texture axis (defaults to the OpenGL limit); pass a smaller value for a fast interactive texture."""
+        cap = int(max_dim) if max_dim is not None else self.MAX_TEXTURE_DIM
+        timer = StageTimer("vtk-image", view=("nov" if for_nov_view else "main"))
+        downsampled = False
+        with timer.stage("ascontiguous"):
+            np_vol_zyx = np.ascontiguousarray(np_vol_zyx, dtype=np.uint16)
         z, y, x = np_vol_zyx.shape
         if x <= 0 or y <= 0 or z <= 0:
             raise ValueError(
@@ -1074,23 +1639,23 @@ class VolumeStreamer:
             )
         sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
 
-        if max(x, y, z) > self.MAX_TEXTURE_DIM:
-            scale = self.MAX_TEXTURE_DIM / max(x, y, z)
-            oz, oy, ox = z, y, x
-            nz = max(1, int(round(z * scale)))
-            ny = max(1, int(round(y * scale)))
-            nx = max(1, int(round(x * scale)))
-            iz = np.linspace(0, z - 1, nz).round().astype(np.intp)
-            iy = np.linspace(0, y - 1, ny).round().astype(np.intp)
-            ix = np.linspace(0, x - 1, nx).round().astype(np.intp)
-            np_vol_zyx = np_vol_zyx[np.ix_(iz, iy, ix)]
-            z, y, x = nz, ny, nx
-            spacing = SpacingConfig(
-                sx=sx * (ox / nx) if nx else sx,
-                sy=sy * (oy / ny) if ny else sy,
-                sz=sz * (oz / nz) if nz else sz,
-            )
-            print(f"[stream] Downsampled volume to ({z},{y},{x}) for OpenGL 2048 limit")
+        if max(x, y, z) > cap:
+            downsampled = True
+            with timer.stage("downsample"):
+                # Uniform integer-stride decimation. This replaces linspace +
+                # np.ix_ fancy indexing (a cache-unfriendly gather that cost
+                # 20-90ms/channel in profiling): `arr[::s, ::s, ::s]` is a view,
+                # and the single ascontiguousarray copies only the capped-size
+                # result. `s = ceil(max_dim / cap)` scales every axis together
+                # (same as the old uniform `cap/max` scale).
+                oz, oy, ox = z, y, x
+                s = int(math.ceil(max(x, y, z) / cap))
+                np_vol_zyx = np.ascontiguousarray(np_vol_zyx[::s, ::s, ::s])
+                z, y, x = np_vol_zyx.shape
+                spacing = SpacingConfig(
+                    sx=sx * (ox / x), sy=sy * (oy / y), sz=sz * (oz / z),
+                )
+            print(f"[stream] Downsampled volume to ({z},{y},{x}) for texture cap {cap}")
 
         # Apply NOV lens clip only for NOV popup view (main view always shows full volume)
         clip = getattr(self, "_nov_lens_clip", None)
@@ -1109,58 +1674,242 @@ class VolumeStreamer:
             inside = in_z.reshape(-1, 1, 1) & in_y.reshape(1, -1, 1) & in_x.reshape(1, 1, -1)
             np_vol_zyx[~inside] = 0
 
-        vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)
-        vtk_arr.SetName("scalars")
+        with timer.stage("numpy_to_vtk"):
+            vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)
+            vtk_arr.SetName("scalars")
 
-        img = vtkImageData()
-        img.SetDimensions(x, y, z)
-        img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1)
-        img.SetOrigin(*origin_xyz)
-        img.SetSpacing(spacing.sx, spacing.sy, spacing.sz)
-        img.GetPointData().SetScalars(vtk_arr)
-        img.Modified()
+            img = vtkImageData()
+            img.SetDimensions(x, y, z)
+            img.SetExtent(0, x - 1, 0, y - 1, 0, z - 1)
+            img.SetOrigin(*origin_xyz)
+            img.SetSpacing(spacing.sx, spacing.sy, spacing.sz)
+            img.GetPointData().SetScalars(vtk_arr)
+            img.Modified()
+
+        timer.log(shape=(z, y, x), bytes=fmt_bytes(np_vol_zyx.nbytes),
+                  downsampled=downsampled)
         return img
 
-    def _cache_key(self, component: int, ch: int, roi: ROI) -> Tuple[int, int, ROI]:
-        return (component, ch, roi)
+    # ------------------------------------------------------------------
+    # Chunk page-table: tile addressing, per-chunk fetch, and assembly.
+    # ------------------------------------------------------------------
+    def _grid(self, comp: int) -> ChunkGrid:
+        """ChunkGrid for a component (lazily built, thread-safe)."""
+        g = self._grids.get(comp)
+        if g is None:
+            with self._grids_lock:
+                g = self._grids.get(comp)
+                if g is None:
+                    g = ChunkGrid.from_dims(
+                        *self.zsrc.canonical_shape(comp),
+                        *self.zsrc.canonical_chunks(comp))
+                    self._grids[comp] = g
+        return g
 
-    def _get_cached_array(self, component: int, ch: int, roi: ROI) -> Optional[np.ndarray]:
-        key = self._cache_key(component, ch, roi)
-        return self._array_cache.get(key)
+    def _cache_for(self, comp: int) -> ChunkCache:
+        """Coarsest-level tiles live in the pinned low-res cache (never evicted by
+        fine-tile churn); every finer level uses the main byte-budget LRU."""
+        return self._lowres_cache if comp >= self.cfg.max_component else self._chunk_cache
 
-    def _put_cached_array(self, component: int, ch: int, roi: ROI, arr: np.ndarray):
-        key = self._cache_key(component, ch, roi)
+    def _read_tile(self, comp: int, ch: int, cyi: int, cxi: int, grid: ChunkGrid) -> np.ndarray:
+        """Fetch one tile's full-z column (one remote request) and cache it.
 
-        if len(self._array_cache) >= self._cache_max_entries:
-            keys_to_remove = list(self._array_cache.keys())[
-                :self._cache_max_entries // 2]
-            for k in keys_to_remove:
-                del self._array_cache[k]
+        In-memory decoded-chunk cache first; on miss, read through the cached
+        zarr store (which layers the on-disk compressed CacheStore beneath).
+        """
+        key = (comp, ch, cyi, cxi)
+        cache = self._cache_for(comp)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        b = grid.tile_bounds(cyi, cxi)
+        arr = np.ascontiguousarray(
+            self.zsrc.read_region(comp, ch, b.y0, b.y1, b.x0, b.x1,
+                                   t=self.cfg.zarr_time_index),
+            dtype=np.uint16,
+        )  # (z, ty, tx)
+        cache.put(key, arr)
+        self._bytes_fetched += arr.nbytes
+        return arr
 
-        self._array_cache[key] = arr
+    def _prefetch_lowres(self, ch: int) -> None:
+        """Background-warm the entire coarsest LOD for a channel into the pinned
+        low-res cache, so a complete blurry base is instantly available for any
+        viewport (zoom-out to the edges, or a newly added channel) without a
+        blocking fetch on the interaction path."""
+        try:
+            comp = self.cfg.max_component
+            grid = self._grid(comp)
+            full = ROI(0, grid.X, 0, grid.Y)
+            for (cyi, cxi) in grid.covering_tiles(full):
+                try:
+                    self._read_tile(comp, ch, cyi, cxi, grid)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    @staticmethod
+    def _place(out: np.ndarray, tile: np.ndarray, b: ROI, snapped: ROI) -> None:
+        """Copy a tile into its slot in the assembled `out` array."""
+        out[:, b.y0 - snapped.y0:b.y1 - snapped.y0,
+            b.x0 - snapped.x0:b.x1 - snapped.x0] = tile
+
+    def _place_upsampled(self, out: np.ndarray, up: np.ndarray, b: ROI,
+                         f: int, snapped: ROI) -> None:
+        """Place a nearest-neighbour-upsampled coarse tile into `out`, clipped
+        to the assembled ROI. `b` is the coarse tile's bounds; it maps to the
+        fine grid by f = 2**(coarse-comp)."""
+        # Fine-grid extent this coarse tile covers.
+        fy0, fx0 = b.y0 * f, b.x0 * f
+        # Destination window inside `out`, clipped to the snapped ROI.
+        dy0 = max(0, fy0 - snapped.y0)
+        dx0 = max(0, fx0 - snapped.x0)
+        dy1 = min(out.shape[1], fy0 + up.shape[1] - snapped.y0)
+        dx1 = min(out.shape[2], fx0 + up.shape[2] - snapped.x0)
+        if dy1 <= dy0 or dx1 <= dx0:
+            return
+        # Corresponding source window inside the upsampled tile.
+        sy0 = dy0 - (fy0 - snapped.y0)
+        sx0 = dx0 - (fx0 - snapped.x0)
+        out[:, dy0:dy1, dx0:dx1] = up[:, sy0:sy0 + (dy1 - dy0), sx0:sx0 + (dx1 - dx0)]
+
+    def _seed_from_coarser(self, out: np.ndarray, comp: int, ch: int,
+                           snapped: ROI, grid: ChunkGrid) -> bool:
+        """Fill `out` with a COMPLETE blurry base from coarser LODs so no emitted
+        frame ever has holes; the centre-out fine tiles later only sharpen it.
+
+        Levels are applied coarsest-first, so finer detail overlays the coarser
+        base where it's cached. Full coverage is guaranteed by *fetching* the
+        coarsest level's covering tiles when they aren't resident (that level is
+        tiny, so this is cheap). Returns True if a complete base was produced;
+        False only when `comp` is already the coarsest level (nothing coarser to
+        seed from — the caller must then avoid emitting a holey frame).
+        """
+        covered = False
+        for coarse in range(self.cfg.max_component, comp, -1):
+            cs = self._roi_at_component(snapped, comp, coarse)
+            cg = self._grid(coarse)
+            f = 2 ** (coarse - comp)
+            guarantee = (coarse == self.cfg.max_component)  # coarsest: ensure full cover
+            for (cyi, cxi) in cg.covering_tiles(cg.snap_roi(cs)):
+                a = self._cache_for(coarse).get((coarse, ch, cyi, cxi))
+                if a is None:
+                    if not guarantee:
+                        continue          # finer-coarse level: overlay only if cached
+                    try:
+                        a = self._read_tile(coarse, ch, cyi, cxi, cg)  # cheap coarsest fetch
+                    except Exception:
+                        continue
+                # Upsample the coarse tile in XY by f, then place it into `out`.
+                # CRITICAL: crop the coarse tile to just the sub-block that
+                # overlaps the ROI *before* upsampling. Upsampling the whole tile
+                # first (old behaviour) allocated `tile_area * f**2` — at comp 0,
+                # f reaches 64, so a single coarse tile ballooned to multi-GB
+                # temporaries just to drop a small corner into `out`. Cropping
+                # first bounds the temporary to ~ROI size regardless of f.
+                tb = cg.tile_bounds(cyi, cxi)
+                fy0, fx0 = tb.y0 * f, tb.x0 * f            # tile extent on the fine grid
+                tyc, txc = a.shape[1], a.shape[2]
+                fy_s, fy_e = max(fy0, snapped.y0), min(fy0 + tyc * f, snapped.y1)
+                fx_s, fx_e = max(fx0, snapped.x0), min(fx0 + txc * f, snapped.x1)
+                if fy_e <= fy_s or fx_e <= fx_s:
+                    continue                              # this tile is outside the ROI
+                ay0, ay1 = (fy_s - fy0) // f, (fy_e - fy0 + f - 1) // f
+                ax0, ax1 = (fx_s - fx0) // f, (fx_e - fx0 + f - 1) // f
+                sub = a[:, ay0:ay1, ax0:ax1]
+                up = np.repeat(np.repeat(sub, f, axis=2), f, axis=1)
+                # Isotropic pyramid: coarse level has fewer z-slices — resample z
+                # to the fine grid (no-op for an xy-only pyramid where z matches).
+                if up.shape[0] != out.shape[0]:
+                    iz = np.linspace(0, up.shape[0] - 1, out.shape[0]).round().astype(np.intp)
+                    up = up[iz]
+                # Shift the tile bounds to the cropped sub-block's global coarse
+                # origin so _place_upsampled maps it to the right fine location.
+                b2 = ROI(tb.x0 + ax0, tb.x0 + ax1, tb.y0 + ay0, tb.y0 + ay1)
+                self._place_upsampled(out, up, b2, f, snapped)
+            if guarantee:
+                covered = True
+        return covered
+
+    def _chunk_cache_summary(self) -> str:
+        """One-line summary of both decoded-chunk caches for profiling logs."""
+        s = self._chunk_cache.stats()
+        lo = self._lowres_cache.stats()
+        return (
+            f"chunk-cache[hi:hits={s['hits']} miss={s['misses']} "
+            f"rate={s['hit_rate'] * 100:.0f}% evict={s['evictions']} "
+            f"entries={s['entries']} size={fmt_bytes(s['bytes'])} | "
+            f"lo:entries={lo['entries']} size={fmt_bytes(lo['bytes'])} "
+            f"evict={lo['evictions']}] fetched={fmt_bytes(self._bytes_fetched)}]"
+        )
+
+    def _disk_cache_summary(self) -> str:
+        """One-line summary of on-disk zarr CacheStore state for profiling logs."""
+        info = self.zsrc.cache_info()
+        stats = self.zsrc.cache_stats()
+        if info is None and stats is None:
+            return "disk-cache[disabled]"
+        parts = []
+        if stats is not None:
+            parts.append(
+                f"hits={stats.get('hits', 0)} misses(remote)={stats.get('misses', 0)} "
+                f"rate={stats.get('hit_rate', 0.0) * 100:.0f}% evict={stats.get('evictions', 0)}"
+            )
+        if info is not None:
+            parts.append(
+                f"size={fmt_bytes(info.get('current_size', 0))}/"
+                f"{fmt_bytes(info.get('max_size', 0))} keys={info.get('cached_keys', 0)}"
+            )
+        return "disk-cache[" + " ".join(parts) + "]"
+
+    def log_cache_summary(self) -> None:
+        """Print a snapshot of both cache layers. Safe to call from anywhere."""
+        plog("cache", f"{self._chunk_cache_summary()} {self._disk_cache_summary()}")
+
+    def _assemble_roi(self, component: int, ch: int, snapped: ROI,
+                      grid: ChunkGrid) -> np.ndarray:
+        """Assemble the snapped (tile-aligned) ROI by fetching its covering
+        tiles concurrently and placing them. Used by both the blocking path and
+        the progressive stream (which seeds/emits around this)."""
+        z = self.zsrc.canonical_shape(component)[0]
+        out = np.zeros((z, snapped.y1 - snapped.y0, snapped.x1 - snapped.x0),
+                       dtype=np.uint16)
+        tiles = grid.covering_tiles(snapped)
+        futs = {
+            self._chunk_pool.submit(self._read_tile, component, ch, cyi, cxi, grid):
+                (cyi, cxi)
+            for (cyi, cxi) in tiles
+        }
+        for fut in as_completed(futs):
+            cyi, cxi = futs[fut]
+            self._place(out, fut.result(), grid.tile_bounds(cyi, cxi), snapped)
+        return out
 
     def _load_channel_data(self, component: int, ch: int, roi: ROI) -> np.ndarray:
-        """Load channel data - runs in background thread."""
-        cached = self._get_cached_array(component, ch, roi)
-        if cached is not None:
-            print(f"[cache hit] comp={component} ch={ch} roi={roi}")
-            return cached
+        """Load a channel's data for `roi` (blocking) via the chunk cache.
 
-        print(
-            f"[loading] comp={component} ch={ch} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
-        t0 = time.perf_counter()
-
-        darr = self.zsrc.array(component)
-        vol_zyx = darr[self.cfg.zarr_time_index,
-                       ch, :, roi.y0:roi.y1, roi.x0:roi.x1]
-        np_arr = vol_zyx.compute()
-
-        t1 = time.perf_counter()
-        print(
-            f"[loaded] comp={component} ch={ch} in {t1-t0:.2f}s, shape={np_arr.shape}")
-
-        self._put_cached_array(component, ch, roi, np_arr)
-        return np_arr
+        Assembles the tile-aligned (snapped) region from concurrent per-chunk
+        reads, then crops back to the exact requested `roi` so every existing
+        caller (NOV sync/scoring, bookmark restore, per-channel display) keeps
+        its original contract: shape == (z, roi_h, roi_w), origin at roi.x0/y0.
+        Overlapping ROIs now reuse cached tiles instead of re-downloading.
+        """
+        timer = StageTimer("load", comp=component, ch=ch,
+                           roi=f"({roi.x0}:{roi.x1},{roi.y0}:{roi.y1})")
+        grid = self._grid(component)
+        snapped = grid.snap_roi(roi)
+        with timer.stage("assemble"):
+            out = self._assemble_roi(component, ch, snapped, grid)
+        # Crop the snapped assembly back to the exact requested ROI.
+        y0 = roi.y0 - snapped.y0
+        x0 = roi.x0 - snapped.x0
+        cropped = np.ascontiguousarray(
+            out[:, y0:y0 + (roi.y1 - roi.y0), x0:x0 + (roi.x1 - roi.x0)])
+        timer.log(src="CHUNK", bytes=fmt_bytes(cropped.nbytes),
+                  shape=tuple(cropped.shape),
+                  chunk=self._chunk_cache_summary(), disk=self._disk_cache_summary())
+        return cropped
 
     def _init_low_res_full(self):
         """Initialize with full low-res volumes - runs on main thread"""
@@ -1173,30 +1922,26 @@ class VolumeStreamer:
 
         print(f"[stream] init: loading FULL volumes at component={comp}")
 
-        darr = self.zsrc.array(comp)
-        _, _, z, y, x = darr.shape
+        z, y, x = self.zsrc.canonical_shape(comp)
 
         for i, ch in enumerate(self.cfg.channels):
             ch = int(ch)
 
-            np_vol = darr[self.cfg.zarr_time_index, ch, :, :, :].compute()
+            np_vol = self.zsrc.read_full(comp, ch, t=self.cfg.zarr_time_index)
             img = self._create_vtk_image(np_vol, spacing, (0.0, 0.0, 0.0))
 
             color_tf, opacity_tf = self._precompute_transfer_function(ch, img)
 
             vol, mapper = self._get_or_create_volume(ch)
-            mapper.SetInputData(img)
+            self._set_channel_input(ch, img)
 
             prop = vol.GetProperty()
             prop.SetColor(color_tf)
             prop.SetScalarOpacity(opacity_tf)
-            prop.SetScalarOpacityUnitDistance(
-                max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz)))
+            prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
 
-            self.renderer.AddVolume(vol)
             self.state[ch] = ChannelState(
                 component=comp, roi=ROI(0, int(x), 0, int(y)))
-            self._put_cached_array(comp, ch, ROI(0, int(x), 0, int(y)), np_vol)
 
             color_name = self.cfg.channel_colors[i % len(
                 self.cfg.channel_colors)]
@@ -1208,138 +1953,524 @@ class VolumeStreamer:
         self.renderer.ResetCamera()
         self._render()
 
+        # Warm the pinned coarsest LOD for these channels in the background.
+        for ch in self.cfg.channels:
+            VolumeStreamer._executor.submit(self._prefetch_lowres, int(ch))
+
+    # Update rates for the GPU ray-cast mapper (AutoAdjustSampleDistances on):
+    # high rate -> coarse sampling -> fast/interactive; low rate -> best quality.
+    INTERACTIVE_UPDATE_RATE = 15.0
+    STILL_UPDATE_RATE = 0.001
+
     def _render(self):
-        """Trigger render"""
+        """Trigger render (best quality). Used for one-off main-thread renders."""
         self.render_window.Render()
         if self.render_callback is not None:
             self.render_callback()
 
+    def _render_interactive(self):
+        """Fast, lower-quality render so swaps/interactions never stall the UI.
+
+        Flags that a full-quality 'still' render is owed once the user is idle.
+        """
+        timer = StageTimer("render", kind="interactive")
+        try:
+            self.render_window.SetDesiredUpdateRate(self.INTERACTIVE_UPDATE_RATE)
+        except Exception:
+            pass
+        with timer.stage("gpu"):
+            self.render_window.Render()
+        if self.render_callback is not None:
+            self.render_callback()
+        self._needs_still_render = True
+        self._idle_ticks = 0
+        timer.log()
+
+    def _render_still(self):
+        """Full-quality render. Called from the poll loop after the user goes idle."""
+        timer = StageTimer("render", kind="still")
+        try:
+            self.render_window.SetDesiredUpdateRate(self.STILL_UPDATE_RATE)
+        except Exception:
+            pass
+        with timer.stage("gpu"):
+            self.render_window.Render()
+        if self.render_callback is not None:
+            self.render_callback()
+        self._needs_still_render = False
+        timer.log()
+
+    def tick_idle(self) -> bool:
+        """Main-thread poll-loop hook: once the user goes idle, (1) upgrade any
+        interactive (downsized) textures to full resolution, then (2) re-render
+        at full quality.
+
+        Returns True if anything was pushed to the client.
+        """
+        if not self._needs_still_render and not self._capped_channels:
+            return False
+        # Don't refine while work is pending or a new viewport is queued.
+        with self._req_lock:
+            busy = self._inflight or self._latest_request is not None
+        if busy:
+            self._idle_ticks = 0
+            return False
+        self._idle_ticks += 1
+        if self._idle_ticks < 3:  # ~300ms of quiet at the 100ms poll cadence
+            return False
+
+        # Step 1: full-resolution upgrade. Build off the main thread from cached
+        # numpy; the resulting hires frames are applied by check_and_apply, which
+        # clears _capped_channels and re-arms the still render.
+        if self._capped_channels and not self._hires_inflight:
+            self._hires_inflight = True
+            with self._req_lock:
+                gen = self._max_gen
+            VolumeStreamer._executor.submit(self._build_hires_upgrade, gen)
+            self._idle_ticks = 0
+            return False
+        if self._capped_channels:
+            return False  # upgrade in flight; wait for it before the still render
+
+        # Step 2: full-quality render once textures are full-res.
+        if self._needs_still_render:
+            self._render_still()
+            return True
+        return False
+
+    def _emit_hires(self, ch: int, st: ChannelState, out: np.ndarray, gen: int) -> None:
+        """Build a full-resolution vtkImageData from the assembled array and
+        enqueue it as a hires frame (origin from the snapped ROI)."""
+        spacing = self._spacing_for_component(st.component)
+        origin_xyz = (st.roi.x0 * spacing.sx, st.roi.y0 * spacing.sy, 0.0)
+        try:
+            img = self._create_vtk_image(out, spacing, origin_xyz)  # full res (2048 cap)
+        except ValueError:
+            return
+        self._loaded_data_queue.put(LoadedData(
+            component=st.component, roi=st.roi,
+            channel_images={int(ch): img},
+            timestamp=time.time(), gen=gen, hires=True,
+        ))
+
+    def _build_hires_upgrade(self, gen: int) -> None:
+        """Worker thread: rebuild full-resolution vtkImageData for the channels
+        currently shown downsized, re-assembling from the chunk cache CENTRE-OUT
+        so the sharp centre lands before the periphery. Full-res re-uploads are
+        expensive, so re-uploads are bounded (centre-half, then full) rather than
+        per-tile. Channels with tiles not yet resident are emitted at whatever
+        coverage they reached and retried on the next idle tick.
+        """
+        try:
+            for ch in list(self._capped_channels):
+                if self._is_superseded_gen(gen):
+                    break
+                st = self.state.get(int(ch))
+                if st is None:
+                    continue
+                grid = self._grid(st.component)
+                out = np.zeros(
+                    (self.zsrc.canonical_shape(st.component)[0],
+                     st.roi.y1 - st.roi.y0, st.roi.x1 - st.roi.x0),
+                    dtype=np.uint16)
+                # Complete blurry base so any not-yet-placed tile isn't a hole.
+                covered = self._seed_from_coarser(out, st.component, ch, st.roi, grid)
+
+                tiles = grid.covering_tiles(st.roi)   # centre-out
+                n = len(tiles)
+                # Bounded re-uploads: centre-half + full. Skip the half-way emit
+                # if we have no complete base (it would show holes); emit only
+                # the final full frame in that case.
+                emit_at = {max(1, n // 2), n} if covered else {n}
+                for i, (cyi, cxi) in enumerate(tiles, start=1):
+                    if self._is_superseded_gen(gen):
+                        break
+                    self._place(out, self._read_tile(st.component, ch, cyi, cxi, grid),
+                                grid.tile_bounds(cyi, cxi), st.roi)
+                    if i in emit_at and not self._is_superseded_gen(gen):
+                        self._emit_hires(ch, st, out, gen)
+        except Exception as e:
+            import traceback
+            print(f"[hires] upgrade error: {e}")
+            traceback.print_exc()
+        finally:
+            self._hires_inflight = False
+
+    def _is_superseded_gen(self, gen: int) -> bool:
+        with self._req_lock:
+            return self._max_gen > gen
+
     def _apply_loaded_data_on_main_thread(self, loaded: LoadedData):
         """
-        Apply loaded numpy arrays to VTK objects.
+        Swap pre-built vtkImageData onto the mappers and render.
         MUST be called on main thread where OpenGL context exists.
+
+        Cheap by design: the numpy->vtk conversion already happened in the
+        worker, so this only does SetInputData + transfer-function. It does NOT
+        render — the drain loop renders once after applying everything queued
+        (see check_and_apply_loaded_data), so N per-channel frames cost one
+        render, not N.
         """
         component = loaded.component
         roi = loaded.roi
         spacing = self._spacing_for_component(component)
-        origin_xyz = (roi.x0 * spacing.sx, roi.y0 * spacing.sy, 0.0)
 
-        for ch, np_arr in loaded.channel_arrays.items():
-            if np_arr.size == 0 or any(s <= 0 for s in np_arr.shape):
-                print(f"[stream] Skipping channel {ch}: loaded shape {np_arr.shape} has zero size.")
-                continue
-            try:
-                img = self._create_vtk_image(np_arr, spacing, origin_xyz)
-            except ValueError as e:
-                print(f"[stream] Skipping channel {ch}: {e}")
-                continue
+        timer = StageTimer("apply-main", comp=component,
+                           channels=len(loaded.channel_images))
 
+        for ch, img in loaded.channel_images.items():
+            # A late frame for a channel the user has since deactivated must not
+            # resurrect it (that would desync the multi-volume ports).
+            if ch not in self._active_channels:
+                continue
             vol, mapper = self._get_or_create_volume(ch)
-            mapper.SetInputData(img)
-            mapper.Modified()
+            with timer.stage(f"gpu-upload[ch{ch}]"):
+                self._set_channel_input(ch, img)
+            # Retain this sharp texture so an interaction can toggle the port
+            # back to it (fine<->base) without re-streaming.
+            self._fine_images[ch] = img
 
             if ch in self._channel_tfs:
                 color_tf, opacity_tf = self._channel_tfs[ch]
                 prop = vol.GetProperty()
                 prop.SetColor(color_tf)
                 prop.SetScalarOpacity(opacity_tf)
-                prop.SetScalarOpacityUnitDistance(
-                    max(1e-6, 1.0 * min(spacing.sx, spacing.sy, spacing.sz))
-                )
+                prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
 
             self.state[ch] = ChannelState(component=component, roi=roi)
 
-        self._last_component = component
-        self.renderer.ResetCameraClippingRange()
-        self._render()
+            # A sharp ROI texture is now on this channel: it's no longer showing
+            # the coarse full-volume base.
+            self._showing_base.discard(ch)
 
-        print(
-            f"[stream] applied {len(loaded.channel_arrays)} channels at comp={component}")
+            # Track which channels are showing a downsized (interactive) texture
+            # so the idle loop knows what to upgrade to full resolution.
+            if loaded.hires or not loaded.was_capped:
+                self._capped_channels.discard(ch)
+            else:
+                self._capped_channels.add(ch)
+
+        self._last_component = component
+
+        # Latency from when the user finished interacting to this swap.
+        latency = time.time() - loaded.timestamp
+        timer.log(end_to_end_latency=f"{latency * 1000:.0f}ms",
+                  hires=loaded.hires, capped=loaded.was_capped)
+
+    # ------------------------------------------------------------------
+    # Latest-wins async loader
+    #
+    # Flow (all main-thread hops driven by app.py's 100ms poll loop):
+    #   on_interaction_end  -> stores newest LoadRequest (_set_latest_request)
+    #   service_loads       -> debounces + dispatches one load at a time
+    #   _background_load     -> worker: builds vtkImageData, coarse->fine,
+    #                          bails early if a newer request arrives
+    #   check_and_apply_loaded_data -> drains queue, drops stale frames, swaps
+    # ------------------------------------------------------------------
+
+    def _is_superseded(self, request: LoadRequest) -> bool:
+        """True if a newer request has been created since `request`."""
+        with self._req_lock:
+            return self._max_gen > request.gen
+
+    def _roi_at_component(self, roi_target: ROI, target_comp: int, comp: int) -> ROI:
+        """Scale a target-component ROI to another component's voxel grid."""
+        if comp == target_comp:
+            return roi_target
+        _, ydim, xdim = self._dims_for_component(comp)
+        d = scale_roi_to_component(
+            {"x0": roi_target.x0, "x1": roi_target.x1,
+             "y0": roi_target.y0, "y1": roi_target.y1},
+            target_comp, comp, x_dim=xdim, y_dim=ydim,
+        )
+        return ROI(d["x0"], d["x1"], d["y0"], d["y1"])
+
+    # Cap a single load's XY size (voxels). Distance-based LOD alone picks a fine
+    # component even when the visible ROI is huge — which happens when a thin,
+    # wide slab (a whole-slide image) is rotated to an oblique angle: the footprint
+    # balloons to span the whole slab, so a fine LOD would decode thousands of
+    # full-Z tiles (hundreds of MB/channel, multi-second, worse over the network).
+    # The region is foreshortened on screen there, so a coarser LOD looks the same.
+    MAX_LOAD_XY = 1280
+
+    def _fit_component_to_budget(self, comp: int, roi: ROI) -> Tuple[int, ROI]:
+        """Step to a coarser component until the ROI's XY span fits MAX_LOAD_XY,
+        so an oblique/zoomed-out view can't trigger an enormous fine-LOD decode."""
+        while (comp < self.cfg.max_component
+               and max(roi.x1 - roi.x0, roi.y1 - roi.y0) > self.MAX_LOAD_XY):
+            roi = self._roi_at_component(roi, comp, comp + 1)
+            comp += 1
+        return comp, roi
+
+    def _emit(self, request: LoadRequest, comp: int, ch: int, snapped: ROI,
+              out: np.ndarray) -> None:
+        """Build a capped (interactive) vtkImageData off-thread from the current
+        assembly and enqueue it. Origin/extent come from the SNAPPED ROI so
+        channels stay aligned in world space. `was_capped` flags frames the idle
+        loop should later re-upload at full resolution."""
+        spacing = self._spacing_for_component(comp)
+        origin_xyz = (snapped.x0 * spacing.sx, snapped.y0 * spacing.sy, 0.0)
+        was_capped = max(out.shape) > self.INTERACTIVE_MAX_DIM
+        try:
+            img = self._create_vtk_image(
+                out, spacing, origin_xyz, max_dim=self.INTERACTIVE_MAX_DIM)
+        except ValueError:
+            return
+        self._loaded_data_queue.put(LoadedData(
+            component=comp, roi=snapped, channel_images={ch: img},
+            timestamp=request.timestamp, gen=request.gen, was_capped=was_capped))
+
+    def _stream_channel(self, request: LoadRequest, comp: int, ch: int,
+                        snapped: ROI, grid: ChunkGrid) -> None:
+        """Assemble one channel's snapped ROI progressively (worker thread):
+        seed a blurry base from a coarser LOD, paint already-resident tiles and
+        emit immediately, then fetch missing tiles CENTRE-OUT and re-emit
+        throttled as they land. On supersede it returns at once; tiles already
+        fetched stay in the cache (not wasted)."""
+        try:
+            z = self.zsrc.canonical_shape(comp)[0]
+            out = np.zeros((z, snapped.y1 - snapped.y0, snapped.x1 - snapped.x0),
+                           dtype=np.uint16)
+            covered = self._seed_from_coarser(out, comp, ch, snapped, grid)
+
+            missing = []
+            cache = self._cache_for(comp)
+            for (cyi, cxi) in grid.covering_tiles(snapped):   # centre-out
+                a = cache.get((comp, ch, cyi, cxi))
+                if a is not None:
+                    self._place(out, a, grid.tile_bounds(cyi, cxi), snapped)
+                else:
+                    missing.append((cyi, cxi))
+
+            if self._is_superseded(request):
+                return
+            # Only paint a frame that is COMPLETE (a full blurry base, or every
+            # tile already resident). Otherwise keep the current texture on
+            # screen so the volume never blanks or shows holes; we'll emit once
+            # the final full frame is assembled. This is what makes it "fill
+            # everything, then sharpen centre-out" instead of flickering.
+            complete = covered or not missing
+            if complete:
+                self._emit(request, comp, ch, snapped, out)
+
+            if not missing:
+                return
+
+            futs = {}
+            for (cyi, cxi) in missing:
+                if self._is_superseded(request):
+                    break
+                # Page table records residency (also the mixed-res hook); one
+                # request is active at a time so each key is submitted once.
+                self._page_table.mark_inflight((comp, ch, cyi, cxi), request.gen, comp)
+                futs[self._chunk_pool.submit(
+                    self._read_tile, comp, ch, cyi, cxi, grid)] = (cyi, cxi)
+
+            last = 0.0
+            for fut in as_completed(futs):
+                cyi, cxi = futs[fut]
+                try:
+                    arr = fut.result()
+                except Exception:
+                    continue
+                self._page_table.mark_resident((comp, ch, cyi, cxi), request.gen, comp)
+                if self._is_superseded(request):
+                    # Cancel still-queued tile reads so their decode doesn't keep
+                    # occupying the 12-worker pool after we've moved on — that
+                    # head-of-line clog is what makes the *next* view wait seconds
+                    # (queue_wait). Already-running reads finish (cancel is a
+                    # no-op for them) and land in the cache, so nothing is wasted.
+                    for f in futs:
+                        f.cancel()
+                    return
+                self._place(out, arr, grid.tile_bounds(cyi, cxi), snapped)
+                # Throttled sharpening emits are only safe once we have a
+                # complete base (each is still a hole-free frame). Without one
+                # (comp is the coarsest level) we wait for the final full frame.
+                if complete:
+                    now = time.time()
+                    # Motion already shows the coarse base, so the fine texture
+                    # only needs to sharpen as it settles: emit sparingly (~7 Hz)
+                    # to keep main-thread GPU uploads down.
+                    if now - last >= 0.15:
+                        self._emit(request, comp, ch, snapped, out)
+                        last = now
+            if not self._is_superseded(request):
+                self._emit(request, comp, ch, snapped, out)   # final complete frame
+        except Exception as e:
+            import traceback
+            print(f"[stream] channel {ch} error: {e}")
+            traceback.print_exc()
 
     def _background_load(self, request: LoadRequest):
+        """Worker thread: load coarse->fine for the request, building VTK images
+        off the main thread and enqueuing each stage for a cheap main-thread swap.
+        Bails out as soon as a newer request supersedes this one.
         """
-        Background thread: Load data from zarr, then queue for main thread update.
-        """
-        with self._loading_lock:
-            if self._is_loading:
-                return
-            self._is_loading = True
-
         try:
-            component = request.component
-            roi = request.roi
+            target = request.component
+            cur = self._last_component
+            # Progressive: when changing resolution, show a cheap coarse version
+            # of the new viewport first, then refine to the target. Plain pans at
+            # the same component skip the coarse stage, and so does the case where
+            # what's already on screen is at least as coarse as the intermediate
+            # (it already serves as the placeholder).
+            do_progressive = (cur is None) or (target != cur)
+            stages: List[int] = []
+            if do_progressive and target <= self.cfg.max_component - 2:
+                inter = min(self.cfg.max_component, target + 2)
+                if inter != target and (cur is None or inter < cur):
+                    stages.append(inter)
+            stages.append(target)
 
-            channel_arrays: Dict[int, np.ndarray] = {}
-            for ch in self._active_channels: 
-                ch = int(ch)
-                prev = self.state.get(ch)
-                need_update = (prev is None) or (
-                    prev.component != component) or (prev.roi != roi)
+            for idx, stage_comp in enumerate(stages):
+                if self._is_superseded(request):
+                    break
+                stage_roi = self._roi_at_component(request.roi, target, stage_comp)
+                grid = self._grid(stage_comp)
+                snapped = grid.snap_roi(stage_roi)
+                channels = [int(c) for c in list(self._active_channels)]
+                if not channels:
+                    break
+                timer = StageTimer("background-load", comp=stage_comp, gen=request.gen)
+                queue_wait = time.time() - request.timestamp
 
-                if need_update:
-                    channel_arrays[ch] = self._load_channel_data(
-                        component, ch, roi)
+                # Stream all channels concurrently; each _stream_channel seeds,
+                # paints resident tiles, and emits progressively centre-out so a
+                # fast cached channel paints immediately and the centre sharpens
+                # first. We only await here for lifecycle (emits happen inside).
+                futures = {
+                    self._channel_executor.submit(
+                        self._stream_channel, request, stage_comp, ch, snapped, grid): ch
+                    for ch in channels
+                }
+                for fut in as_completed(futures):
+                    if self._is_superseded(request):
+                        for f in futures:      # drop not-yet-started channels
+                            f.cancel()
+                        break
+                    try:
+                        fut.result()
+                    except Exception:
+                        pass
 
-            if channel_arrays:
-                loaded = LoadedData(
-                    component=component,
-                    roi=roi,
-                    channel_arrays=channel_arrays,
-                    timestamp=request.timestamp,
-                )
-                self._loaded_data_queue.put(loaded)
-                print(
-                    f"[background] queued {len(channel_arrays)} channels for main thread")
-
+                timer.log(channels=len(channels),
+                          stage=f"{idx + 1}/{len(stages)}",
+                          queue_wait=f"{queue_wait * 1000:.0f}ms",
+                          chunk=self._chunk_cache_summary())
+                if self._is_superseded(request):
+                    break
+        except Exception as e:
+            import traceback
+            print(f"[background] load error: {e}")
+            traceback.print_exc()
         finally:
-            with self._loading_lock:
-                self._is_loading = False
+            with self._req_lock:
+                self._inflight = False
 
-            with self._debounce_lock:
-                if self._pending_request and self._pending_request.timestamp > request.timestamp:
-                    self._schedule_load(self._pending_request)
-                    self._pending_request = None
+    def _set_latest_request(self, component: int, roi: ROI) -> None:
+        """Record the newest desired viewport; the poll loop dispatches it."""
+        with self._req_lock:
+            self._max_gen += 1
+            self._latest_request = LoadRequest(
+                component=component, roi=roi, timestamp=time.time(), gen=self._max_gen)
 
     def _schedule_load(self, request: LoadRequest):
-        """Submit load request to thread pool"""
-        VolumeStreamer._executor.submit(self._background_load, request)
+        """Compat shim for callers that build a LoadRequest directly
+        (e.g. _trigger_lod_update_for_new_channel): route through latest-wins."""
+        self._set_latest_request(request.component, request.roi)
 
-    def _debounce_callback(self, request: LoadRequest):
-        """Called after debounce delay"""
-        time.sleep(self.DEBOUNCE_DELAY)
+    def _displayed_matches(self, req: LoadRequest) -> bool:
+        """True if every active channel is already shown at req's comp and ROI.
 
-        with self._debounce_lock:
-            if self._pending_request and self._pending_request.timestamp == request.timestamp:
-                self._pending_request = None
-                self._schedule_load(request)
+        The interactive loader stores the tile-aligned (snapped) ROI in state, so
+        compare against the snapped request ROI or an unchanged viewport would be
+        seen as different and reloaded every settle.
+        """
+        if not self._active_channels:
+            return False
+        try:
+            target = self._grid(req.component).snap_roi(req.roi)
+        except Exception:
+            target = req.roi
+        for ch in self._active_channels:
+            st = self.state.get(int(ch))
+            if st is None or st.component != req.component or st.roi != target:
+                return False
+        return True
+
+    def service_loads(self) -> None:
+        """Main-thread poll-loop hook: debounce and dispatch at most one load.
+
+        Single-flight + latest-wins: only the newest request is ever dispatched,
+        and only once the current load finishes, so a backlog can't build up.
+        """
+        with self._req_lock:
+            if self._inflight or self._latest_request is None:
+                return
+            req = self._latest_request
+            settle = (self.FINE_DEBOUNCE_DELAY
+                      if req.component <= self.FINE_COMPONENT_MAX
+                      else self.DEBOUNCE_DELAY)
+            if (time.time() - req.timestamp) < settle:
+                return  # still settling; wait for quiet (longer for fine LODs)
+            if self._displayed_matches(req):
+                self._latest_request = None
+                return
+            self._latest_request = None
+            self._inflight = True
+        VolumeStreamer._executor.submit(self._background_load, req)
 
     def check_and_apply_loaded_data(self):
+        """Main thread: drain finished loads and swap them in.
+
+        Frames older than the newest generation are dropped (never flash a stale
+        viewport). Frames are also COALESCED to the newest one per channel, so a
+        burst of progressive intermediates costs one GPU upload per channel per
+        tick instead of N — the single-thread server can't afford N big uploads.
         """
-        Call this from main thread (e.g., in a timer or after interaction).
-        Applies any data that was loaded in background threads.
-        """
-        applied_any = False
+        latest: Dict[int, LoadedData] = {}
         while True:
             try:
                 loaded = self._loaded_data_queue.get_nowait()
-                self._apply_loaded_data_on_main_thread(loaded)
-                applied_any = True
             except queue.Empty:
                 break
-        return applied_any
+            with self._req_lock:
+                stale = loaded.gen < self._max_gen
+            if stale:
+                continue
+            # Queue is FIFO, so later frames are newer/higher-quality (more tiles,
+            # or the idle hires upgrade); last write per channel wins.
+            for ch, img in loaded.channel_images.items():
+                latest[ch] = LoadedData(
+                    component=loaded.component, roi=loaded.roi,
+                    channel_images={ch: img}, timestamp=loaded.timestamp,
+                    gen=loaded.gen, was_capped=loaded.was_capped, hires=loaded.hires)
+        if not latest:
+            return False
+        for ld in latest.values():
+            self._apply_loaded_data_on_main_thread(ld)
+        # One render for the whole batch of swaps (keeps the event loop free).
+        self.renderer.ResetCameraClippingRange()
+        self._render_interactive()
+        return True
 
     def on_interaction_end(self) -> int:
         """
-        Called on EndInteractionEvent - debounced and async.
-        This runs on main thread.
-        Returns the desired component (for heatmap LOD to consume).
+        Called on EndInteractionEvent (main thread). Records the new desired
+        viewport for the async loader and returns the desired component (for
+        heatmap LOD to consume). Does NOT block on loading or full-quality render.
         """
-        # Defensive: some zoom/scroll interactions can push the camera clipping range
-        # into an invalid state (everything clipped => black screen). Resetting here
-        # is cheap and keeps interaction stable.
+        # Defensive: some zoom/scroll interactions can push the camera clipping
+        # range into an invalid state (everything clipped => black screen).
+        # Reset it, but do NOT render here — the interactor already rendered this
+        # frame, and rendering again on every scroll-stop is pure main-thread
+        # downtime. Instead flag a full-quality repaint for the idle loop, which
+        # fires ~300ms after the user stops and also reapplies the clipping fix.
         try:
             self.renderer.ResetCameraClippingRange()
-            self._render()
+            self._needs_still_render = True
+            self._idle_ticks = 0
         except Exception:
             pass
 
@@ -1351,7 +2482,7 @@ class VolumeStreamer:
                 # If distance becomes degenerate, recover by resetting camera.
                 self.renderer.ResetCamera()
                 self.renderer.ResetCameraClippingRange()
-                self._render()
+                self._render_interactive()
                 dist = camera_distance_to_focal(self.renderer.GetActiveCamera())
         except Exception:
             pass
@@ -1365,8 +2496,6 @@ class VolumeStreamer:
 
         if not self._active_channels:
             return desired_comp
-
-        self.check_and_apply_loaded_data()
 
         spacing = self._spacing_for_component(desired_comp)
         zdim, ydim, xdim = self._dims_for_component(desired_comp)
@@ -1382,34 +2511,24 @@ class VolumeStreamer:
             margin_vox=self.cfg.roi_margin_vox,
         )
 
+        # Bound the load size: an oblique view of a thin wide slab balloons the
+        # ROI, so step to a coarser LOD until it fits the budget (looks the same
+        # on screen, but decodes far fewer tiles).
+        desired_comp, roi = self._fit_component_to_budget(desired_comp, roi)
+
         print(
             f"[interaction] dist={dist:.1f} -> comp={desired_comp} roi=({roi.x0}:{roi.x1}, {roi.y0}:{roi.y1})")
 
-        needs_update = False
-        for ch in self._active_channels:  
-            ch = int(ch)
-            prev = self.state.get(ch)
-            if prev is None or prev.component != desired_comp or prev.roi != roi:
-                needs_update = True
-                break
-
-        if not needs_update:
-            print(f"[interaction] no update needed")
+        # Safety net: never replace the live texture with a degenerate (needle)
+        # ROI — that would blank the volume (the edge-on vanish bug). Keep the
+        # currently displayed frame instead.
+        if self._roi_is_degenerate(roi):
+            print(f"[interaction] skipping degenerate ROI {roi} (keeping current frame)")
             return desired_comp
 
-        request = LoadRequest(
-            component=desired_comp,
-            roi=roi,
-            timestamp=time.time(),
-        )
+        request = LoadRequest(component=desired_comp, roi=roi, timestamp=time.time())
+        if self._displayed_matches(request):
+            return desired_comp
 
-        with self._debounce_lock:
-            self._pending_request = request
-
-        threading.Thread(
-            target=self._debounce_callback,
-            args=(request,),
-            daemon=True,
-        ).start()
-
+        self._set_latest_request(desired_comp, roi)
         return desired_comp

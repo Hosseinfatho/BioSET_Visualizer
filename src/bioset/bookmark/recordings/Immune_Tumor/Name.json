@@ -1,0 +1,129 @@
+{
+  "id": "4044f516-7e81-471e-ad87-af9011ee4df8",
+  "title": "Name",
+  "category": "Immune_Tumor",
+  "created": "2026-07-27T16:48:56Z",
+  "updated": "2026-07-27T16:50:16Z",
+  "notes": "",
+  "description": "",
+  "camera": {
+    "position": [
+      851.4255618035947,
+      619.1968000621339,
+      -22.82722510310903
+    ],
+    "focalPoint": [
+      857.4300000000001,
+      572.1800000000001,
+      14.139999999999999
+    ],
+    "viewUp": [
+      0.5720507565737244,
+      -0.46057376552136975,
+      -0.6786970888525278
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FFFFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 2,
+      "name": "STING",
+      "color": "#00FF00",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    0,
+    2
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1920,
+    "height": 1031
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          851.4255618035947,
+          619.1968000621339,
+          -22.82722510310903
+        ],
+        "focalPoint": [
+          857.4300000000001,
+          572.1800000000001,
+          14.139999999999999
+        ],
+        "viewUp": [
+          0.5720507565737244,
+          -0.46057376552136975,
+          -0.6786970888525278
+        ]
+      },
+      "notes": "",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 2,
+          "name": "STING",
+          "color": "#00FF00",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        2
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 1031
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 2816,
+          "x1": 3328,
+          "y0": 1280,
+          "y1": 2304
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [],
+  "chat_history_updated": "2026-07-27T16:50:16Z",
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 2816,
+      "x1": 3328,
+      "y0": 1280,
+      "y1": 2304
+    }
+  }
+}

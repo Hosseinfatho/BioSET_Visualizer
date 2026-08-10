@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import requests
 import ome_types
 
@@ -25,6 +25,114 @@ class VolumeMetadata:
     physical_size_z: float
     size_unit: Optional[str] = None
     
+
+_UNIT_ALIASES = {
+    "micrometer": "µm",
+    "micron": "µm",
+    "um": "µm",
+    "nanometer": "nm",
+    "millimeter": "mm",
+    "meter": "m",
+}
+
+
+def parse_zarr_attrs_metadata(
+    attrs: Dict[str, Any],
+    channel_count: Optional[int] = None,
+) -> Optional[VolumeMetadata]:
+    """
+    Parse metadata baked into an OME-Zarr store's root attributes.
+
+    Reads the ``multiscales`` block for axes/units and the level-0
+    ``coordinateTransformations`` scale, and the ``omero`` block for channel
+    names. Both live on the root group, not on the level arrays.
+
+    Args:
+        attrs: root group attributes (``ZarrMultiscaleSource.root_attrs()``)
+        channel_count: fallback channel count when there is no ``omero`` block
+
+    Returns:
+        VolumeMetadata, or None when the attrs carry no usable multiscales block
+    """
+    multiscales = attrs.get("multiscales")
+    if not multiscales:
+        return None
+
+    ms = multiscales[0]
+    axes = ms.get("axes") or []
+    axis_names = [str(a.get("name", "")).lower() for a in axes]
+
+    datasets = ms.get("datasets") or []
+    if not datasets:
+        return None
+
+    # Pick the FINEST level by voxel scale (smallest scale product), not by name:
+    # level names may be non-numeric (``s0..sN``) and are not guaranteed ordered.
+    def _scale_of(d):
+        for tf in d.get("coordinateTransformations") or []:
+            if tf.get("type") == "scale" and tf.get("scale"):
+                return tf["scale"]
+        return None
+
+    def _scale_prod(d):
+        s = _scale_of(d)
+        if not s:
+            return float("inf")
+        p = 1.0
+        for v in s:
+            try:
+                p *= float(v)
+            except (TypeError, ValueError):
+                pass
+        return p
+
+    level0 = min(datasets, key=_scale_prod)
+    scale = _scale_of(level0)
+    if scale is None:
+        return None
+
+    def _axis_scale(name: str, default: float) -> float:
+        if name in axis_names:
+            idx = axis_names.index(name)
+            if idx < len(scale):
+                return float(scale[idx])
+        return default
+
+    physical_size_x = _axis_scale("x", 0.14)
+    physical_size_y = _axis_scale("y", 0.14)
+    physical_size_z = _axis_scale("z", 0.28)
+
+    # Unit is per-axis in NGFF; the spatial axes share one in practice.
+    raw_unit = None
+    for axis in axes:
+        if str(axis.get("name", "")).lower() in ("x", "y", "z") and axis.get("unit"):
+            raw_unit = str(axis["unit"])
+            break
+    size_unit = _UNIT_ALIASES.get((raw_unit or "").lower(), raw_unit or "µm")
+
+    omero_channels = (attrs.get("omero") or {}).get("channels") or []
+    if omero_channels:
+        channels = [
+            ChannelInfo(id=idx, name=ch.get("label") or ch.get("name") or f"Channel {idx}")
+            for idx, ch in enumerate(omero_channels)
+        ]
+    elif channel_count:
+        channels = [ChannelInfo(id=i, name=f"Channel {i}") for i in range(channel_count)]
+    else:
+        return None
+
+    print(f"[metadata] Using metadata baked into the zarr store")
+    print(f"[metadata] Found {len(channels)} channels: {[c.name for c in channels]}")
+    print(f"[metadata] Physical size: ({physical_size_x}, {physical_size_y}, {physical_size_z}) {size_unit}")
+
+    return VolumeMetadata(
+        channels=channels,
+        physical_size_x=physical_size_x,
+        physical_size_y=physical_size_y,
+        physical_size_z=physical_size_z,
+        size_unit=size_unit,
+    )
+
 
 def parse_ome_metadata(metadata_url: str) -> VolumeMetadata:
     """

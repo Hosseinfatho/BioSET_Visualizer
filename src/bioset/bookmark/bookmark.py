@@ -250,6 +250,35 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if update_view and _refs.get("view"):
             _refs["view"].update()
 
+    def _finish_bookmark_restore(streamer):
+        """Called once a bookmark's channels are active and its final camera is in
+        place: stream the FULL visible region (async, budget-capped) for the restored
+        view, re-enable normal channel handling, and refresh analytics. Replaces the
+        old blocking saved-ROI upgrade path."""
+        if streamer is not None and getattr(streamer, "restream_visible_view", None):
+            try:
+                streamer.restream_visible_view()
+            except Exception:
+                pass
+        state.bookmark_progressive_loading = False
+        try:
+            if hasattr(ctrl, "update_heatmap_combinations"):
+                ctrl.update_heatmap_combinations()
+            if hasattr(ctrl, "update_upset_data_local"):
+                ctrl.update_upset_data_local()
+            if hasattr(ctrl, "update_bar_data_local"):
+                ctrl.update_bar_data_local()
+            if hasattr(ctrl, "nov_recompute_scores_if_visible"):
+                ctrl.nov_recompute_scores_if_visible()
+        except Exception:
+            pass
+        try:
+            state.flush()
+        except Exception:
+            pass
+        if _refs.get("view"):
+            _refs["view"].update()
+
     def bookmark_camera_animation_tick():
         """Progressively load channels, reveal one-by-one in channel list, then animate camera in 6 steps."""
         import time
@@ -259,9 +288,6 @@ def register_bookmark_callbacks(ctrl, state, _refs):
 
         pending = _refs.get("bookmark_streamer_pending") or []
         _refs["bookmark_streamer_pending"] = pending
-        high_pending = _refs.get("bookmark_high_pending") or []
-        _refs["bookmark_high_pending"] = high_pending
-        high_started = bool(_refs.get("bookmark_high_loading_started", False))
 
         loaded_channels = _refs.get("bookmark_loaded_channels")
         if loaded_channels is None:
@@ -278,14 +304,11 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             except (IndexError, TypeError):
                 item = None
             if item:
-                ch_id, color_hex, comp_target, roi_d = item
-                ch_id = int(ch_id)
-                # Optional LOD bookmarks: (ch_id, color_hex, component, roi_dict)
-                # No-LOD bookmarks: we store (ch_id, color_hex, None, None) and use streamer.activate_channel()
-                if comp_target is None or roi_d is None:
-                    streamer.activate_channel(ch_id, color_hex)
-                else:
-                    streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi_d, reset_camera=False)
+                ch_id, color_hex = int(item[0]), item[1]
+                # Coarse activation only (paints the full-volume base). The full
+                # visible view is streamed later by restream_visible_view — we never
+                # do a blocking fine-LOD/saved-ROI load on this event-loop tick.
+                streamer.activate_channel(ch_id, color_hex)
                 _apply_channel_tfs_to_streamer(streamer)
                 loaded_channels.add(ch_id)
 
@@ -316,6 +339,7 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             camera_end = _refs.get("bookmark_camera_target_end")
             channels_done = (not pending) and (len(visible) >= len(active_order))
             if channels_done:
+                _refs["bookmark_camera_pending_start"] = False
                 if camera_end and isinstance(camera_end, dict):
                     cam = streamer.renderer.GetActiveCamera()
                     start_cam = {
@@ -333,46 +357,35 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                         "step_interval": _cam_total_s / float(max(1, _num_cam_steps - 1)),
                         "last_step_at": 0.0,
                     }
-                _refs["bookmark_camera_pending_start"] = False
-                _refs["bookmark_high_loading_started"] = True
-                if _refs.get("view"):
-                    _refs["view"].update()
+                    # Front-load the DESTINATION's data NOW so it streams during the
+                    # fly instead of only after it. Point the streamer at the end
+                    # camera (no frame pushed), schedule the async load for that view,
+                    # then restore the start camera for the animation. Nothing
+                    # competes with this request during the fly, so even a cold, far-
+                    # away second bookmark is ready by ~arrival instead of only
+                    # starting to load ~5s later (the old intermediate-ROI scheduler
+                    # kept superseding it on the single-flight loader).
+                    try:
+                        _apply_camera(streamer, camera_end, reset_clipping_range=True, update_view=False)
+                        if getattr(streamer, "on_interaction_end", None):
+                            streamer.on_interaction_end()
+                        _apply_camera(streamer, start_cam, reset_clipping_range=True, update_view=False)
+                    except Exception:
+                        pass
+                    if _refs.get("view"):
+                        _refs["view"].update()
+                else:
+                    # No camera fly-to (no saved camera / NOV-only): stream the full
+                    # visible view now and finish the restore.
+                    _finish_bookmark_restore(streamer)
 
-        # 4) Camera apply-once (after animation ends)
+        # 4) Camera apply-once (after animation ends): re-apply the final camera,
+        # then stream the full visible view (async) and finish.
         once = _refs.get("bookmark_camera_apply_once")
         if once and (time.time() - once["set_at"]) > 0.4:
             _apply_camera(streamer, once["camera"], reset_clipping_range=True, update_view=True)
             _refs.pop("bookmark_camera_apply_once", None)
-            # After the final camera position is applied, start upgrading channels one-by-one.
-            return
-
-        # High-res upgrades: do them only after camera motion has finished,
-        # and do them one-by-one per tick to keep UI responsive.
-        if high_started and high_pending and not _refs.get("bookmark_camera_animate"):
-            try:
-                ch_id, color_hex, comp_target, roi_d = high_pending.pop(0)
-                ch_id = int(ch_id)
-                streamer.load_channel_at_lod(ch_id, color_hex, comp_target, roi_d, reset_camera=False)
-                _apply_channel_tfs_to_streamer(streamer)
-                if _refs.get("view"):
-                    _refs["view"].update()
-            except Exception:
-                pass
-
-            if high_started and not _refs.get("bookmark_high_pending"):
-                state.bookmark_progressive_loading = False
-                try:
-                    if hasattr(ctrl, "update_heatmap_combinations"):
-                        ctrl.update_heatmap_combinations()
-                    if hasattr(ctrl, "update_upset_data_local"):
-                        ctrl.update_upset_data_local()
-                    if hasattr(ctrl, "update_bar_data_local"):
-                        ctrl.update_bar_data_local()
-                    if hasattr(ctrl, "nov_recompute_scores_if_visible"):
-                        ctrl.nov_recompute_scores_if_visible()
-                except Exception:
-                    pass
-
+            _finish_bookmark_restore(streamer)
             return
 
         # 5) Camera animation steps
@@ -386,13 +399,10 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         last = float(anim.get("last_step_at", 0.0))
 
         if idx >= n:
+            # Animation done: settle on the final camera, then the apply-once branch
+            # (next tick) streams the full visible view via _finish_bookmark_restore.
             _apply_camera(streamer, anim["end"], reset_clipping_range=True, update_view=True)
             _refs.pop("bookmark_camera_animate", None)
-            if getattr(streamer, "on_interaction_end", None):
-                try:
-                    streamer.on_interaction_end()
-                except Exception:
-                    pass
             _refs["bookmark_camera_apply_once"] = {"camera": anim["end"], "set_at": time.time()}
             return
 
@@ -418,48 +428,21 @@ def register_bookmark_callbacks(ctrl, state, _refs):
             update_view=True,
         )
 
-        # Background LOD upgrade scheduling (coarse→fine) during camera motion.
-        # This avoids blocking the UI tick loop while letting higher resolution appear as you zoom in.
+        # Keep the complete coarse base showing during the fly and swap to the
+        # destination's sharp texture exactly when the camera enters it. The
+        # destination was front-loaded, so its sharp texture is ready by arrival;
+        # without this, that texture (applied mid-fly) would replace the base and
+        # leave everything outside it blank while flying over it.
         try:
-            last_at = float(_refs.get("bookmark_last_bg_lod_schedule_at", 0.0) or 0.0)
-            if now - last_at > 0.6:
-                from bioset.streaming.lod import camera_distance_to_focal, choose_component, compute_visible_xy_roi_vox
-                from bioset.streaming.streamer import LoadRequest
-
-                ren = streamer.renderer
-                if ren:
-                    dist = camera_distance_to_focal(ren.GetActiveCamera())
-                    desired_comp = choose_component(
-                        dist,
-                        streamer.cfg.distance_rules,
-                        min_component=streamer.cfg.min_component,
-                        max_component=streamer.cfg.max_component,
-                    )
-                    spacing = streamer._spacing_for_component(desired_comp)
-                    zdim, ydim, xdim = streamer._dims_for_component(desired_comp)
-                    bounds = streamer._volume_bounds_world(desired_comp)
-                    roi = compute_visible_xy_roi_vox(
-                        streamer.renderer,
-                        bounds_world=bounds,
-                        sx=spacing.sx,
-                        sy=spacing.sy,
-                        x_dim=xdim,
-                        y_dim=ydim,
-                        margin_vox=streamer.cfg.roi_margin_vox,
-                    )
-                    req = LoadRequest(component=desired_comp, roi=roi, timestamp=time.time())
-                    streamer._schedule_load(req)
-                    _refs["bookmark_last_bg_lod_schedule_at"] = now
+            streamer._update_interaction_textures()
         except Exception:
             pass
 
-        # NOTE: high-res channel upgrades are intentionally NOT done during camera motion
-        # to avoid blocking the render/tick loop and freezing the camera.
-
-        # When camera motion is finished, the tick loop will naturally proceed to the
-        # `bookmark_camera_apply_once` branch, and the next tick can upgrade channels safely.
-
-        # (High-res upgrades block the tick loop, so they must be delayed until after camera animation.)
+        # NOTE: we intentionally do NOT schedule per-frame intermediate-ROI loads
+        # during the fly. The destination's load was front-loaded once when the
+        # animation was set up, so it streams uninterrupted while the camera flies;
+        # scheduling intermediate ROIs here would keep superseding it on the single-
+        # flight loader and delay the destination until the fly finished.
 
     def _apply_nov_view(streamer, nov_data):
         """Apply NOV view: set lens, sync volumes, apply camera to nov_renderer, open popup."""
@@ -659,21 +642,14 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
-        # 2) Streamer: drop channels not in bookmark; progressively load remaining channels (one per animation tick)
-        lod = v0.get("optional_LOD") or snap.get("optional_LOD") or {}
-        comp_target = lod.get("component")
-        roi = lod.get("roi")
-        has_lod = comp_target is not None and isinstance(roi, dict)
+        # 2) Streamer: drop channels not in the bookmark, then (re)activate the
+        #    bookmark's channels one per animation tick — a COARSE, cheap load that
+        #    paints the full-volume base and reveals each channel in the list.
+        #    We deliberately do NOT restore the saved optional_LOD sub-ROI: that
+        #    only textured the small saved patch and ran blocking fine-LOD decodes
+        #    on the event loop. The full visible region is streamed by the normal
+        #    adaptive pipeline once the camera settles (restream_visible_view).
         if streamer and state.active_channels:
-            if has_lod:
-                max_comp = getattr(streamer.cfg, "max_component", 6)
-                min_comp = getattr(streamer.cfg, "min_component", 0)
-                comp_target = max(min_comp, min(max_comp, int(comp_target)))
-                roi_d = roi
-            else:
-                comp_target = None
-                roi_d = None
-
             target_ids = {int(x) for x in state.active_channels}
             for ch_id in list(streamer.get_active_channels()):
                 if ch_id not in target_ids:
@@ -688,42 +664,22 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                         return ch.get("color") or "#FFFFFF"
                 return "#FFFFFF"
 
-            # Phase A (fast): activate channels one-by-one (low-res) and reveal them in list.
-            # Phase B (after low phase): upgrade each channel to exact LOD/ROI using load_channel_at_lod.
+            # Activate channels one-per-tick (coarse) and reveal them in the list.
+            # Nothing is loaded synchronously here, so the click returns immediately.
             low_loaded = set()
             low_pending = []
-            high_pending = []
-
-            # Ensure first visible channel is active immediately.
-            if first_id is not None:
-                if first_id in streamer.get_active_channels():
-                    low_loaded.add(first_id)
-                else:
-                    streamer.activate_channel(first_id, _color_for(first_id))
-                    low_loaded.add(first_id)
-
-            # Prepare remaining channels.
             for ch_id in active_order:
-                color_hex = _color_for(ch_id)
-
-                if has_lod:
-                    # Upgrade only if channel is not already at the exact LOD/ROI.
-                    if not streamer.channel_same_lod_roi(ch_id, comp_target, roi_d):
-                        high_pending.append((ch_id, color_hex, comp_target, roi_d))
-
-                # Low-res list phase: activate only those not currently active.
-                if ch_id not in streamer.get_active_channels():
-                    if ch_id != first_id:
-                        low_pending.append((ch_id, color_hex, None, None))
-                else:
+                if ch_id in streamer.get_active_channels():
                     low_loaded.add(ch_id)
+                else:
+                    low_pending.append((ch_id, _color_for(ch_id), None, None))
 
             # Make sure TFs match bookmark (color + range) for whatever is already loaded.
             _apply_channel_tfs_to_streamer(streamer)
 
             _refs["bookmark_streamer_pending"] = low_pending
             _refs["bookmark_loaded_channels"] = low_loaded
-            _refs["bookmark_high_pending"] = high_pending
+            _refs["bookmark_high_pending"] = []
 
             # If the first visible channel already has histograms computed, show them immediately.
             try:
@@ -788,6 +744,14 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if v.get("background") and hasattr(ctrl, "update_background_color"):
             state.bg_color = v["background"]
             ctrl.update_background_color(v["background"])
+        # Stream the full visible region for the switched-to view (camera is already
+        # applied). Without this a multi-view prev/next only re-textures the prior
+        # ROI, leaving the rest of the new view blank.
+        if not v.get("nov_view") and streamer is not None and getattr(streamer, "restream_visible_view", None):
+            try:
+                streamer.restream_visible_view()
+            except Exception:
+                pass
         if _refs.get("view"):
             _refs["view"].update()
 

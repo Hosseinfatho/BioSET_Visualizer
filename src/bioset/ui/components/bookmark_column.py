@@ -18,6 +18,13 @@ def bookmark_column(state, ctrl):
                 with vuetify.VListItemContent():
                     vuetify.VListItemTitle("Bookmarks", class_="bookmark-column-header",
                                            style="font-size: 1rem; font-weight: 600; color: #ffffff;")
+                with vuetify.VListItemAction(style="margin: 0;"):
+                    with vuetify.VBtn(
+                            icon=True, x_small=True,
+                            click="bookmark_open = false",
+                            title="Close bookmarks",
+                    ):
+                        vuetify.VIcon("mdi-close", small=True, color="grey")
             vuetify.VDivider()
             # Top: Category dropdown, Show, New
             with html.Div(style="padding: 10px 8px; flex: 0 0 auto; border-bottom: 1px solid rgba(255,255,255,0.1);"):

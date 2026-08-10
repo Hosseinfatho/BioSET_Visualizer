@@ -12,10 +12,19 @@ from trame.app import get_server
 
 load_dotenv()
 
-# Parse --logs argument early before any other imports
+# Parse --logs / --profile arguments early before any other imports
 # Default: no logs (quiet mode). Use --logs to enable output.
+# Profiling is off unless --profile is passed (optionally with a file path).
 _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--logs", action="store_true", default=False, help="Enable console output")
+_parser.add_argument(
+    "--profile",
+    nargs="?",
+    const="__default__",
+    default=None,
+    help="Enable streaming profiling. Optionally pass a log file path; "
+         "otherwise a timestamped file is written under ./profiling/.",
+)
 _args, _ = _parser.parse_known_args()
 
 if not _args.logs:
@@ -36,10 +45,21 @@ ASSETS_DIR = Path(__file__).parent / "ui" / "assets"
 from .config import default_config
 from .scene import build_scene
 from .ui import build_ui
+# Safe to import now that .scene / .streaming packages are fully initialized
+# (importing it earlier trips a pre-existing scene<->streaming import cycle).
+from .streaming.profiling import enable_profiling
 
 import contextlib
 
 def main():
+    # Profiling is off unless --profile was passed; enable it before any
+    # streaming work so the very first loads are captured.
+    if _args.profile is not None:
+        _profile_path = None if _args.profile == "__default__" else _args.profile
+        _resolved = enable_profiling(_profile_path)
+        # Use real stderr in case --logs redirected it, so the path is discoverable.
+        print(f"[bioset] Profiling enabled -> {_resolved}", file=sys.__stderr__)
+
     cfg = default_config()
     cfg = cfg.__class__(**{**cfg.__dict__,
                            "source": "zarr_s3",
@@ -78,6 +98,8 @@ def main():
                 await asyncio.sleep(0.1)
                 try:
                     updated = False
+                    # Dispatch the newest pending viewport load (debounced, single-flight)
+                    scene.streamer.service_loads()
                     if scene.streamer.check_and_apply_loaded_data():
                         updated = True
                     if scene.heatmap_lod is not None:
@@ -93,6 +115,9 @@ def main():
                         view.update()
                     if scene.streamer.process_nov_progressive_queue():
                         view.update()
+                    # Once the user is idle, re-render the volume at full quality
+                    if scene.streamer.tick_idle():
+                        view.update()
                     _scale_bar_tick[0] += 1
                     if _scale_bar_tick[0] >= 5:
                         _scale_bar_tick[0] = 0
@@ -106,10 +131,14 @@ def main():
                     print(f"[error] check_loaded_data: {e}")
 
         async def _nov_animation_loop():
-            """Drive NOV camera transition and bookmark camera animation: one frame every 40ms."""
+            """Drive NOV camera transition, bookmark camera animation, and eased
+            mouse-wheel zoom: one frame every 40ms."""
             while True:
                 await asyncio.sleep(0.04)
                 try:
+                    # Eased mouse-wheel zoom; it pushes its own frames via the
+                    # streamer render callback, so no extra view.update() here.
+                    scene.streamer.zoom_animation_tick()
                     if hasattr(ctrl, "nov_animation_tick"):
                         ctrl.nov_animation_tick()
                     if hasattr(ctrl, "bookmark_camera_animation_tick"):

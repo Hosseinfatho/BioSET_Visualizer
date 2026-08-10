@@ -1,0 +1,169 @@
+{
+  "id": "4eb7ab72-6883-42a7-ac46-40fb241c5863",
+  "title": "T-cell filopodia d1 2",
+  "category": "user_study",
+  "created": "2026-07-30T23:45:52Z",
+  "updated": "2026-07-30T23:45:55Z",
+  "notes": "",
+  "description": "",
+  "camera": {
+    "position": [
+      424.4034339615067,
+      1053.6098294167568,
+      154.0401036269886
+    ],
+    "focalPoint": [
+      420.31178873062913,
+      1048.4501215111447,
+      45.11371527907172
+    ],
+    "viewUp": [
+      -0.01085632316458993,
+      0.9988403100382568,
+      -0.04690602615896083
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#0000FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 7,
+      "name": "SOX10",
+      "color": "#FFFFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 35,
+      "name": "CD8a",
+      "color": "#00FF00",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    3,
+    7,
+    35,
+    0
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1440,
+    "height": 765
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          424.4034339615067,
+          1053.6098294167568,
+          154.0401036269886
+        ],
+        "focalPoint": [
+          420.31178873062913,
+          1048.4501215111447,
+          45.11371527907172
+        ],
+        "viewUp": [
+          -0.01085632316458993,
+          0.9988403100382568,
+          -0.04690602615896083
+        ]
+      },
+      "notes": "",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 7,
+          "name": "SOX10",
+          "color": "#FFFFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#00FF00",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        3,
+        7,
+        35,
+        0
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1440,
+        "height": 765
+      },
+      "optional_LOD": {
+        "component": 0,
+        "roi": {
+          "x0": 2304,
+          "x1": 3584,
+          "y0": 7040,
+          "y1": 7808
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [],
+  "chat_history_updated": "2026-07-30T23:45:55Z",
+  "optional_LOD": {
+    "component": 0,
+    "roi": {
+      "x0": 2304,
+      "x1": 3584,
+      "y0": 7040,
+      "y1": 7808
+    }
+  }
+}

@@ -867,7 +867,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         label, width_px = compute_scale_bar_for_camera(
             camera=cam,
             render_window=rw,
-            unit="µm",
+            unit=getattr(state, "size_unit", None) or "µm",
             voxel_um_xy=voxel_um_xy,
         )
         state.nov_scale_bar_label = label

@@ -121,7 +121,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         label, width_px = compute_scale_bar(
             renderer=s.renderer,
             render_window=s.render_window,
-            unit="µm",
+            unit=getattr(state, "size_unit", None) or "µm",
             component=comp,
             base_spacing_xy=base_xy,
         )
@@ -160,46 +160,110 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks]   Metadata URL: {state.metadata_url}")
         
         try:
-            from bioset.metadata import parse_ome_metadata
-            
-            metadata = parse_ome_metadata(state.metadata_url)
-            
-            state.physical_size_x = metadata.physical_size_x
-            state.physical_size_y = metadata.physical_size_y
-            state.physical_size_z = metadata.physical_size_z
-            
+            from bioset.metadata import parse_ome_metadata, parse_zarr_attrs_metadata
+
             streamer = _refs.get("streamer")
             if streamer:
                 streamer.set_zarr_url(state.zarr_url)
-                streamer.set_spacing(
-                    metadata.physical_size_x,
-                    metadata.physical_size_y,
-                    metadata.physical_size_z
+
+            # Metadata precedence:
+            #  - Dimensions / units / channel COUNT: the ZARR store is the single
+            #    source of truth. Read them from its embedded metadata; fall back
+            #    to a separate OME-XML only when the store carries none.
+            #  - Channel NAMES: come from the separate metadata ONLY when the
+            #    "Separate metadata" panel is open. Otherwise use the store's own
+            #    names (omero labels) or a generic default.
+            embedded = None
+            channel_count = None
+            if streamer:
+                try:
+                    attrs = streamer.zsrc.root_attrs()
+                    try:
+                        # Channel count from the store's axis layout — 1 for a
+                        # bare 3D (z,y,x) volume with no channel axis.
+                        channel_count = streamer.zsrc.num_channels()
+                    except Exception:
+                        channel_count = None
+                    embedded = parse_zarr_attrs_metadata(attrs, channel_count)
+                except Exception as e:
+                    print(f"[callbacks] Could not read embedded zarr metadata: {e}")
+
+            # Consult the separate OME-XML when the panel is open (for channel
+            # names) or when the store has no embedded metadata at all (then it is
+            # the only available source, including for dimensions).
+            external = None
+            if (state.metadata_open or embedded is None) and state.metadata_url:
+                try:
+                    external = parse_ome_metadata(state.metadata_url)
+                except Exception as e:
+                    print(f"[callbacks] Could not read separate metadata: {e}")
+
+            if embedded is None and external is None:
+                raise ValueError(
+                    "The zarr store has no embedded metadata and no separate "
+                    "metadata is available (open the Separate metadata panel and "
+                    "provide a URL)."
                 )
+
+            # Dimensions/units: the zarr wins; the separate file only fills in when
+            # the store carries nothing.
+            dims_src = embedded if embedded is not None else external
+            phys_x = dims_src.physical_size_x
+            phys_y = dims_src.physical_size_y
+            phys_z = dims_src.physical_size_z
+            size_unit = dims_src.size_unit or "µm"
+
+            # Channel names from the separate file only when it is open (or is the
+            # sole source); otherwise from the store. Channel COUNT is the zarr's.
+            use_external_names = external is not None and (state.metadata_open or embedded is None)
+            channel_count = channel_count or len(dims_src.channels)
+
+            def _channel_name(i):
+                if use_external_names and i < len(external.channels):
+                    return external.channels[i].name
+                if embedded is not None and i < len(embedded.channels):
+                    return embedded.channels[i].name
+                return f"Channel {i}"
+
+            state.metadata_source = "external" if (
+                external is not None and (use_external_names or embedded is None)
+            ) else "embedded"
+
+            state.physical_size_x = phys_x
+            state.physical_size_y = phys_y
+            state.physical_size_z = phys_z
+            state.size_unit = size_unit
+
+            if streamer:
+                streamer.set_spacing(phys_x, phys_y, phys_z)
+                # Pyramid depth and zoom thresholds come from the store itself,
+                # so they must be derived after the URL and spacing are set.
+                streamer.configure_lod_from_source()
 
             mesh_mgr = _refs.get("mesh_manager")
             if mesh_mgr:
-                mesh_mgr.update_spacing(
-                    metadata.physical_size_x,
-                    metadata.physical_size_y,
-                    metadata.physical_size_z
-                )
+                mesh_mgr.update_spacing(phys_x, phys_y, phys_z)
 
             channels = [
                 {
-                    "id": ch.id,
-                    "name": ch.name,
-                    "color": get_channel_color(ch.id),
+                    "id": i,
+                    "name": _channel_name(i),
+                    "color": get_channel_color(i),
                     "color_dialog": False,
                     "range": [0, 100],
                 }
-                for ch in metadata.channels
+                for i in range(channel_count)
             ]
             
             state.channels = channels
             state.active_channels = []
-            initial_visible = channels if len(channels) < state.default_num_channels else [ch["id"] for ch in channels[:state.default_num_channels]]
-            state.visible_channel_ids = initial_visible
+            # visible_channel_ids must be a list of channel IDs (the list UI does
+            # visible_channel_ids.includes(ch.id)). Slicing covers both cases:
+            # fewer channels than the default shows them all. (The old code
+            # assigned the channel *dicts* when there were fewer than the default,
+            # so a single-channel store rendered an empty list.)
+            state.visible_channel_ids = [
+                ch["id"] for ch in channels[:state.default_num_channels]]
             state.data_loaded = True
             # Per-dataset folder for bookmark recordings (one folder per dataset link)
             try:
@@ -216,8 +280,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 streamer.renderer.ResetCameraClippingRange()
                 update_main_scale_bar()
             if _refs["view"]:
+                # Resync the server render-window size/aspect to the client on
+                # first load (a remote client can otherwise render stretched
+                # until it resizes the browser); then push the frame.
+                try:
+                    _refs["view"].resize()
+                except Exception:
+                    pass
                 _refs["view"].update()
-            
+
         except Exception as e:
             print(f"[callbacks] Error loading data: {e}")
             import traceback
@@ -677,8 +748,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         currently_active = streamer.get_active_channels()
         new_active = set(active_channels)
-        was_empty_before = not currently_active
-        
+
         to_deactivate = currently_active - new_active
         for channel_id in to_deactivate:
             print(f"[callbacks] Deactivating channel {channel_id}")
@@ -687,8 +757,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 mesh_mgr.deactivate_channel_mesh(channel_id)
 
         to_activate = new_active - currently_active
-        did_set_initial_cam_dist = False
-        desired_dist = 2237.6
         for channel_id in to_activate:
             color_hex = "#FFFFFF"
             for ch in state.channels:
@@ -698,29 +766,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print(f"[callbacks] Activating channel {channel_id} with color {color_hex}")
             streamer.activate_channel(channel_id, color_hex)
 
-            # After first-ever channel activation, adjust initial camera distance to improve first view.
-            # This affects the "select channels from list" flow (not bookmark flow).
-            if was_empty_before and (not did_set_initial_cam_dist) and getattr(streamer, "renderer", None):
-                try:
-                    cam = streamer.renderer.GetActiveCamera()
-                    pos = cam.GetPosition()
-                    fp = cam.GetFocalPoint()
-                    dx, dy, dz = (pos[0] - fp[0]), (pos[1] - fp[1]), (pos[2] - fp[2])
-                    cur = (dx * dx + dy * dy + dz * dz) ** 0.5
-                    if cur > 1e-9:
-                        s = desired_dist / cur
-                        new_pos = (fp[0] + dx * s, fp[1] + dy * s, fp[2] + dz * s)
-                        cam.SetPosition(new_pos[0], new_pos[1], new_pos[2])
-                        cam.Modified()
-                        streamer.renderer.ResetCameraClippingRange()
-                        # Keep streamer internal "initial camera" consistent for later reset.
-                        if getattr(streamer, "_initial_camera", None):
-                            streamer._initial_camera["position"] = list(new_pos)
-                    if _refs["view"]:
-                        _refs["view"].update()
-                    did_set_initial_cam_dist = True
-                except Exception:
-                    pass
+            # The first activated channel frames the canonical default view
+            # (top-down, fit to the live volume bounds) inside activate_channel ->
+            # frame_default_view; no dataset-specific camera distance here.
             if (state.selected_tile and mesh_mgr and mesh_mgr.is_available
                     and channel_id not in state.surface_hidden_channels):
                 tile_x = state.selected_tile["tile_x"]
@@ -1257,20 +1305,57 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 streamer.renderer.ResetCamera()
                 streamer.renderer.ResetCameraClippingRange()
         update_main_scale_bar()
-        if _refs.get("view"):
-            _refs["view"].update()
-    
+        view = _refs.get("view")
+        if view:
+            # Force the client to re-measure and resync the server render-window
+            # size/aspect. On a remote client the offscreen window can be left at
+            # a stale aspect, which renders the volume stretched until the user
+            # resizes the browser; resize() does that resync programmatically.
+            try:
+                view.resize()
+            except Exception:
+                pass
+            view.update()
+
     def update_background_color(color_hex):
-        """Update renderer background color."""
+        """Update renderer background color.
+
+        The main window is layered (heatmap fill = layer 0, volume = layer 1,
+        heatmap outline = layer 2). Only the layer-0 renderer clears the window's
+        color buffer, so the visible background comes from IT, not the volume
+        renderer — setting the volume renderer's background alone has no effect.
+        Set every renderer, and make the bottom (lowest-layer) one opaque so the
+        chosen color actually shows."""
         print(f"[callbacks] Updating background color to {color_hex}")
         streamer = _refs.get("streamer")
-        if streamer and hasattr(streamer, 'renderer'):
-            color_hex = color_hex.lstrip('#')
-            if len(color_hex) >= 6:
-                r = int(color_hex[0:2], 16) / 255.0
-                g = int(color_hex[2:4], 16) / 255.0
-                b = int(color_hex[4:6], 16) / 255.0
-                streamer.renderer.SetBackground(r, g, b)
+        if not streamer:
+            return
+        color_hex = color_hex.lstrip('#')
+        if len(color_hex) < 6:
+            return
+        r = int(color_hex[0:2], 16) / 255.0
+        g = int(color_hex[2:4], 16) / 255.0
+        b = int(color_hex[4:6], 16) / 255.0
+
+        rw = getattr(streamer, 'render_window', None)
+        renderers = []
+        if rw is not None:
+            coll = rw.GetRenderers()
+            coll.InitTraversal()
+            ren = coll.GetNextItem()
+            while ren is not None:
+                renderers.append(ren)
+                ren = coll.GetNextItem()
+        if not renderers and hasattr(streamer, 'renderer'):
+            renderers = [streamer.renderer]
+
+        for ren in renderers:
+            ren.SetBackground(r, g, b)
+        if renderers:
+            bottom = min(renderers, key=lambda re: re.GetLayer())
+            bottom.SetBackgroundAlpha(1.0)  # the layer that clears the window
+        if rw is not None:
+            rw.Render()
         if _refs["view"]:
             _refs["view"].update()
     
@@ -2409,7 +2494,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
         report_data = []
 
         if state.export_general:
-            general_content = GeneralContent(state.zarr_url, state.metadata_url, datetime.datetime.now())
+            # Report the URL only when the metadata actually came from it.
+            metadata_src = (
+                "Embedded in zarr store"
+                if getattr(state, "metadata_source", "") == "embedded"
+                else state.metadata_url
+            )
+            general_content = GeneralContent(state.zarr_url, metadata_src, datetime.datetime.now())
             general = General(general_content)
             report_data.append(general)
 
