@@ -1,0 +1,190 @@
+{
+  "id": "be873767-2769-4d43-a33e-8edb4e8fea51",
+  "title": "Tissue-Resident T cell and Tumor Interface",
+  "category": "Immune_Tumor",
+  "created": "2026-04-07T23:05:26Z",
+  "updated": "2026-04-07T23:06:18Z",
+  "notes": "This region displays a striking spatial interplay between a dense MART1-positive melanocytic tumor mass (red, volumetrically dominant) and CD8a-positive cytotoxic T lymphocytes (green) distributed both at the tumor periphery and interspersed within the tumor core. CD103-positive cells (white) appear as discrete focal clusters embedded within the CD8a and MART1 signals, identifying a tissue-resident memory cytotoxic T cell (Trm) population actively engaging the tumor. The pattern suggests an immune-infiltrated rather than immune-excluded microenvironment, with Trm cells positioned at direct contact sites with melanoma cells — consistent with active cytotoxic surveillance and potential antigen-driven retention.",
+  "description": "This region displays a striking spatial interplay between a dense MART1-positive melanocytic tumor mass (red, volumetrically dominant) and CD8a-positive cytotoxic T lymphocytes (green) distributed both at the tumor periphery and interspersed within the tumor core. CD103-positive cells (white) appear as discrete focal clusters embedded within the CD8a and MART1 signals, identifying a tissue-resident memory cytotoxic T cell (Trm) population actively engaging the tumor. The pattern suggests an immune-infiltrated rather than immune-excluded microenvironment, with Trm cells positioned at direct contact sites with melanoma cells — consistent with active cytotoxic surveillance and potential antigen-driven retention.",
+  "camera": {
+    "position": [
+      772.5934507333502,
+      238.4059514710756,
+      391.43976133689654
+    ],
+    "focalPoint": [
+      776.0904092902106,
+      220.85973771034304,
+      0.18137446496921883
+    ],
+    "viewUp": [
+      -0.013230709935965725,
+      0.9989032094484042,
+      -0.04491465761049557
+    ]
+  },
+  "channels": [
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 35,
+      "name": "CD8a",
+      "color": "#00FF00",
+      "range": [
+        15.0,
+        100.0
+      ]
+    },
+    {
+      "id": 48,
+      "name": "CD103",
+      "color": "#FFFFFF",
+      "range": [
+        50.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    35,
+    48,
+    3
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 2046,
+    "height": 995
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          772.5934507333502,
+          238.4059514710756,
+          391.43976133689654
+        ],
+        "focalPoint": [
+          776.0904092902106,
+          220.85973771034304,
+          0.18137446496921883
+        ],
+        "viewUp": [
+          -0.013230709935965725,
+          0.9989032094484042,
+          -0.04491465761049557
+        ]
+      },
+      "notes": "This region displays a striking spatial interplay between a dense MART1-positive melanocytic tumor mass (red, volumetrically dominant) and CD8a-positive cytotoxic T lymphocytes (green) distributed both at the tumor periphery and interspersed within the tumor core. CD103-positive cells (white) appear as discrete focal clusters embedded within the CD8a and MART1 signals, identifying a tissue-resident memory cytotoxic T cell (Trm) population actively engaging the tumor. The pattern suggests an immune-infiltrated rather than immune-excluded microenvironment, with Trm cells positioned at direct contact sites with melanoma cells — consistent with active cytotoxic surveillance and potential antigen-driven retention.",
+      "comments": [],
+      "channels": [
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#00FF00",
+          "range": [
+            15.0,
+            100.0
+          ]
+        },
+        {
+          "id": 48,
+          "name": "CD103",
+          "color": "#FFFFFF",
+          "range": [
+            50.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        35,
+        48,
+        3
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 2046,
+        "height": 995
+      },
+      "optional_LOD": {
+        "component": 2,
+        "roi": {
+          "x0": 984,
+          "x1": 1797,
+          "y0": 184,
+          "y1": 602
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Suggest channels to add alongside: CD8a, CD103, MART1"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"suggestions\": [\n    {\n      \"channel\": \"GranzymeB\",\n      \"priority\": \"high\",\n      \"reason\": \"reveals cytotoxic killing activity of CD8a+CD103+ TRM cells at tumor interface\"\n    },\n    {\n      \"channel\": \"PD1\",\n      \"priority\": \"high\",\n      \"reason\": \"identifies exhaustion or activation state of CD103+CD8a+ tissue-resident T cells\"\n    },\n    {\n      \"channel\": \"MHC-I\",\n      \"priority\": \"high\",\n      \"reason\": \"determines whether MART1+ tumor cells are visible to CD8a+ cytotoxic T cells\"\n    },\n    {\n      \"channel\": \"PDL1\",\n      \"priority\": \"medium\",\n      \"reason\": \"reveals checkpoint-mediated immune evasion at the CD8a\\u2013MART1 tumor interface\"\n    },\n    {\n      \"channel\": \"LAG3\",\n      \"priority\": \"medium\",\n      \"reason\": \"identifies co-inhibitory receptor co-expression on CD103+CD8a+ TRM cells\"\n    },\n    {\n      \"channel\": \"SOX10\",\n      \"priority\": \"medium\",\n      \"reason\": \"confirms melanocytic lineage of MART1+ tumor cells in this region\"\n    }\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Label: CD8a, CD103, MART1"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"CD103\": [\n      \"tissue-resident T cell\"\n    ],\n    \"CD103/MART1\": [\n      \"TRM\\u2013tumor contact zone\"\n    ],\n    \"CD8a\": [\n      \"cytotoxic T cell\"\n    ],\n    \"CD8a+CD103\": [\n      \"tumor-infiltrating TRM\"\n    ],\n    \"CD8a+CD103/MART1\": [\n      \"TRM intraepithelial infiltration front\"\n    ],\n    \"CD8a/MART1\": [\n      \"cytotoxic T cell\\u2013tumor front\"\n    ],\n    \"MART1\": [\n      \"melanocytic tumor\"\n    ]\n  },\n  \"overall\": [\n    \"TRM-enriched anti-tumor immune niche\"\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Label: CD8a, CD103, MART1"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"CD103\": [\n      \"tissue-resident T cell\"\n    ],\n    \"CD8a\": [\n      \"cytotoxic T cell\"\n    ],\n    \"CD8a+CD103\": [\n      \"tissue-resident memory CTL\"\n    ],\n    \"CD8a+CD103/MART1\": [\n      \"TRM\\u2013tumor infiltration front\"\n    ],\n    \"CD8a/MART1\": [\n      \"cytotoxic T cell\\u2013tumor interface\"\n    ],\n    \"MART1\": [\n      \"melanocytic tumor\"\n    ]\n  },\n  \"overall\": [\n    \"TRM-infiltrated melanoma niche\"\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Label: CD8a, CD103, MART1"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"CD103\": [\n      \"tissue-residency marker\"\n    ],\n    \"CD103/MART1\": [\n      \"TRM\\u2013melanoma contact zone\"\n    ],\n    \"CD8a\": [\n      \"cytotoxic T cell\"\n    ],\n    \"CD8a+CD103\": [\n      \"tissue-resident memory CTL\"\n    ],\n    \"CD8a+CD103/MART1\": [\n      \"TRM\\u2013tumor infiltration front\"\n    ],\n    \"CD8a/MART1\": [\n      \"cytotoxic T cell\\u2013tumor interface\"\n    ],\n    \"MART1\": [\n      \"melanoma tumor\"\n    ]\n  },\n  \"overall\": [\n    \"TRM-infiltrated melanoma niche\",\n    \"CD8a+CD103 tissue-resident CTLs at active tumor margin\"\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Suggest bookmark text"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    }
+  ],
+  "chat_history_updated": "2026-04-07T23:06:18Z",
+  "optional_LOD": {
+    "component": 2,
+    "roi": {
+      "x0": 984,
+      "x1": 1797,
+      "y0": 184,
+      "y1": 602
+    }
+  }
+}

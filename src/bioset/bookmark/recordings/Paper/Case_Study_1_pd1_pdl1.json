@@ -1,0 +1,186 @@
+{
+  "id": "b1f77866-de1c-4ce7-9fb3-d87e19e5c757",
+  "title": "Case Study 1 (pd1-pdl1)",
+  "category": "Paper",
+  "created": "2026-03-29T11:51:04Z",
+  "updated": "2026-03-29T11:51:08Z",
+  "notes": "",
+  "description": "",
+  "camera": {
+    "position": [
+      162.08716504104376,
+      689.9681384753533,
+      173.46560000000002
+    ],
+    "focalPoint": [
+      162.08716504104376,
+      689.9681384753533,
+      0.0
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        17.0,
+        40.0
+      ]
+    },
+    {
+      "id": 15,
+      "name": "PDL1",
+      "color": "#FFFFFF",
+      "range": [
+        31.0,
+        100.0
+      ]
+    },
+    {
+      "id": 35,
+      "name": "CD8a",
+      "color": "#00FF00",
+      "range": [
+        34.0,
+        100.0
+      ]
+    },
+    {
+      "id": 39,
+      "name": "PD1",
+      "color": "#FF00FF",
+      "range": [
+        66.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    39,
+    3,
+    35,
+    15
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 2048,
+    "height": 1000
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          162.08716504104376,
+          689.9681384753533,
+          173.46560000000002
+        ],
+        "focalPoint": [
+          162.08716504104376,
+          689.9681384753533,
+          0.0
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "",
+      "comments": [],
+      "channels": [
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            17.0,
+            40.0
+          ]
+        },
+        {
+          "id": 15,
+          "name": "PDL1",
+          "color": "#FFFFFF",
+          "range": [
+            31.0,
+            100.0
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#00FF00",
+          "range": [
+            34.0,
+            100.0
+          ]
+        },
+        {
+          "id": 39,
+          "name": "PD1",
+          "color": "#FF00FF",
+          "range": [
+            66.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        39,
+        3,
+        35,
+        15
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 2048,
+        "height": 1000
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 222,
+          "x1": 935,
+          "y0": 2282,
+          "y1": 2646
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Label: Hoechst, MART1, Collagen (SHG)"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"Collagen (SHG)\": [\n      \"fibrillar stroma\"\n    ],\n    \"Collagen (SHG)/Hoechst+MART1\": [\n      \"peritumoral stromal border\"\n    ],\n    \"Collagen (SHG)/MART1\": [\n      \"tumor\\u2013stroma margin\"\n    ],\n    \"Hoechst\": [\n      \"nuclear architecture\"\n    ],\n    \"Hoechst+MART1\": [\n      \"melanoma tumor cell\"\n    ],\n    \"MART1\": [\n      \"melanocytic tumor\"\n    ]\n  },\n  \"overall\": [\n    \"invasive melanoma\\u2013stroma interface\"\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Label: MART1, Collagen (SHG), Hoechst"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"Collagen (SHG)\": [\n      \"stromal collagen fiber\"\n    ],\n    \"Collagen (SHG)/Hoechst\": [\n      \"peritumoral stromal border\"\n    ],\n    \"Collagen (SHG)/MART1\": [\n      \"tumor-stroma margin\"\n    ],\n    \"Hoechst\": [\n      \"pan-cellular nuclei\"\n    ],\n    \"Hoechst+MART1\": [\n      \"melanoma tumor cells\"\n    ],\n    \"MART1\": [\n      \"melanocytic tumor cells\"\n    ]\n  },\n  \"overall\": [\n    \"melanoma tumor nests at stromal margin\"\n  ]\n}"
+    }
+  ],
+  "chat_history_updated": "2026-03-29T11:51:08Z",
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 222,
+      "x1": 935,
+      "y0": 2282,
+      "y1": 2646
+    }
+  }
+}

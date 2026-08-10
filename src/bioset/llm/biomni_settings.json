@@ -1,0 +1,7 @@
+{
+  "biomni_model": "claude-sonnet-4-6",
+  "biomni_db_model": "claude-haiku-4-5-20251001",
+  "biomni_mode": "full",
+  "biomni_port": 5000,
+  "biomni_dataset": "melanoma CyCIF"
+}

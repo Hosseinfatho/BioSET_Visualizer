@@ -6,6 +6,7 @@
 .idea
 .claude
 *.pdf
+profiling/*
 
 *.egg-info/
 build/
