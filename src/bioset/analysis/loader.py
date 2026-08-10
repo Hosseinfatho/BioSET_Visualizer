@@ -77,6 +77,48 @@ class CombinationData:
     tiles: list[TileData] = field(default_factory=list)
 
 
+def crop_field_to_roi(
+    field: Optional[HeatmapField],
+    roi_vox: Optional[Tuple[int, int, int, int]],
+    margin_frac: float = 1.0,
+) -> Optional[HeatmapField]:
+    """Crop a HeatmapField to a viewport ROI given in voxels (x0, x1, y0, y1),
+    expanded by `margin_frac` of the ROI extent on each side.
+
+    Cells inside the (expanded) view keep full detail; only off-screen
+    instances are dropped, which is what keeps fine-level glyph counts sane
+    when zoomed in. Returns the original field object unchanged when the
+    expanded ROI covers the whole grid (identity check tells callers whether
+    a crop was applied).
+    """
+    if field is None or roi_vox is None or field.counts.size == 0:
+        return field
+    x0, x1, y0, y1 = roi_vox
+    cs = field.cell_size_vox
+    mx = (x1 - x0) * margin_frac
+    my = (y1 - y0) * margin_frac
+    cx0 = max(0, int(np.floor((x0 - mx) / cs)))
+    cx1 = min(field.nx, int(np.ceil((x1 + mx) / cs)))
+    cy0 = max(0, int(np.floor((y0 - my) / cs)))
+    cy1 = min(field.ny, int(np.ceil((y1 + my) / cs)))
+    if cx0 <= 0 and cy0 <= 0 and cx1 >= field.nx and cy1 >= field.ny:
+        return field
+    cy = field.cells_yx[:, 0]
+    cx = field.cells_yx[:, 1]
+    keep = (cy >= cy0) & (cy < cy1) & (cx >= cx0) & (cx < cx1)
+    if bool(keep.all()):
+        return field
+    return HeatmapField(
+        level=field.level,
+        cell_size_vox=field.cell_size_vox,
+        ny=field.ny,
+        nx=field.nx,
+        cells_yx=field.cells_yx[keep],
+        counts=field.counts[keep],
+        fractions=field.fractions[keep],
+    )
+
+
 class AnalysisLoader:
     """Query interface over a results directory containing
     ``colocalization.zarr`` and ``tally/``."""

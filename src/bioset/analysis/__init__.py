@@ -4,6 +4,7 @@ from .loader import (
     CombinationData,
     HeatmapField,
     TileData,
+    crop_field_to_roi,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "CombinationData",
     "HeatmapField",
     "TileData",
+    "crop_field_to_roi",
 ]

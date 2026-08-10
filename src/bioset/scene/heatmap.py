@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 
 import numpy as np
@@ -45,17 +45,28 @@ class HeatmapConfig:
 
 _LUT_SIZE = 256
 
+# Glyph roles: which persistent actor draws what, and on which layer.
+#   filled     — solid cubes, layer-0 renderer (behind the volume)
+#   wire       — wireframe cubes (simple outline mode), layer-2 renderer
+#   front      — box-grid front rectangles, layer-2 renderer
+#   back       — box-grid back rectangles, layer-0 renderer
+#   connectors — box-grid corner connectors, layer-2 renderer
+_ROLES = ("filled", "wire", "front", "back", "connectors")
+
 
 class HeatmapRenderer:
-    """Heatmap cells rendered as instanced glyphs (one vtkGlyph3DMapper actor
-    per mode-layer instead of one vtkActor per cell — the fine grid can carry
-    hundreds of thousands of cells).
+    """Heatmap cells rendered as instanced glyphs (one persistent
+    vtkGlyph3DMapper actor per role instead of one vtkActor per cell — the
+    fine grid can carry hundreds of thousands of cells).
 
     Modes (same visual encodings as the per-actor implementation this replaces):
       - filled: solid cubes behind the volume; value → opacity at constant color
       - outline: wireframe box grid bracketing the volume (front rect + corner
         connectors in front, back rect behind); value → grayscale brightness +
         opacity at fixed line width
+
+    Actors and mappers are created once and reused across updates (input/source
+    swaps only) so an update never re-creates GPU pipeline objects.
     """
 
     def __init__(
@@ -72,11 +83,13 @@ class HeatmapRenderer:
         self.config = config or HeatmapConfig()
 
         self._visible = True
-        self._actors: list[tuple[vtkRenderer, vtkActor]] = []  # (owning renderer, actor)
+        self._glyphs: Dict[str, dict] = {}     # role -> {actor, mapper, renderer}
+        self._active_roles: set[str] = set()
+        self._lut_cache: Dict[tuple, vtk.vtkLookupTable] = {}
 
         self._field: Optional[HeatmapField] = None
         self._current_spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
-        self._cell_index: dict[tuple[int, int], int] = {}  # (cy, cx) -> row in field
+        self._index_grid: Optional[np.ndarray] = None  # (ny, nx) int32 -> field row
 
         # Persistent hover-highlight actor (single wireframe rect, repositioned)
         self._highlight_actor: Optional[vtkActor] = None
@@ -131,9 +144,10 @@ class HeatmapRenderer:
             fractions=fracs.astype(np.float32),
         )
         self._current_spacing = spacing
-        self._cell_index = {
-            (int(cy), int(cx)): i for i, (cy, cx) in enumerate(cells)
-        }
+        # Dense picking index: vectorized build, O(1) lookup (the Python-dict
+        # variant dominated main-thread apply time at fine levels).
+        self._index_grid = np.full((field.ny, field.nx), -1, dtype=np.int32)
+        self._index_grid[cells[:, 0], cells[:, 1]] = np.arange(n, dtype=np.int32)
 
         sx, sy, _ = spacing
         cw_x = field.cell_size_vox * sx  # cell width in world units
@@ -170,23 +184,19 @@ class HeatmapRenderer:
                 rel_front = z_front - z_center
                 rel_back = z_back - z_center
 
-                front = self._rect_source(cw_x, cw_y, rel_front)
-                back = self._rect_source(cw_x, cw_y, rel_back)
-                connectors = self._connector_source(cw_x, cw_y, rel_back, rel_front)
-                self._add_glyph_actor(instances, front, lut, self.outline_renderer, lines=True)
-                self._add_glyph_actor(instances, back, lut, self.renderer, lines=True)
-                self._add_glyph_actor(instances, connectors, lut, self.outline_renderer, lines=True)
+                self._activate("front", instances,
+                               self._rect_source(cw_x, cw_y, rel_front), lut)
+                self._activate("back", instances,
+                               self._rect_source(cw_x, cw_y, rel_back), lut)
+                self._activate("connectors", instances,
+                               self._connector_source(cw_x, cw_y, rel_back, rel_front), lut)
             else:
-                # Simple wireframe cubes
                 cube = vtkCubeSource()
                 cube.SetXLength(cw_x)
                 cube.SetYLength(cw_y)
                 cube.SetZLength(self.config.z_height)
                 cube.Update()
-                self._add_glyph_actor(
-                    instances, cube.GetOutput(), lut, self.outline_renderer,
-                    lines=False, wireframe=True,
-                )
+                self._activate("wire", instances, cube.GetOutput(), lut)
         else:
             lut = self._make_lut(outline=False, color=color or self.config.base_color)
             cube = vtkCubeSource()
@@ -194,15 +204,27 @@ class HeatmapRenderer:
             cube.SetYLength(cw_y)
             cube.SetZLength(self.config.z_height)
             cube.Update()
-            self._add_glyph_actor(instances, cube.GetOutput(), lut, self.renderer)
+            self._activate("filled", instances, cube.GetOutput(), lut)
 
     def _make_lut(self, outline: bool, color: Tuple[float, float, float] = (1, 1, 1)):
-        """256-entry LUT encoding the value→color/opacity ramps.
+        """256-entry LUT encoding the value→color/opacity ramps, memoized.
 
         Per-instance color+alpha comes from mapping the instance scalar through
         this table (avoids per-instance RGBA direct-scalar quirks on glyph
         mappers).
         """
+        c = self.config
+        key = (
+            outline,
+            tuple(round(x, 4) for x in color),
+            c.opacity_scale, round(c.gamma, 4),
+            round(c.min_opacity, 4), round(c.max_opacity, 4),
+            round(c.outline_min_opacity, 4), round(c.outline_max_opacity, 4),
+        )
+        cached = self._lut_cache.get(key)
+        if cached is not None:
+            return cached
+
         lut = vtk.vtkLookupTable()
         lut.SetNumberOfTableValues(_LUT_SIZE)
         lut.SetRange(0.0, 1.0)
@@ -210,24 +232,32 @@ class HeatmapRenderer:
             t = i / (_LUT_SIZE - 1)
             if outline:
                 # grayscale brightness + opacity ramp, fixed line width
-                a = (self.config.outline_min_opacity
-                     + t * (self.config.outline_max_opacity - self.config.outline_min_opacity))
+                a = (c.outline_min_opacity
+                     + t * (c.outline_max_opacity - c.outline_min_opacity))
                 lut.SetTableValue(i, t, t, t, a)
             else:
-                tt = t ** self.config.gamma if self.config.opacity_scale == 'exponential' else t
-                a = self.config.min_opacity + tt * (self.config.max_opacity - self.config.min_opacity)
+                tt = t ** c.gamma if c.opacity_scale == 'exponential' else t
+                a = c.min_opacity + tt * (c.max_opacity - c.min_opacity)
                 lut.SetTableValue(i, color[0], color[1], color[2], a)
         lut.Build()
+        if len(self._lut_cache) > 16:
+            self._lut_cache.clear()
+        self._lut_cache[key] = lut
         return lut
 
-    def _add_glyph_actor(self, instances, source_poly, lut, target_renderer,
-                         lines: bool = False, wireframe: bool = False):
+    def _role_renderer(self, role: str) -> Optional[vtkRenderer]:
+        if role in ("filled", "back"):
+            return self.renderer
+        return self.outline_renderer
+
+    def _ensure_glyph(self, role: str) -> dict:
+        """Create the persistent actor+mapper for a role on first use."""
+        entry = self._glyphs.get(role)
+        if entry is not None:
+            return entry
         mapper = vtkGlyph3DMapper()
-        mapper.SetInputData(instances)
-        mapper.SetSourceData(source_poly)
         mapper.ScalingOff()
         mapper.OrientOff()
-        mapper.SetLookupTable(lut)
         mapper.SetScalarRange(0.0, 1.0)
         mapper.SetColorModeToMapScalars()
         mapper.ScalarVisibilityOn()
@@ -235,16 +265,35 @@ class HeatmapRenderer:
         actor = vtkActor()
         actor.SetMapper(mapper)
         prop = actor.GetProperty()
-        if lines or wireframe:
-            if wireframe:
+        if role != "filled":
+            if role == "wire":
                 prop.SetRepresentationToWireframe()
             prop.SetLineWidth(self.config.outline_line_width)
         # Analytic picking is used instead of geometric pickers.
         actor.SetPickable(False)
 
-        self._actors.append((target_renderer, actor))
-        if self._visible:
-            target_renderer.AddActor(actor)
+        entry = {"actor": actor, "mapper": mapper, "renderer": self._role_renderer(role)}
+        self._glyphs[role] = entry
+        return entry
+
+    def _activate(self, role: str, instances, source_poly, lut):
+        """Point a persistent glyph actor at new instance/source data and show it."""
+        entry = self._ensure_glyph(role)
+        mapper = entry["mapper"]
+        mapper.SetInputData(instances)
+        mapper.SetSourceData(source_poly)
+        mapper.SetLookupTable(lut)
+        self._active_roles.add(role)
+        ren = entry["renderer"]
+        if self._visible and ren is not None and not ren.HasViewProp(entry["actor"]):
+            ren.AddActor(entry["actor"])
+
+    def _deactivate_all(self):
+        for role in list(self._active_roles):
+            entry = self._glyphs.get(role)
+            if entry and entry["renderer"] is not None:
+                entry["renderer"].RemoveActor(entry["actor"])
+        self._active_roles.clear()
 
     @staticmethod
     def _rect_source(w: float, h: float, z: float) -> vtkPolyData:
@@ -291,28 +340,29 @@ class HeatmapRenderer:
 
     def set_color(self, color: Tuple[float, float, float]):
         self.config.base_color = color
-        # Colors are baked into the LUT; a re-render with the new color happens
-        # on the next update_field call.
+        # Colors are baked into the (cached) LUT; a re-render with the new
+        # color happens on the next update_field call.
 
     def set_visible(self, visible: bool):
         if visible == self._visible:
             return
         self._visible = visible
-        for ren, actor in self._actors:
+        for role in self._active_roles:
+            entry = self._glyphs.get(role)
+            if not entry or entry["renderer"] is None:
+                continue
             if visible:
-                if not ren.HasViewProp(actor):
-                    ren.AddActor(actor)
+                if not entry["renderer"].HasViewProp(entry["actor"]):
+                    entry["renderer"].AddActor(entry["actor"])
             else:
-                ren.RemoveActor(actor)
+                entry["renderer"].RemoveActor(entry["actor"])
         if not visible:
             self.clear_highlight()
 
     def clear(self):
-        for ren, actor in self._actors:
-            ren.RemoveActor(actor)
-        self._actors.clear()
+        self._deactivate_all()
         self._field = None
-        self._cell_index = {}
+        self._index_grid = None
         self.clear_highlight()
 
     # ──────────────────────────────────────────────
@@ -326,10 +376,14 @@ class HeatmapRenderer:
         return self._field.cell_size_vox if self._field else 0
 
     def cell_at(self, cy: int, cx: int) -> Optional[TileData]:
-        i = self._cell_index.get((cy, cx))
-        if i is None:
-            return None
         f = self._field
+        if f is None or self._index_grid is None:
+            return None
+        if not (0 <= cy < self._index_grid.shape[0] and 0 <= cx < self._index_grid.shape[1]):
+            return None
+        i = int(self._index_grid[cy, cx])
+        if i < 0:
+            return None
         return TileData(
             x0=int(f.cells_yx[i, 1]), x1=int(f.cells_yx[i, 1]) + 1,
             y0=int(f.cells_yx[i, 0]), y1=int(f.cells_yx[i, 0]) + 1,

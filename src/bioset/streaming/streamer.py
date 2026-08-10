@@ -145,6 +145,10 @@ class VolumeStreamer:
         self._needs_still_render = False
         self._idle_ticks = 0
 
+        # True between Start/EndInteractionEvent — lets other subsystems
+        # (e.g. hover picking) skip work while the camera is being dragged.
+        self.interacting = False
+
         # Interactive resolution cap: while loading/interacting we upload a
         # small (fast) texture; once idle we rebuild full-res from cached numpy
         # and swap it in. _capped_channels = channels currently shown downsized.
@@ -1703,6 +1707,7 @@ class VolumeStreamer:
         sharp texture (the viewport still matches the loaded ROI at the very
         start); the per-move handler drops to the coarse base only once an
         interaction actually pushes the viewport past the loaded region."""
+        self.interacting = True
         self._update_interaction_textures()
 
     def on_interaction_move(self) -> None:
@@ -2791,6 +2796,7 @@ class VolumeStreamer:
         viewport for the async loader and returns the desired component (for
         heatmap LOD to consume). Does NOT block on loading or full-quality render.
         """
+        self.interacting = False
         # Defensive: some zoom/scroll interactions can push the camera clipping
         # range into an invalid state (everything clipped => black screen).
         # Reset it, but do NOT render here — the interactor already rendered this

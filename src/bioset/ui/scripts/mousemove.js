@@ -14,6 +14,9 @@ Vue.component('hover-tracker', {
       attached = true;
 
       canvas.addEventListener('mousemove', function (e) {
+        // No hover while a button is held: camera drags (rotate/pan/zoom)
+        // must not trigger server-side hover picking/rendering.
+        if (e.buttons !== 0) return;
         var now = Date.now();
         if (now - lastSend < THROTTLE_MS) return;
         lastSend = now;

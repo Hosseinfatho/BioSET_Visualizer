@@ -4,6 +4,7 @@ import datetime
 import hashlib
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from bioset.NOV import register_nov_callbacks
@@ -145,7 +146,16 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if getattr(rw, "_bioset_main_scale_bar_observer", False):
             return
 
+        # RenderEvent fires on every frame, including every interactive drag
+        # frame — throttle so drags don't pay a scale-bar recompute + two
+        # trame state writes per frame.
+        _last_update = [0.0]
+
         def _on_render(_obj=None, _evt=None):
+            now = time.monotonic()
+            if now - _last_update[0] < 0.10:
+                return
+            _last_update[0] = now
             try:
                 update_main_scale_bar()
             except Exception:
@@ -789,6 +799,31 @@ def register_callbacks(ctrl, state, view, streamer=None):
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
         )
+
+        # At fine levels, drop off-screen cells (same crop policy as the LOD
+        # worker) — they are pure render cost while zoomed in.
+        crop_levels = getattr(heatmap_lod, "CROP_LEVELS", (0, 1)) if heatmap_lod else (0, 1)
+        margin = getattr(heatmap_lod, "CROP_MARGIN_FRAC", 1.0) if heatmap_lod else 1.0
+        if field is not None and state.current_hierarchy_level in crop_levels:
+            renderer = _refs.get("renderer")
+            if streamer and renderer:
+                try:
+                    from bioset.streaming.lod import compute_visible_xy_roi_vox
+                    from bioset.analysis import crop_field_to_roi
+                    bounds = streamer._volume_bounds_world(0)
+                    sp = streamer._spacing_for_component(0)
+                    _, ydim, xdim = streamer._dims_for_component(0)
+                    roi = compute_visible_xy_roi_vox(
+                        renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
+                        x_dim=xdim, y_dim=ydim, margin_vox=0, display_samples=5,
+                    )
+                    roi_vox = (roi.x0, roi.x1, roi.y0, roi.y1)
+                    sub = crop_field_to_roi(field, roi_vox, margin)
+                    if heatmap_lod:
+                        heatmap_lod.note_applied_crop(roi_vox, sub is not field)
+                    field = sub
+                except Exception as e:
+                    print(f"[callbacks] Heatmap crop skipped: {e}")
 
         if field is None or field.counts.size == 0:
             print(f"[callbacks] No cells found for this combination")
@@ -2070,7 +2105,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
         streamer = _refs.get("streamer")
         if not heatmap or not streamer:
             return
-        if not state.heatmap_visible:
+        # Never do hover picking (or the render it triggers) while the camera
+        # is being dragged, when there is nothing to pick, or when hidden.
+        if getattr(streamer, "interacting", False):
+            return
+        if not state.heatmap_visible or not state.analysis_loaded:
+            return
+        if heatmap.tile_count == 0:
             return
         win_size = streamer.renderer.GetRenderWindow().GetSize()
         tile = heatmap.get_cell_at_display(int(px), win_size[1] - int(py))

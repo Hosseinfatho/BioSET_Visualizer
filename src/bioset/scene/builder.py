@@ -275,28 +275,33 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                 streamer.on_interaction_end()
                 from bioset.streaming.lod import camera_distance_to_focal, compute_visible_xy_roi_vox
                 dist = camera_distance_to_focal(renderer.GetActiveCamera())
+
+                # Visible ROI at base resolution (component 0), shared by the
+                # heatmap LOD crop and the viewport plots' block mapping.
+                roi = None
+                try:
+                    bounds = streamer._volume_bounds_world(0)
+                    sp = streamer._spacing_for_component(0)
+                    _, ydim, xdim = streamer._dims_for_component(0)
+                    roi = compute_visible_xy_roi_vox(
+                        renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
+                        x_dim=xdim, y_dim=ydim, margin_vox=0,
+                    )
+                except Exception as e:
+                    print(f"[builder] ROI computation error: {e}")
+
                 if _heatmap_lod_ref[0] is not None:
-                    _heatmap_lod_ref[0].on_camera_moved(dist)
+                    roi_vox = (roi.x0, roi.x1, roi.y0, roi.y1) if roi is not None else None
+                    _heatmap_lod_ref[0].on_camera_moved(dist, roi_vox=roi_vox)
                 vp = _viewport_plots_ref[0]
-                if vp is not None and vp._enabled:
-                    try:
-                        # Compute ROI at base resolution (component 0) for tile mapping
-                        bounds = streamer._volume_bounds_world(0)
-                        sp = streamer._spacing_for_component(0)
-                        _, ydim, xdim = streamer._dims_for_component(0)
-                        roi = compute_visible_xy_roi_vox(
-                            renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
-                            x_dim=xdim, y_dim=ydim, margin_vox=0,
-                        )
-                        # Convert ROI voxel coords to tally-block indices (128 voxels)
-                        from bioset.analysis.constants import BLOCK_VOX
-                        gx0 = roi.x0 // BLOCK_VOX
-                        gx1 = (roi.x1 + BLOCK_VOX - 1) // BLOCK_VOX
-                        gy0 = roi.y0 // BLOCK_VOX
-                        gy1 = (roi.y1 + BLOCK_VOX - 1) // BLOCK_VOX
-                        vp.on_camera_moved((gx0, gx1), (gy0, gy1))
-                    except Exception as e:
-                        print(f"[viewport_plots] ROI computation error: {e}")
+                if vp is not None and vp._enabled and roi is not None:
+                    # Convert ROI voxel coords to tally-block indices (128 voxels)
+                    from bioset.analysis.constants import BLOCK_VOX
+                    gx0 = roi.x0 // BLOCK_VOX
+                    gx1 = (roi.x1 + BLOCK_VOX - 1) // BLOCK_VOX
+                    gy0 = roi.y0 // BLOCK_VOX
+                    gy1 = (roi.y1 + BLOCK_VOX - 1) // BLOCK_VOX
+                    vp.on_camera_moved((gx0, gx1), (gy0, gy1))
 
             def _on_nov_end_interaction(obj, evt):
                 nov_render_window.Render()
@@ -330,6 +335,11 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                 # on_interaction_end -> async stream -> apply.
                 try:
                     streamer.on_interaction_start()
+                except Exception:
+                    pass
+                # Drop any hover highlight so it doesn't render stale during the drag.
+                try:
+                    heatmap.clear_highlight()
                 except Exception:
                     pass
 
