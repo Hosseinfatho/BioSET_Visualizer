@@ -126,21 +126,41 @@ def data_sources_section(state, ctrl):
                 with html.Div(v_if="!drawer_mini && data_loaded"):
                     vuetify.VDivider()
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                        vuetify.VFileInput(
-                            classes="nav-item nav-item--nested mt-4",
-                            label="Analysis results (.bioset)",
-                            accept=".bioset",
-                            chips=True,
-                            small_chips=True,
-                            prepend_icon="mdi-chart-box-outline",
-                            color="white",
-                            loading=("analysis_loading", False),
-                            disabled=("analysis_loading", False),
-                            dense=True,
-                            hide_details=True,
-                            __events=["change"],
-                            change="$event ? window.biosetChunkedUpload($event, trigger) : trigger('clear_analysis')",
-                        )
+                        with vuetify.VListItemContent(class_="mt-2 mb-0 pb-0"):
+                            vuetify.VTextField(
+                                v_model=("analysis_dir", ""),
+                                label="Analysis results path",
+                                placeholder="path to results dir (colocalization.zarr + tally)",
+                                prepend_icon="mdi-chart-box-outline",
+                                dense=True,
+                                clearable=True,
+                                hide_details=True,
+                                disabled=("analysis_loading", False),
+                            )
+                    with vuetify.VListItem(
+                        class_="nav-item nav-item--nested",
+                        v_if="!analysis_loaded",
+                    ):
+                        with vuetify.VListItemContent(class_="mt-2 pt-0"):
+                            vuetify.VBtn(
+                                "Load Analysis",
+                                click=ctrl.load_analysis_path,
+                                loading=("analysis_loading", False),
+                                disabled=("analysis_loading || !analysis_dir",),
+                                block=True,
+                                small=True,
+                            )
+                    with vuetify.VListItem(
+                        class_="nav-item nav-item--nested",
+                        v_if="analysis_loaded",
+                    ):
+                        with vuetify.VListItemContent(class_="mt-2 pt-0"):
+                            vuetify.VBtn(
+                                "Clear Analysis",
+                                click="trigger('clear_analysis')",
+                                block=True,
+                                small=True,
+                            )
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
                         with vuetify.VListItemContent():
                             # Show loaded status

@@ -288,13 +288,12 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                             renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
                             x_dim=xdim, y_dim=ydim, margin_vox=0,
                         )
-                        # Convert ROI voxel coords to tile grid indices
-                        # DB tile coords are always in level-0 grid units (128 voxels)
-                        BASE_TILE = 128
-                        gx0 = roi.x0 // BASE_TILE
-                        gx1 = (roi.x1 + BASE_TILE - 1) // BASE_TILE
-                        gy0 = roi.y0 // BASE_TILE
-                        gy1 = (roi.y1 + BASE_TILE - 1) // BASE_TILE
+                        # Convert ROI voxel coords to tally-block indices (128 voxels)
+                        from bioset.analysis.constants import BLOCK_VOX
+                        gx0 = roi.x0 // BLOCK_VOX
+                        gx1 = (roi.x1 + BLOCK_VOX - 1) // BLOCK_VOX
+                        gy0 = roi.y0 // BLOCK_VOX
+                        gy1 = (roi.y1 + BLOCK_VOX - 1) // BLOCK_VOX
                         vp.on_camera_moved((gx0, gx1), (gy0, gy1))
                     except Exception as e:
                         print(f"[viewport_plots] ROI computation error: {e}")

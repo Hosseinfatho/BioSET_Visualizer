@@ -30,44 +30,86 @@ def analysis_parameters_section(state, ctrl):
                     v_show=("analysis_params_open", False),
                     classes="mt-1",
             ):
-                # Dilation Header
+                # Dilation Header: label + current radius + exact/computed chip.
+                # Radii at the preprocessed detents are answered exactly from the
+                # tally; anything else is computed from the EDT field.
                 with vuetify.VListItem(classes="mt-2 text-left ml-4"):
-                    html.Span("Dilation", classes="text-caption grey--text font-weight-bold")
+                    html.Span("Dilation radius", classes="text-caption grey--text font-weight-bold")
+                    html.Span(
+                        "{{ Number(current_dilation).toFixed(2) }} \u03BCm",
+                        classes="text-caption ml-2",
+                        style="color: white;",
+                    )
+                    vuetify.VChip(
+                        v_text="analysis_dilation_amounts.some(d => Math.abs(d - current_dilation) < 0.001) ? 'exact' : 'computed'",
+                        x_small=True,
+                        classes="ml-2",
+                        color=("analysis_dilation_amounts.some(d => Math.abs(d - current_dilation) < 0.001) ? 'green darken-3' : 'amber darken-4'",),
+                        text_color="white",
+                    )
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(classes="pb-0"):
-                        # Dilation slider 
-                        with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-2 mt-2"):
+                        # Continuous radius slider with magnetic detents.
+                        # The thumb tracks `radius_slider` client-side while
+                        # dragging; the committed value lands in
+                        # `current_dilation` on release, where the server snaps
+                        # it to a nearby detent (see state.on_dilation_change).
+                        with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-0 mt-2"):
                             with vuetify.VBtn(
                                     icon=True,
                                     small=True,
-                                    click="current_dilation = Math.max(analysis_dilation_amounts[0] || 0, current_dilation - (analysis_dilation_amounts.length > 1 ? analysis_dilation_amounts[1] - analysis_dilation_amounts[0] : 1))",
+                                    click="(function(){var a = analysis_dilation_amounts.filter(function(d){return d < current_dilation - 1e-6}); var v = a.length ? a[a.length-1] : (analysis_dilation_amounts[0] || 0); radius_slider = v; current_dilation = v;})()",
                             ):
                                 vuetify.VIcon("mdi-minus", small=True)
 
-                            vuetify.VSlider(
-                                v_model=("current_dilation",),
-                                min=("analysis_dilation_amounts.length > 0 ? analysis_dilation_amounts[0] : 0",),
-                                max=(
-                                    "analysis_dilation_amounts.length > 0 ? analysis_dilation_amounts[analysis_dilation_amounts.length - 1] : 0",),
-                                step=(
-                                    "analysis_dilation_amounts.length > 1 ? analysis_dilation_amounts[1] - analysis_dilation_amounts[0] : 1",),
-                                ticks="always",
-                                dense=True,
-                                dark=True,
-                                hide_details=False,
-                                classes="mx-2",
-                                small=True,
-                                style="font-size: 0.75rem;",
-                                tick_labels=("analysis_dilation_amounts.map(v => v + ' \u03BCm')",),
-                            )
+                            with html.Div(style="position: relative; flex: 1 1 auto;", classes="mx-2"):
+                                vuetify.VSlider(
+                                    v_model=("radius_slider", 0.0),
+                                    min=0,
+                                    max=("analysis_radius_max",),
+                                    step=0.01,
+                                    dense=True,
+                                    dark=True,
+                                    hide_details=True,
+                                    thumb_label=True,
+                                    small=True,
+                                    style="font-size: 0.75rem;",
+                                    __events=["change"],
+                                    change="current_dilation = radius_slider",
+                                )
+                                # Detent ticks overlaid on the track
+                                html.Div(
+                                    v_for="d in analysis_dilation_amounts",
+                                    key=("d",),
+                                    style=(
+                                        "'position: absolute; top: 12px; width: 2px; height: 10px; "
+                                        "pointer-events: none; transform: translateX(-50%); "
+                                        "left: ' + (d / analysis_radius_max * 100) + '%; "
+                                        "background: ' + (Math.abs(d - current_dilation) < 0.001 ? '#4caf50' : '#9e9e9e')",
+                                    ),
+                                )
+                                html.Span(
+                                    v_for="d in analysis_dilation_amounts",
+                                    key=("'l' + d",),
+                                    v_text="d",
+                                    style=(
+                                        "'position: absolute; top: 22px; font-size: 9px; "
+                                        "pointer-events: none; transform: translateX(-50%); "
+                                        "left: ' + (d / analysis_radius_max * 100) + '%; "
+                                        "color: ' + (Math.abs(d - current_dilation) < 0.001 ? '#4caf50' : '#9e9e9e')",
+                                    ),
+                                )
 
                             with vuetify.VBtn(
                                     icon=True,
                                     small=True,
-                                    click="current_dilation = Math.min(analysis_dilation_amounts[analysis_dilation_amounts.length - 1] || 0, current_dilation + (analysis_dilation_amounts.length > 1 ? analysis_dilation_amounts[1] - analysis_dilation_amounts[0] : 1))",
+                                    click="(function(){var a = analysis_dilation_amounts.filter(function(d){return d > current_dilation + 1e-6}); if (a.length) { radius_slider = a[0]; current_dilation = a[0]; }})()",
                             ):
                                 vuetify.VIcon("mdi-plus", small=True)
+                # Spacer so the detent labels below the track stay visible
+                with vuetify.VListItem(classes="mt-0 pt-0", style="min-height: 14px;"):
+                    html.Span("")
 
                 # Heatmap Header
                 with vuetify.VListItem(classes="mt-4 text-left ml-4"):

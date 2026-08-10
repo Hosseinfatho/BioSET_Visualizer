@@ -455,6 +455,14 @@ def right_drawer(state, ctrl):
                         vuetify.VSpacer()
                         vuetify.VBtn("Close", color="surface-variant", click="bar_filter_dialog = false")
 
+            # Coverage semantics note: voxel-exact at tallied radii, bin
+            # fraction at arbitrary radii
+            html.Div(
+                "{{ bar_metric_label }}",
+                v_if="bar_metric_label",
+                classes="text-caption text-center",
+                style="color: #9e9e9e; font-size: 10px;",
+            )
             # Vue component for Bar chart
             vuetify.Template(
                 """

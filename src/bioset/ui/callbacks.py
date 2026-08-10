@@ -476,335 +476,34 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.analysis_dilation_amounts = []
         state.analysis_hierarchy_levels = []
         state.analysis_volume_bounds = {}
+        state.analysis_radius_max = 4.0
+        state.bar_metric_label = ""
         state.heatmap_tile_count = 0
         print("[callbacks] Analysis cleared")
 
-    def _apply_analysis_metadata(loader, metadata, file_name: str):
-        """Push loaded analysis metadata into state and related subsystems."""
-        z_depth = 1
-        bounds = metadata.volume_bounds
-        if bounds and "z" in bounds:
-            z_depth = max(1, bounds["z"][1] - bounds["z"][0])
-
-        heatmap_lod = _refs.get("heatmap_lod")
-        if heatmap_lod and loader.db_path:
-            heatmap_lod.set_analysis(
-                db_path=loader.db_path,
-                channel_order=list(metadata.channels),
-                z_depth=z_depth,
-            )
-
-        vp = _refs.get("viewport_plots")
-        if vp and loader.db_path:
-            vp.set_analysis(
-                db_path=loader.db_path,
-                channel_order=list(metadata.channels),
-                z_depth=z_depth,
-            )
-
-        state.analysis_file_name = file_name
-        state.analysis_channels = metadata.channels
-        state.analysis_dilation_amounts = metadata.dilation_amounts
-        state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
-        state.analysis_volume_bounds = metadata.volume_bounds
-
-        if metadata.dilation_amounts:
-            mid = len(metadata.dilation_amounts) // 2
-            state.current_dilation = metadata.dilation_amounts[mid]
-
-        if metadata.hierarchy_levels:
-            state.current_hierarchy_level = metadata.hierarchy_levels[-1]["level"]
-
-        state.upset_selected_channels = [ch for ch in state.analysis_channels]
-        state.bar_selected_channels = [ch for ch in state.analysis_channels]
-        state.dilation_selected_channels = [ch for ch in state.analysis_channels]
-
-        state.analysis_loaded = True
-        state.right_drawer_open = True
-
-        print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
-              f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
-
-        for step in (
-            update_heatmap,
-            update_heatmap_combinations,
-            update_upset_data,
-            update_bar_data,
-            update_dilation_data,
-        ):
-            try:
-                step()
-            except Exception as e:
-                print(f"[callbacks] {step.__name__} after analysis load failed: {e}")
-
-        if _refs["view"]:
-            try:
-                _refs["view"].update()
-            except Exception:
-                pass
-
-    def load_analysis_from_path(file_path: str):
-        """Load a .bioset analysis file from a local path (server/default deploy)."""
-        packed = preload_default_analysis(file_path)
-        if not packed:
-            return False
-        apply_preloaded_analysis(*packed)
-        return True
-
-    def preload_default_analysis(file_path: str | None = None):
-        """Gunzip/sqlite only (safe off the VTK thread). Returns (loader, metadata, name) or None."""
-        candidates = []
-        if file_path:
-            candidates.append(Path(file_path))
-        env_path = (os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "").strip()
-        if env_path:
-            candidates.append(Path(env_path))
-        folders = [
-            Path("/app/preprocessed"),
-            Path("preprocessed"),
-            Path("/data/hossein/Bioset/preprocessed"),
-        ]
-        for folder in folders:
-            candidates.append(folder / "melanoma_in_situ.bioset")
-            if folder.is_dir():
-                candidates.extend(sorted(folder.glob("*.bioset")))
-
-        print(
-            f"[callbacks] Looking for default analysis "
-            f"(cwd={Path.cwd()}, BIOSET_DEFAULT_ANALYSIS={env_path or '<unset>'})"
-        )
-        seen = set()
-        path = None
-        for cand in candidates:
-            key = str(cand)
-            if key in seen:
-                continue
-            seen.add(key)
-            exists = cand.is_file()
-            print(f"[callbacks]   candidate {cand} exists={exists}")
-            if exists:
-                path = cand
-                break
-        if path is None:
-            print("[callbacks] No default analysis file found in preprocessed/")
-            return None
-
-        print(f"[callbacks] Preloading analysis from path: {path}")
-        try:
-            from bioset.analysis import AnalysisLoader
-            from bioset.analysis.loader import decompress_bioset_to_cache
-
-            db_path = decompress_bioset_to_cache(path)
-            loader = AnalysisLoader()
-            metadata = loader.load_sqlite(str(db_path), owns_file=False)
-            return loader, metadata, path.name
-        except Exception as e:
-            print(f"[callbacks] Error preloading analysis from path: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-    def apply_preloaded_analysis(loader, metadata, file_name: str):
-        """Apply a preloaded analysis on the VTK/Trame thread."""
-        if _refs["analysis_loader"] is not None:
-            try:
-                _refs["analysis_loader"].close()
-            except Exception:
-                pass
-        _refs["analysis_loader"] = loader
-        try:
-            _apply_analysis_metadata(loader, metadata, file_name)
-            return True
-        except Exception as e:
-            print(f"[callbacks] Error applying analysis: {e}")
-            import traceback
-            traceback.print_exc()
-            return bool(state.analysis_loaded)
-
-    def maybe_load_default_analysis():
-        """If BIOSET_DEFAULT_ANALYSIS (or known preprocessed path) exists, load it."""
-        packed = preload_default_analysis()
-        if not packed:
-            return False
-        return apply_preloaded_analysis(*packed)
-
-    def load_analysis_file(file_info):
-        """
-        Load analysis results from uploaded .bioset file.
-
-        Args:
-            file_info: File info dict from trame file upload containing 'content' (base64) and 'name'
-        """
+    def load_analysis_path():
+        """Load analysis results from a server-side directory path
+        (`state.analysis_dir`, containing colocalization.zarr + tally/)."""
         if state.analysis_loading:
             return
-        
+        results_dir = (state.analysis_dir or "").strip()
+        if not results_dir:
+            print("[callbacks] No analysis path given")
+            return
+
         state.analysis_loading = True
-        print(f"[callbacks] Loading analysis file...")
-        
-        try:
-            import base64
-            from bioset.analysis import AnalysisLoader
-            
-            content = file_info.get("content", "")
-            
-            
-            # file_bytes = base64.b64decode(content)
-            if(isinstance(content, bytes)):
-                file_bytes = content
-            else:
-                if "," in content:
-                    content = content.split(",", 1)[1]
-                file_bytes = base64.b64decode(content)
-                
-            file_name = file_info.get("name", "unknown.bioset")
-            
-            print(f"[callbacks] File: {file_name}, size: {len(file_bytes)} bytes")
-            
-            if _refs["analysis_loader"] is None:
-                _refs["analysis_loader"] = AnalysisLoader()
-            
-            loader = _refs["analysis_loader"]
-            metadata = loader.load_from_bytes(file_bytes)
-
-            # Notify HeatmapLOD and ViewportPlotComputer of new analysis context
-            z_depth = 1
-            bounds = metadata.volume_bounds
-            if bounds and "z" in bounds:
-                z_depth = max(1, bounds["z"][1] - bounds["z"][0])
-
-            heatmap_lod = _refs.get("heatmap_lod")
-            if heatmap_lod and loader.db_path:
-                heatmap_lod.set_analysis(
-                    db_path=loader.db_path,
-                    channel_order=list(metadata.channels),
-                    z_depth=z_depth,
-                )
-
-            vp = _refs.get("viewport_plots")
-            if vp and loader.db_path:
-                vp.set_analysis(
-                    db_path=loader.db_path,
-                    channel_order=list(metadata.channels),
-                    z_depth=z_depth,
-                )
-
-            state.analysis_file_name = file_name
-            state.analysis_channels = metadata.channels
-            state.analysis_dilation_amounts = metadata.dilation_amounts
-            state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
-            state.analysis_volume_bounds = metadata.volume_bounds
-            
-            if metadata.dilation_amounts:
-                mid = len(metadata.dilation_amounts) // 2
-                state.current_dilation = metadata.dilation_amounts[mid]
-            
-            if metadata.hierarchy_levels:
-                state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
-                state.current_hierarchy_level = metadata.hierarchy_levels[len(metadata.hierarchy_levels)-1]["level"]
-            
-            # Initialize plot channel selections with all channels
-            state.upset_selected_channels = [ch for ch in state.analysis_channels]
-            state.bar_selected_channels = [ch for ch in state.analysis_channels]
-            state.dilation_selected_channels = [ch for ch in state.analysis_channels]
-            
-            state.analysis_loaded = True
-            state.right_drawer_open = True  
-            
-            print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
-                  f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
-            
-            update_heatmap()
-            update_heatmap_combinations()
-            update_upset_data()
-            update_bar_data()
-            update_dilation_data()
-            
-            if _refs["view"]:
-                _refs["view"].update()
-            
-        except Exception as e:
-            print(f"[callbacks] Error loading analysis: {e}")
-            import traceback
-            traceback.print_exc()
-            state.analysis_loaded = False
-        finally:
-            state.analysis_loading = False
-
-    # ── Chunked .bioset upload ──────────────────────────────────────────
-    _upload_temp_dir = None
-    _upload_temp_path = None
-    _upload_total_size = 0
-    _upload_bytes_written = 0
-    _upload_name = ""
-    _upload_complete_signalled = False
-
-    def upload_analysis_start(info):
-        nonlocal _upload_temp_dir, _upload_temp_path, _upload_total_size
-        nonlocal _upload_bytes_written, _upload_name, _upload_complete_signalled
-        import tempfile as _tmp
-        name = info.get("name", "upload.bioset")
-        total = info.get("total_size", 0)
-        _upload_temp_dir = _tmp.mkdtemp(prefix="bioset_upload_")
-        _upload_temp_path = Path(_upload_temp_dir) / name
-        _upload_total_size = total
-        _upload_bytes_written = 0
-        _upload_name = name
-        _upload_complete_signalled = False
-        # Pre-allocate file to full size so parallel seeks work
-        with open(_upload_temp_path, "wb") as f:
-            f.seek(total - 1)
-            f.write(b"\0")
-        state.analysis_loading = True
-        print(f"[callbacks] Chunked upload started: {name} ({total} bytes)")
-
-    def _try_finalize_upload():
-        """Load the file once all bytes are written AND complete has been signalled."""
-        nonlocal _upload_temp_dir, _upload_temp_path, _upload_complete_signalled
-        if not _upload_complete_signalled:
-            return
-        if _upload_bytes_written < _upload_total_size:
-            return
-        print(f"[callbacks] All chunks received, loading {_upload_temp_path}...")
-        _do_load_assembled_file()
-
-    def upload_analysis_chunk(info):
-        nonlocal _upload_temp_path, _upload_bytes_written
-        import base64
-        if _upload_temp_path is None:
-            return
-        data_b64 = info.get("data", "")
-        chunk_bytes = base64.b64decode(data_b64)
-        offset = info.get("offset", 0)
-        with open(_upload_temp_path, "r+b") as f:
-            f.seek(offset)
-            f.write(chunk_bytes)
-        _upload_bytes_written += len(chunk_bytes)
-        pct = min(100, int(_upload_bytes_written * 100 / max(1, _upload_total_size)))
-        if pct % 10 == 0:
-            print(f"[callbacks] Upload progress: {pct}%  ({_upload_bytes_written}/{_upload_total_size})")
-        _try_finalize_upload()
-
-    def upload_analysis_complete(info):
-        nonlocal _upload_complete_signalled
-        _upload_complete_signalled = True
-        print(f"[callbacks] Upload complete signal received ({_upload_bytes_written}/{_upload_total_size} bytes written)")
-        _try_finalize_upload()
-
-    def _do_load_assembled_file():
-        nonlocal _upload_temp_dir, _upload_temp_path
-        if _upload_temp_path is None:
-            state.analysis_loading = False
-            return
-        name = _upload_name
-        print(f"[callbacks] Upload complete, loading {_upload_temp_path}...")
+        state.flush()
         try:
             from bioset.analysis import AnalysisLoader
 
             if _refs["analysis_loader"] is None:
-                _refs["analysis_loader"] = AnalysisLoader()
+                streamer = _refs.get("streamer")
+                cell_sizes = getattr(getattr(streamer, "cfg", None),
+                                     "analysis_cell_sizes", None)
+                _refs["analysis_loader"] = AnalysisLoader(cell_sizes_vox=cell_sizes)
 
             loader = _refs["analysis_loader"]
-            metadata = loader.load(str(_upload_temp_path))
+            metadata = loader.load(results_dir)
 
             z_depth = 1
             bounds = metadata.volume_bounds
@@ -812,30 +511,32 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 z_depth = max(1, bounds["z"][1] - bounds["z"][0])
 
             heatmap_lod = _refs.get("heatmap_lod")
-            if heatmap_lod and loader.db_path:
+            if heatmap_lod:
                 heatmap_lod.set_analysis(
-                    db_path=loader.db_path,
+                    loader=loader,
                     channel_order=list(metadata.channels),
                     z_depth=z_depth,
                 )
 
             vp = _refs.get("viewport_plots")
-            if vp and loader.db_path:
+            if vp:
                 vp.set_analysis(
-                    db_path=loader.db_path,
+                    loader=loader,
                     channel_order=list(metadata.channels),
                     z_depth=z_depth,
                 )
 
-            state.analysis_file_name = name
+            state.analysis_file_name = Path(results_dir).name
             state.analysis_channels = metadata.channels
             state.analysis_dilation_amounts = metadata.dilation_amounts
             state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
             state.analysis_volume_bounds = metadata.volume_bounds
+            state.analysis_radius_max = metadata.radius_max_um
 
             if metadata.dilation_amounts:
                 mid = len(metadata.dilation_amounts) // 2
                 state.current_dilation = metadata.dilation_amounts[mid]
+                state.radius_slider = state.current_dilation
 
             if metadata.hierarchy_levels:
                 state.current_hierarchy_level = metadata.hierarchy_levels[-1]["level"]
@@ -848,7 +549,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.right_drawer_open = True
 
             print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
-                  f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
+                  f"detents={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
 
             update_heatmap()
             update_heatmap_combinations()
@@ -866,20 +567,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.analysis_loaded = False
         finally:
             state.analysis_loading = False
-            # Clean up temp upload file
-            if _upload_temp_path and _upload_temp_path.exists():
-                try:
-                    _upload_temp_path.unlink()
-                except Exception:
-                    pass
-            if _upload_temp_dir:
-                import shutil
-                try:
-                    shutil.rmtree(_upload_temp_dir, ignore_errors=True)
-                except Exception:
-                    pass
-            _upload_temp_dir = None
-            _upload_temp_path = None
 
     def toggle_channel(channel_id):
         """Toggle a channel's active state (add/remove from rendering)."""
@@ -1095,27 +782,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
             return
         
         print(f"[callbacks] Updating heatmap for combination: {selected_channel_names}")
-        print(f"[callbacks]   dilation={state.current_dilation}, level={state.current_hierarchy_level}")
-        
-        tiles = loader.get_combination_tiles(
+        print(f"[callbacks]   radius={state.current_dilation}, level={state.current_hierarchy_level}")
+
+        field = loader.get_heatmap_field(
             channels=selected_channel_names,
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
         )
-        
-        if not tiles:
-            print(f"[callbacks] No tiles found for this combination")
+
+        if field is None or field.counts.size == 0:
+            print(f"[callbacks] No cells found for this combination")
             heatmap.clear()
             state.heatmap_tile_count = 0
         else:
-            print(f"[callbacks] Found {len(tiles)} tiles")
-            
             spacing = (
-                getattr(state, 'physical_size_x', 1.0),
-                getattr(state, 'physical_size_y', 1.0),
-                getattr(state, 'physical_size_z', 1.0),
+                getattr(state, 'physical_size_x', None) or 1.0,
+                getattr(state, 'physical_size_y', None) or 1.0,
+                getattr(state, 'physical_size_z', None) or 1.0,
             )
-            
+
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
             outline_only = getattr(state, "heatmap_outline_only", "filled") == "outline"
@@ -1141,9 +826,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 heatmap.config.outline_box_depth = 0.0
                 heatmap.config.outline_box_front_z = 0.0
 
-            heatmap.update_tiles(tiles, spacing=spacing, color=color, outline_only=outline_only)
-            state.heatmap_tile_count = len(tiles)
-        
+            heatmap.update_field(field, spacing=spacing, color=color, outline_only=outline_only)
+            state.heatmap_tile_count = heatmap.tile_count
+            print(f"[callbacks] Heatmap: {heatmap.tile_count} cells "
+                  f"({field.cell_size_vox}-voxel, level {field.level})")
+
         if _refs["view"]:
             _refs["view"].update()
     
@@ -1304,11 +991,16 @@ def register_callbacks(ctrl, state, view, streamer=None):
         
         print(f"[callbacks] Updating bar data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
         
-        # Get coverage percentages from channel_stats table
         all_coverage = loader.get_channel_coverage(
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
         )
+        if hasattr(loader, "coverage_is_voxel_exact"):
+            state.bar_metric_label = (
+                "% of voxels (exact)"
+                if loader.coverage_is_voxel_exact(state.current_dilation)
+                else "% of analysis bins (1.12 µm)"
+            )
 
         # Filter to selected channels
         filtered = [
@@ -1412,12 +1104,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
                 x_dim=xdim, y_dim=ydim, margin_vox=0,
             )
-            # DB tile coords are always in level-0 grid units (128 voxels)
-            BASE_TILE = 128
-            gx0 = roi.x0 // BASE_TILE
-            gx1 = (roi.x1 + BASE_TILE - 1) // BASE_TILE
-            gy0 = roi.y0 // BASE_TILE
-            gy1 = (roi.y1 + BASE_TILE - 1) // BASE_TILE
+            # Viewport ranges are in tally-block units (128 voxels)
+            from bioset.analysis.constants import BLOCK_VOX
+            gx0 = roi.x0 // BLOCK_VOX
+            gx1 = (roi.x1 + BLOCK_VOX - 1) // BLOCK_VOX
+            gy0 = roi.y0 // BLOCK_VOX
+            gy1 = (roi.y1 + BLOCK_VOX - 1) // BLOCK_VOX
             return (gx0, gx1), (gy0, gy1)
         except Exception as e:
             print(f"[viewport_plots] ROI computation error: {e}")
@@ -2224,14 +1916,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
         # Last resort: already smallest quality
         return base64.b64encode(raw).decode("utf-8")
 
-    def _print_tile_channel_stats(tile, level, dilation):
-        """Print per-channel stats and build the channel_stats dict stored in _refs."""
+    def _print_tile_channel_stats(tile, dilation):
+        """Print per-channel stats for the tally block containing a picked
+        heatmap cell, and cache the channel_stats dict for Biomni."""
         loader = _refs.get("analysis_loader")
-        if not loader or not loader.is_loaded:
+        heatmap = _refs.get("heatmap")
+        if not loader or not loader.is_loaded or not heatmap:
             return
-        stats = loader.get_tile_channel_stats(tile.x0, tile.y0, level, dilation)
-        print(f"[picker] Channel stats — tile ({tile.x0},{tile.y0}) "
-              f"level={level} dilation={dilation}:")
+
+        from bioset.analysis.constants import BLOCK_VOX
+
+        cs = heatmap.current_cell_size_vox or 1
+        # Cell center in voxel coordinates → containing 128-voxel tally block
+        vox_x = (tile.x0 + tile.x1) / 2.0 * cs
+        vox_y = (tile.y0 + tile.y1) / 2.0 * cs
+        block_x = int(vox_x // BLOCK_VOX)
+        block_y = int(vox_y // BLOCK_VOX)
+
+        stats = loader.get_block_channel_stats(block_y, block_x, dilation)
+        print(f"[picker] Channel stats — cell ({tile.x0},{tile.y0}) "
+              f"block ({block_y},{block_x}) radius={dilation}:")
         if stats:
             print(f"  {'Channel':<20} {'Voxels':>10} {'MeanInt':>10} {'SumInt':>14}")
             print(f"  {'-'*20} {'-'*10} {'-'*10} {'-'*14}")
@@ -2239,17 +1943,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 print(f"  {row['channel']:<20} {row['voxel_count']:>10} "
                       f"{row['mean_intensity']:>10.3f} {row['sum_intensity']:>14.1f}")
         else:
-            print("  (no data for this tile / dilation)")
+            print("  (no data for this block / radius)")
 
-        # total voxels in this tile region (width × height in base voxels × z depth)
-        base_tile_px = 128
-        width_vox = (tile.x1 - tile.x0) * base_tile_px
-        height_vox = (tile.y1 - tile.y0) * base_tile_px
         bounds = loader.metadata.volume_bounds if loader.metadata else {}
         z_depth = max(1, bounds["z"][1] - bounds["z"][0]) if bounds and "z" in bounds else 1
-        total_voxels = width_vox * height_vox * z_depth
+        total_voxels = BLOCK_VOX * BLOCK_VOX * z_depth
 
-        dtype_max = loader.metadata.dtype_max if loader.metadata else 65535
+        # Intensity scale comes from the image metadata when available.
+        dtype_max = getattr(state, "dtype_max", None) or (
+            loader.metadata.dtype_max if loader.metadata else 65535)
 
         _refs["last_tile_channel_stats"] = {
             "dtype_max": dtype_max,
@@ -2265,175 +1967,49 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[picker] channel_stats cached: {len(stats)} channels, "
               f"total_voxels={total_voxels}, dtype_max={dtype_max}")
 
-    def setup_right_click_picker(interactor):
-        """Register a VTK prop picker on right-click to select heatmap tiles."""
-        from vtkmodules.vtkRenderingCore import vtkPropPicker
-        
-        # Avoid registering the same observer multiple times on the same interactor.
-        if getattr(interactor, "_bioset_right_click_picker_registered", False):
-            return
-        setattr(interactor, "_bioset_right_click_picker_registered", True)
-
-        picker = vtkPropPicker()
-
-        def _on_right_button_press(obj, event):
-            click_pos = obj.GetEventPosition()
-            heatmap = _refs.get("heatmap")
-            mesh_mgr = _refs.get("mesh_manager")
-            streamer = _refs.get("streamer")
-
-            if not heatmap or not streamer:
-                return
-
-            # Pick from the renderer that contains heatmap tile actors
-            outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
-            if outline_only and heatmap.outline_renderer is not None:
-                pick_renderer = heatmap.outline_renderer
-            else:
-                pick_renderer = heatmap.renderer
-
-            picker.Pick(click_pos[0], click_pos[1], 0, pick_renderer)
-            picked_actor = picker.GetActor()
-
-            if picked_actor is None:
-                print(f"[picker] No actor at ({click_pos[0]}, {click_pos[1]})")
-                return
-
-            tile = heatmap.get_tile_for_actor(picked_actor)
-            if tile is None:
-                print(f"[picker] Picked actor is not a heatmap tile")
-                return
-
-            print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
-                f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
-            _print_tile_channel_stats(tile, state.current_hierarchy_level, state.current_dilation)
-
-            sx = getattr(state, 'physical_size_x', 0.14)
-            sy = getattr(state, 'physical_size_y', 0.14)
-            sz = getattr(state, 'physical_size_z', 0.28)
-
-            #   world_x = tile_coord * spacing * 128
-            tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
-            tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
-            tile_center_z = 0.0
-
-            tile_width_world = (tile.x1 - tile.x0) * sx * 128
-            tile_height_world = (tile.y1 - tile.y0) * sy * 128
-            tile_extent = max(tile_width_world, tile_height_world)
-
-            cam = streamer.renderer.GetActiveCamera()
-            cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 6.0)
-            cam.SetViewUp(0, 1, 0)
-            streamer.renderer.ResetCameraClippingRange()
-
-            print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
-                f"extent={tile_extent:.1f}")
-
-            active_channels = list(state.active_channels)
-            if mesh_mgr and mesh_mgr.is_available and active_channels:
-                vox_x = (tile.x0 + tile.x1) / 2.0 * 128
-                vox_y = (tile.y0 + tile.y1) / 2.0 * 128
-                state.selected_tile = None
-
-                for ch_id in active_channels:
-                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
-                    if not mesh_tile:
-                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
-                        continue
-                    if state.selected_tile is None:
-                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                    if ch_id not in state.surface_hidden_channels:
-                        color_hex = "#FFFFFF"
-                        for ch in state.channels:
-                            if ch["id"] == ch_id:
-                                color_hex = ch["color"]
-                                break
-                        color_rgb = _hex_to_rgb_tuple(color_hex)
-                        mesh_mgr.activate_channel_mesh(
-                            channel_idx=ch_id,
-                            color_rgb=color_rgb,
-                            tile_x=mesh_tile.tile_x,
-                            tile_y=mesh_tile.tile_y,
-                            opacity=1.0,
-                        )
-
-            if _refs["view"]:
-                _refs["view"].update()
-
-
-        interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
-        print("[callbacks] Right-click picker registered on interactor")
-
-    def on_right_click(px, py):
-        """Handle right-click from client JS (contextmenu) on the VTK canvas."""
+    def _drill_down_to_cell(tile, zoom_factor: float = 4.0):
+        """Shared drill-down: stats, camera fly-to, and mesh activation for a
+        picked heatmap cell (coordinates in cell units)."""
         heatmap = _refs.get("heatmap")
         mesh_mgr = _refs.get("mesh_manager")
         streamer = _refs.get("streamer")
         if not heatmap or not streamer:
             return
 
-        renderer_main = streamer.renderer
-        render_window = renderer_main.GetRenderWindow()
-        win_size = render_window.GetSize()
+        print(f"[picker] Picked heatmap cell: x0={tile.x0}, y0={tile.y0}, "
+              f"count={tile.count}, frac={tile.active_fraction:.3f}")
+        _print_tile_channel_stats(tile, state.current_dilation)
 
-        vtk_x = int(px)
-        vtk_y = int(win_size[1] - int(py))
+        sx = getattr(state, 'physical_size_x', 0.14)
+        sy = getattr(state, 'physical_size_y', 0.14)
+        cs = heatmap.current_cell_size_vox or 1
 
-        # Pick against heatmap tile actors (tiles live in heatmap renderers, not in the main volume renderer).
-        from vtkmodules.vtkRenderingCore import vtkPropPicker
-        picker = vtkPropPicker()
+        cell_center_x, cell_center_y = heatmap.cell_world_center(tile)
+        cell_extent = max((tile.x1 - tile.x0) * cs * sx, (tile.y1 - tile.y0) * cs * sy)
 
-        candidate_renderers = []
-        if getattr(heatmap, "outline_renderer", None) is not None:
-            candidate_renderers.append(heatmap.outline_renderer)
-        if getattr(heatmap, "renderer", None) is not None:
-            candidate_renderers.append(heatmap.renderer)
-        candidate_renderers.append(renderer_main)
-
-        picked_actor = None
-        for ren in candidate_renderers:
-            try:
-                picker.Pick(vtk_x, vtk_y, 0, ren)
-                picked_actor = picker.GetActor()
-            except Exception:
-                picked_actor = None
-            if picked_actor is not None:
-                break
-
-        if picked_actor is None:
-            return
-        tile = heatmap.get_tile_for_actor(picked_actor)
-        if tile is None:
-            return
-
-        sx = getattr(state, "physical_size_x", 0.14)
-        sy = getattr(state, "physical_size_y", 0.14)
-        tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
-        tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
-        tile_center_z = 0.0
-        tile_width_world = (tile.x1 - tile.x0) * sx * 128
-        tile_height_world = (tile.y1 - tile.y0) * sy * 128
-        tile_extent = max(tile_width_world, tile_height_world)
-
-        cam = renderer_main.GetActiveCamera()
-        cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-        cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 4.0)
+        cam = streamer.renderer.GetActiveCamera()
+        cam.SetFocalPoint(cell_center_x, cell_center_y, 0.0)
+        cam.SetPosition(cell_center_x, cell_center_y, cell_extent * zoom_factor)
         cam.SetViewUp(0, 1, 0)
-        renderer_main.ResetCameraClippingRange()
+        streamer.renderer.ResetCameraClippingRange()
 
-        active_channels = list(getattr(state, "active_channels", []) or [])
+        print(f"[picker] Camera -> cell center ({cell_center_x:.1f}, {cell_center_y:.1f}), "
+              f"extent={cell_extent:.1f}")
+
+        active_channels = list(state.active_channels or [])
         if mesh_mgr and mesh_mgr.is_available and active_channels:
-            vox_x = (tile.x0 + tile.x1) / 2.0 * 128
-            vox_y = (tile.y0 + tile.y1) / 2.0 * 128
+            vox_x = (tile.x0 + tile.x1) / 2.0 * cs
+            vox_y = (tile.y0 + tile.y1) / 2.0 * cs
             state.selected_tile = None
+
             for ch_id in active_channels:
                 mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
                 if not mesh_tile:
+                    print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
                     continue
                 if state.selected_tile is None:
                     state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
+                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
                 if ch_id not in state.surface_hidden_channels:
                     color_hex = "#FFFFFF"
                     for ch in state.channels:
@@ -2449,198 +2025,58 @@ def register_callbacks(ctrl, state, view, streamer=None):
                         opacity=1.0,
                     )
 
-        if _refs.get("view"):
-            _refs["view"].update()
-
-    _hover_last_actor = [None]
-    def on_hover(px, py):
-        """Handle throttled mousemove from client JS"""
-        heatmap = _refs.get("heatmap")
-        streamer = _refs.get("streamer")
-        if not heatmap or not streamer:
-            return
-
-        # Pick from the renderer that actually contains the heatmap tile actors:
-        # outline_renderer (layer 2) when in outline mode, fill renderer (layer 0) otherwise.
-        outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
-        if outline_only and heatmap.outline_renderer is not None:
-            pick_renderer = heatmap.outline_renderer
-        else:
-            pick_renderer = heatmap.renderer
-
-        render_window = streamer.renderer.GetRenderWindow()
-        win_size = render_window.GetSize()
-
-        vtk_y = win_size[1] - int(py)
-        vtk_x = int(px)
-
-        from vtkmodules.vtkRenderingCore import vtkPropPicker
-        hover_picker = vtkPropPicker()
-
-        hover_picker.Pick(vtk_x, vtk_y, 0, pick_renderer)
-        picked_actor = hover_picker.GetActor()
-
-        prev = _hover_last_actor[0]
-
-        if picked_actor is prev:
-            return
-
-        if prev is not None:
-            prev.GetProperty().EdgeVisibilityOff()
-
-        if picked_actor is not None and heatmap.get_tile_for_actor(picked_actor) is not None:
-            picked_actor.GetProperty().EdgeVisibilityOn()
-            picked_actor.GetProperty().SetEdgeColor(0.0, 0.0, 0.0)
-            picked_actor.GetProperty().SetLineWidth(5.0)
-            _hover_last_actor[0] = picked_actor
-        else:
-            _hover_last_actor[0] = None
-
         if _refs["view"]:
             _refs["view"].update()
 
     def setup_right_click_picker(interactor):
-        """Register a VTK prop picker on right-click to select heatmap tiles."""
-        from vtkmodules.vtkRenderingCore import vtkPropPicker
+        """Register right-click drill-down on heatmap cells.
 
-        picker = vtkPropPicker()
+        Picking is analytic (display ray → heatmap plane → cell grid), so it
+        works with the instanced glyph rendering on any layer.
+        """
+        if getattr(interactor, "_bioset_right_click_picker_registered", False):
+            return
+        setattr(interactor, "_bioset_right_click_picker_registered", True)
 
-        def _on_right_button_press(obj, event):
-            click_pos = obj.GetEventPosition()
+        def _on_right_button_press(obj, _evt):
             heatmap = _refs.get("heatmap")
-            mesh_mgr = _refs.get("mesh_manager")
-            streamer = _refs.get("streamer")
-
-            if not heatmap or not streamer:
+            if not heatmap:
                 return
-
-            # Pick from the renderer that contains heatmap tile actors
-            outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
-            if outline_only and heatmap.outline_renderer is not None:
-                pick_renderer = heatmap.outline_renderer
-            else:
-                pick_renderer = heatmap.renderer
-
-            picker.Pick(click_pos[0], click_pos[1], 0, pick_renderer)
-            picked_actor = picker.GetActor()
-
-            if picked_actor is None:
-                print(f"[picker] No actor at ({click_pos[0]}, {click_pos[1]})")
-                return
-
-            tile = heatmap.get_tile_for_actor(picked_actor)
+            click_pos = obj.GetEventPosition()
+            tile = heatmap.get_cell_at_display(click_pos[0], click_pos[1])
             if tile is None:
-                print(f"[picker] Picked actor is not a heatmap tile")
+                print(f"[picker] No heatmap cell at ({click_pos[0]}, {click_pos[1]})")
                 return
-
-            print(f"[picker] Picked heatmap tile: x0={tile.x0}, y0={tile.y0}, "
-                f"x1={tile.x1}, y1={tile.y1}, frac={tile.active_fraction:.3f}")
-            _print_tile_channel_stats(tile, state.current_hierarchy_level, state.current_dilation)
-
-            sx = getattr(state, 'physical_size_x', 0.14)
-            sy = getattr(state, 'physical_size_y', 0.14)
-            sz = getattr(state, 'physical_size_z', 0.28)
-
-            #   world_x = tile_coord * spacing * 128
-            tile_center_x = (tile.x0 + tile.x1) / 2.0 * sx * 128
-            tile_center_y = (tile.y0 + tile.y1) / 2.0 * sy * 128
-            tile_center_z = 0.0
-
-            tile_width_world = (tile.x1 - tile.x0) * sx * 128
-            tile_height_world = (tile.y1 - tile.y0) * sy * 128
-            tile_extent = max(tile_width_world, tile_height_world)
-
-            cam = streamer.renderer.GetActiveCamera()
-            cam.SetFocalPoint(tile_center_x, tile_center_y, tile_center_z)
-            cam.SetPosition(tile_center_x, tile_center_y, tile_center_z + tile_extent * 4.0)
-            cam.SetViewUp(0, 1, 0)
-            streamer.renderer.ResetCameraClippingRange()
-            
-            print(f"[picker] Camera -> tile center ({tile_center_x:.1f}, {tile_center_y:.1f}), "
-                f"extent={tile_extent:.1f}")
-            
-            active_channels = list(state.active_channels)
-            if mesh_mgr and mesh_mgr.is_available and active_channels:
-                vox_x = (tile.x0 + tile.x1) / 2.0 * 128
-                vox_y = (tile.y0 + tile.y1) / 2.0 * 128
-                state.selected_tile = None
-
-                for ch_id in active_channels:
-                    mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
-                    if not mesh_tile:
-                        print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
-                        continue
-                    if state.selected_tile is None:
-                        state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                        print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                    if ch_id not in state.surface_hidden_channels:
-                        color_hex = "#FFFFFF"
-                        for ch in state.channels:
-                            if ch["id"] == ch_id:
-                                color_hex = ch["color"]
-                                break
-                        color_rgb = _hex_to_rgb_tuple(color_hex)
-                        mesh_mgr.activate_channel_mesh(
-                            channel_idx=ch_id,
-                            color_rgb=color_rgb,
-                            tile_x=mesh_tile.tile_x,
-                            tile_y=mesh_tile.tile_y,
-                            opacity=1.0,
-                        )
-
-            if _refs["view"]:
-                _refs["view"].update()
-
+            _drill_down_to_cell(tile)
 
         interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
         print("[callbacks] Right-click picker registered on interactor")
 
-    _hover_last_actor = [None]
-    def on_hover(px, py):
-        """Handle throttled mousemove from client JS"""
+    def on_right_click(px, py):
+        """Handle right-click from client JS (contextmenu) on the VTK canvas."""
         heatmap = _refs.get("heatmap")
         streamer = _refs.get("streamer")
         if not heatmap or not streamer:
             return
-
-        # Pick from the renderer that actually contains the heatmap tile actors:
-        # outline_renderer (layer 2) when in outline mode, fill renderer (layer 0) otherwise.
-        outline_only = getattr(state, 'heatmap_outline_only', 'filled') == 'outline'
-        if outline_only and heatmap.outline_renderer is not None:
-            pick_renderer = heatmap.outline_renderer
-        else:
-            pick_renderer = heatmap.renderer
-
-        render_window = streamer.renderer.GetRenderWindow()
-        win_size = render_window.GetSize()
-
-        vtk_y = win_size[1] - int(py)
-        vtk_x = int(px)
-
-        from vtkmodules.vtkRenderingCore import vtkPropPicker
-        hover_picker = vtkPropPicker()
-
-        hover_picker.Pick(vtk_x, vtk_y, 0, pick_renderer)
-        picked_actor = hover_picker.GetActor()
-
-        prev = _hover_last_actor[0]
-
-        if picked_actor is prev:
+        win_size = streamer.renderer.GetRenderWindow().GetSize()
+        tile = heatmap.get_cell_at_display(int(px), win_size[1] - int(py))
+        if tile is None:
             return
+        _drill_down_to_cell(tile)
 
-        if prev is not None:
-            prev.GetProperty().EdgeVisibilityOff()
-
-        if picked_actor is not None and heatmap.get_tile_for_actor(picked_actor) is not None:
-            picked_actor.GetProperty().EdgeVisibilityOn()
-            picked_actor.GetProperty().SetEdgeColor(0.0, 0.0, 0.0)
-            picked_actor.GetProperty().SetLineWidth(5.0)
-            _hover_last_actor[0] = picked_actor
-        else:
-            _hover_last_actor[0] = None
-
-        if _refs["view"]:
-            _refs["view"].update()
+    def on_hover(px, py):
+        """Handle throttled mousemove from client JS: highlight hovered cell."""
+        heatmap = _refs.get("heatmap")
+        streamer = _refs.get("streamer")
+        if not heatmap or not streamer:
+            return
+        if not state.heatmap_visible:
+            return
+        win_size = streamer.renderer.GetRenderWindow().GetSize()
+        tile = heatmap.get_cell_at_display(int(px), win_size[1] - int(py))
+        if heatmap.highlight_cell(tile):
+            if _refs["view"]:
+                _refs["view"].update()
 
     def generate_pdf_report(report_data=None):
         """
@@ -2696,11 +2132,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_heatmap = set_heatmap                
     ctrl.load_data = load_data
     ctrl.clear_data = clear_data
-    ctrl.load_analysis_file = load_analysis_file
-    ctrl.load_analysis_from_path = load_analysis_from_path
-    ctrl.preload_default_analysis = preload_default_analysis
-    ctrl.apply_preloaded_analysis = apply_preloaded_analysis
-    ctrl.maybe_load_default_analysis = maybe_load_default_analysis
+    ctrl.load_analysis_path = load_analysis_path
     ctrl.update_heatmap = update_heatmap
     ctrl.update_heatmap_combinations = update_heatmap_combinations
     ctrl.print_dilation_curve = print_dilation_curve
@@ -2738,9 +2170,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.set_viewport_plots = set_viewport_plots
     ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
     ctrl.trigger("on_hover")(on_hover)
-    ctrl.trigger("upload_analysis_start")(upload_analysis_start)
-    ctrl.trigger("upload_analysis_chunk")(upload_analysis_chunk)
-    ctrl.trigger("upload_analysis_complete")(upload_analysis_complete)
+    ctrl.trigger("on_right_click")(on_right_click)
     ctrl.trigger("clear_analysis")(clear_analysis)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer

@@ -162,21 +162,24 @@ def init_state(state):
     # Channel intensity histograms (channel_id -> list of normalized bin heights)
     state.setdefault("channel_histograms", {})
 
-    # bioset analysis file loading
+    # analysis results loading (server-side path to colocalization.zarr + tally/)
     state.setdefault("analysis_loaded", False)
     state.setdefault("analysis_loading", False)
-    state.setdefault("analysis_file_name", "")
+    state.setdefault("analysis_dir", "")  # Server-side results directory path
+    state.setdefault("analysis_file_name", "")  # Basename of analysis_dir
 
-    # Analysis metadata (from .bioset file)
-    state.setdefault("analysis_channels", [])  # Channel names from analysis
-    state.setdefault("analysis_dilation_amounts", [])  # Available dilations
-    state.setdefault("analysis_hierarchy_levels", [])  # Available levels
-    state.setdefault("analysis_volume_bounds", {})  # Spatial bounds
+    # Analysis metadata (from the results store)
+    state.setdefault("analysis_channels", [])  # Display names (filtered, unique)
+    state.setdefault("analysis_dilation_amounts", [])  # Tallied detent radii (µm)
+    state.setdefault("analysis_radius_max", 4.0)  # Continuous radius slider cap (µm)
+    state.setdefault("analysis_hierarchy_levels", [])  # Heatmap LOD levels
+    state.setdefault("analysis_volume_bounds", {})  # Spatial bounds (voxels)
 
     # Current analysis settings
-    state.setdefault("current_dilation", 0)  # Selected dilation amount
+    state.setdefault("current_dilation", 0)  # Selected radius in µm (continuous)
+    state.setdefault("radius_slider", 0.0)  # Client-side slider thumb (committed on release)
     state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
-    state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
+    state.setdefault("bar_metric_label", "")  # Voxel/bin semantics note for the bar chart
 
     # Heatmap state
     state.setdefault("heatmap_visible", True)
@@ -453,13 +456,37 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):
-        print(f"[state] Dilation changed: {current_dilation}")
+        try:
+            val = float(current_dilation)
+        except (TypeError, ValueError):
+            return
+
+        # Magnetic detents: within ±0.08 µm of a tallied radius, snap to it
+        # (those radii are answered exactly from the tally). Arbitrary values
+        # between detents pass through and are computed from the EDT field.
+        snapped = val
+        for d in (state.analysis_dilation_amounts or []):
+            if abs(val - d) <= 0.08:
+                snapped = float(d)
+                break
+        cap = float(state.analysis_radius_max or 0.0)
+        if cap > 0:
+            snapped = max(0.0, min(snapped, cap))
+        if snapped != val:
+            state.current_dilation = snapped  # re-fires once with the snapped value
+            return
+        if getattr(state, "radius_slider", None) != snapped:
+            state.radius_slider = snapped  # keep the slider thumb in sync
+
+        print(f"[state] Radius changed: {snapped}")
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        if hasattr(ctrl, 'update_dilation_data'):
+            pass  # dilation curves span all radii; no recompute needed here
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 

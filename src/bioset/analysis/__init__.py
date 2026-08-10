@@ -2,14 +2,14 @@ from .loader import (
     AnalysisLoader,
     AnalysisMetadata,
     CombinationData,
+    HeatmapField,
     TileData,
-    decompress_bioset_to_cache,
 )
 
 __all__ = [
     "AnalysisLoader",
     "AnalysisMetadata",
     "CombinationData",
+    "HeatmapField",
     "TileData",
-    "decompress_bioset_to_cache",
 ]
