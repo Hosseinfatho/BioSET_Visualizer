@@ -27,3 +27,5 @@ data/*
 /src/ROI/GAT/dataset
 analysis_results.bioset
 Biomni
+/output_meshes
+/preprocessed
