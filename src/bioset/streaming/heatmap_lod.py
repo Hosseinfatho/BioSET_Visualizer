@@ -76,6 +76,9 @@ class HeatmapLOD:
             (-100.0, 0),
         )
         self._auto_mode: bool = True  # controlled by UI toggle
+        # True while the glyph heatmap is replaced by the shader-integrated
+        # mode: no glyph recomputes, and any queued results are discarded.
+        self._suspended: bool = False
 
     def set_analysis(self, loader, channel_order: List[str], z_depth: int):
         """Called after analysis is loaded. `loader` is the AnalysisLoader."""
@@ -105,6 +108,16 @@ class HeatmapLOD:
         self._auto_mode = enabled
         print(f"[heatmap_lod] Auto mode: {enabled}")
 
+    def suspend(self, suspended: bool):
+        """Gate glyph recomputes while the integrated (shader) mode owns the
+        heatmap visualization."""
+        if suspended != self._suspended:
+            print(f"[heatmap_lod] Suspended: {suspended}")
+        self._suspended = bool(suspended)
+        if suspended:
+            with self._debounce_lock:
+                self._pending = None
+
     # ── Camera movement ──
 
     def _roi_within_last(self, roi_vox) -> bool:
@@ -128,7 +141,7 @@ class HeatmapLOD:
         """Called from the EndInteractionEvent handler (main thread).
         Schedules a background heatmap recompute when the level should change,
         or when a cropped fine-level field no longer covers the viewport."""
-        if not self._auto_mode:
+        if not self._auto_mode or self._suspended:
             return
         if self._loader is None or not self._channels:
             return
@@ -204,6 +217,9 @@ class HeatmapLOD:
 
         if result is None:
             return False
+
+        if self._suspended:
+            return False  # stale glyph result from before suspension — drop
 
         self._current_level = result.level
         self._last_roi_vox = result.roi_vox

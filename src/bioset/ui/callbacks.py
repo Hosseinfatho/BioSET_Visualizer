@@ -77,6 +77,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         _refs["heatmap"] = heatmap
         print(f"[callbacks] Heatmap renderer set: {heatmap}")
 
+    def set_integrated_heatmap(manager):
+        """Set the integrated-heatmap shader manager reference."""
+        _refs["integrated_heatmap"] = manager
+        print(f"[callbacks] Integrated heatmap manager set: {manager}")
+
     def set_mesh_manager(mesh_manager):
         """Set the mesh manager reference."""
         _refs["mesh_manager"] = mesh_manager
@@ -472,8 +477,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             _refs["analysis_loader"].close()
             _refs["analysis_loader"] = None
 
+        mgr = _refs.get("integrated_heatmap")
+        if mgr is not None:
+            mgr.set_active(False)
+
         heatmap_lod = _refs.get("heatmap_lod")
         if heatmap_lod:
+            heatmap_lod.suspend(False)
             heatmap_lod.clear_analysis()
 
         vp = _refs.get("viewport_plots")
@@ -651,6 +661,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 dist = camera_distance_to_focal(renderer.GetActiveCamera())
                 heatmap_lod.on_camera_moved(dist)
 
+        # Channel membership changes the integrated heatmap's member-map set
+        # (the streamer hook alone reinstalls with the previous members).
+        if ((to_activate or to_deactivate)
+                and state.heatmap_outline_only == "integrated"):
+            update_heatmap()
+
         if _refs["view"]:
             _refs["view"].update()
 
@@ -739,6 +755,54 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.heatmap_combination = []
         update_heatmap()
 
+    def _update_integrated_heatmap(mgr, loader, heatmap, heatmap_lod, streamer):
+        """Drive the shader-injected Integrated Heatmap mode.
+
+        The glyph heatmap is cleared (effects modulate the volume rendering
+        itself) and the LOD worker is suspended. NOTE: state.heatmap_color is
+        intentionally ignored here — the outline color is a config constant.
+        """
+        heatmap.clear()
+        state.heatmap_tile_count = 0
+        if heatmap_lod:
+            heatmap_lod.suspend(True)
+
+        combo = state.heatmap_combination or []
+        if not state.heatmap_visible or not combo or streamer is None:
+            print("[callbacks] Integrated heatmap idle "
+                  f"(visible={state.heatmap_visible}, combo={combo})")
+            mgr.set_active(False)
+        else:
+            try:
+                bounds = streamer._volume_bounds_world(0)
+                mgr.set_world_extent(bounds[1], bounds[3])
+                name_to_id = {ch["name"]: ch["id"] for ch in (state.channels or [])}
+                active_ids = list(state.active_channels or [])
+                inter16, members = mgr.compute_maps(
+                    loader, combo, state.current_dilation, name_to_id, active_ids)
+                mgr.set_effects(
+                    gain=bool(state.ihm_gain_enabled),
+                    halo=bool(state.ihm_outline_enabled),
+                    sampling=bool(state.ihm_sampling_enabled),
+                )
+                mgr.set_maps(inter16, members)
+                mgr.set_active(True)
+                print(f"[callbacks] Integrated heatmap: combo={combo}, "
+                      f"members={list(members)}, radius={state.current_dilation}")
+            except Exception as e:
+                print(f"[callbacks] Integrated heatmap update failed: {e}")
+                import traceback
+                traceback.print_exc()
+                mgr.set_active(False)
+
+        if streamer is not None:
+            try:
+                streamer._render_still()
+            except Exception:
+                pass
+        if _refs["view"]:
+            _refs["view"].update()
+
     def update_heatmap():
         """Update heatmap visualization based on current state.
 
@@ -772,7 +836,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if not loader or not loader.is_loaded or not heatmap:
             print("[callbacks] Cannot update heatmap - loader or heatmap not ready")
             return
-        
+
+        # ── Integrated (shader) mode: effects replace the glyph heatmap ──
+        mgr = _refs.get("integrated_heatmap")
+        if state.heatmap_outline_only == "integrated" and mgr is not None:
+            _update_integrated_heatmap(mgr, loader, heatmap, heatmap_lod, streamer)
+            return
+        # Leaving (or not in) integrated mode: shader effects off, glyphs own
+        # the heatmap again.
+        if mgr is not None:
+            mgr.set_active(False)
+        if heatmap_lod:
+            heatmap_lod.suspend(False)
+
         if not state.heatmap_visible:
             print("[callbacks] Heatmap hidden")
             heatmap.clear()
@@ -2170,7 +2246,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     # Bind to controller
     ctrl.set_streamer = set_streamer
-    ctrl.set_heatmap = set_heatmap                
+    ctrl.set_heatmap = set_heatmap
+    ctrl.set_integrated_heatmap = set_integrated_heatmap
     ctrl.load_data = load_data
     ctrl.clear_data = clear_data
     ctrl.load_analysis_path = load_analysis_path

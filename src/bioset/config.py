@@ -7,6 +7,120 @@ from typing import Literal, Sequence, Optional, Tuple
 
 
 @dataclass(frozen=True)
+class IntegratedHeatmapConfig:
+    """Tuning for the shader-injected "Integrated" heatmap mode.
+
+    This dataclass is the ONLY management surface for the three effects
+    (gain / halo outline / importance sampling) — edit and restart. Values
+    marked [literal] are baked into the generated GLSL; [uniform] values are
+    uploaded as custom uniforms.
+
+    ── HOW TO TUNE ────────────────────────────────────────────────────────
+    If the effects look too weak or too strong, reach for these in order:
+
+    1. MAP CONTRAST (`map_*`) — the biggest lever, and usually the right one.
+       Real combination fields are sparse: a typical 16x16 map has ~55% empty
+       cells and a nonzero median near 0.11 of its own maximum. Under plain
+       max-normalization every effect then applies its "cold" end almost
+       everywhere and reads as a uniform dim. `map_contrast_mode="rank"`
+       spreads the nonzero cells evenly across [floor, 1] so small
+       differences become visible differences.
+
+    2. EFFECT STRENGTH — gain: widen the gap between `*_low`/`base` (cold)
+       and `*_high`/weights (hot). Halo: `halo_threshold` picks WHICH contour
+       is drawn (under "rank" it is a percentile: 0.5 = the median cell), and
+       `halo_outline_width_px` how thick. Sampling: `sampling_max_step_scale`
+       is how coarsely cold regions are marched.
+
+       Note this app's opacity transfer functions cap around 0.12 (see
+       `build_histogram_tf` in scene/volumes.py) — tissue here is far more
+       transparent than in the standalone experiment these constants came
+       from (0.45), so per-sample modulation composites into a smaller final
+       difference and the constants have to work harder.
+
+    3. SPATIAL RESOLUTION (`grid_w`/`grid_h`) — matters most when zoomed in.
+       At 16x16 one cell spans ~682x344 voxels (~95x48 um on mis_full), so a
+       zoomed-in viewport can sit inside a couple of cells and see a nearly
+       constant field. Raising the grid is bounded by the NVIDIA constant
+       register budget (~1024 per fragment program, shared with VTK's own):
+
+           registers per map = ceil(grid_w * grid_h / 16) * 4
+           total = (1 + max_member_maps) maps
+
+           16x16 ->  64/map ->  320 total   (current, ample headroom)
+           24x24 -> 144/map ->  720 total   (safe at max_member_maps=4)
+           32x32 -> 256/map -> 1280 total   (needs max_member_maps <= 2)
+
+       Overrunning the budget shows up as a shader link failure, which the
+       harness (scratchpad verify_ihm_shader.py) captures — so this is
+       checkable, not guesswork. Set BIOSET_DUMP_SHADER=1 to dump the
+       generated GLSL (streaming/shader_debug.py) and confirm a change
+       actually reached the GPU.
+    """
+    # ── Shader grid over the full volume XY (see HOW TO TUNE #3) ──
+    grid_w: int = 16                                # [literal]
+    grid_h: int = 16                                # [literal]
+    # Per-channel member maps bound alongside the interaction map.
+    max_member_maps: int = 4                        # [structural]
+
+    # ── Map contrast (see HOW TO TUNE #1) ──
+    # "rank"       histogram-equalize the nonzero cells onto [floor, 1].
+    #              Guarantees the full range is used whatever the
+    #              distribution, and matches what the glyph heatmap already
+    #              does. Best for "make subtle differences stand out".
+    # "percentile" clip to [pct_lo, pct_hi] of the nonzero values and
+    #              rescale. Preserves relative magnitudes better than rank.
+    # "max"        divide by the maximum (raw fidelity; what produced the
+    #              barely-visible original).
+    map_contrast_mode: str = "rank"
+    # Where the weakest NON-empty cell lands. Empty cells always stay at 0,
+    # so this keeps "present but weak" distinguishable from "absent".
+    map_nonzero_floor: float = 0.15
+    # Applied after the mode above; < 1 lifts mid-tones, > 1 suppresses them.
+    map_gamma: float = 1.0
+    # "percentile" mode only.
+    map_pct_lo: float = 2.0
+    map_pct_hi: float = 98.0
+
+    # ── Gain: single-channel formula (non-member ports, driven by the
+    # interaction map): rgb *= mix(low, high, value) ──
+    single_low_gain: float = 0.30                   # [literal]
+    single_high_gain: float = 4.0                   # [literal]
+    # ── Gain: combined formula (member ports: own map + interaction map) ──
+    #   rgb   *= clamp(base + ch_w*own + int_w*inter, 0, base+ch_w+int_w)
+    #   alpha *= mix(min_alpha, 1, max(own, inter))
+    combined_base_rgb_gain: float = 0.30            # [literal]
+    combined_channel_rgb_weight: float = 0.70       # [literal]
+    combined_interaction_rgb_weight: float = 0.90   # [literal]
+    combined_min_alpha_gain: float = 0.20           # [literal]
+
+    # ── Halo outline ──
+    halo_outline_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)  # [literal]
+    # Which contour to trace. Under map_contrast_mode="rank" this is a
+    # percentile of the non-empty cells: 0.5 outlines the hot half.
+    halo_threshold: float = 0.50                    # [uniform]
+    halo_outline_width_px: float = 2.5              # [uniform]
+    # A diagonal ray crosses ~1.5*grid cells; 64 steps samples every cell.
+    halo_exit_samples: int = 64                     # [literal] (loop bound)
+
+    # ── Importance sampling: step = base * mix(max_scale, 1, importance) ──
+    sampling_max_step_scale: float = 10.0           # [uniform]
+
+    @property
+    def mat4_count(self) -> int:
+        return -(-(self.grid_w * self.grid_h) // 16)
+
+    @property
+    def combined_max_rgb_gain(self) -> float:
+        return (self.combined_base_rgb_gain
+                + self.combined_channel_rgb_weight
+                + self.combined_interaction_rgb_weight)
+
+
+INTEGRATED_HEATMAP = IntegratedHeatmapConfig()
+
+
+@dataclass(frozen=True)
 class VolumeConfig:
     # Source mode
     source: Literal["tiff", "zarr_s3"] = "tiff"

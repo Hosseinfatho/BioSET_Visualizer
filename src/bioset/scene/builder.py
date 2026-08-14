@@ -173,6 +173,7 @@ class VtkScene:
     nov_renderer: Optional[vtkRenderer] = None
     nov_render_window: Optional[vtkRenderWindow] = None
     mesh_manager: Optional[MeshManager] = None
+    integrated_heatmap: Optional[object] = None  # IntegratedHeatmapManager
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -403,6 +404,15 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     viewport_plots: Optional[ViewportPlotComputer] = ViewportPlotComputer() if streamer is not None else None
     _viewport_plots_ref[0] = viewport_plots
 
+    # Integrated-heatmap shader effects on the streamer's shared multi-volume.
+    # Wired here (builder imports both packages) to avoid the pre-existing
+    # scene<->streaming import cycle inside the streamer.
+    integrated_heatmap = None
+    if streamer is not None:
+        from .integrated_heatmap import IntegratedHeatmapManager
+        integrated_heatmap = IntegratedHeatmapManager()
+        streamer.shader_effects_hook = integrated_heatmap.on_multivolume_rebuilt
+
     return VtkScene(
         renderer=renderer,
         render_window=render_window,
@@ -414,4 +424,5 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         nov_renderer=nov_renderer,
         nov_render_window=nov_render_window,
         mesh_manager=mesh_manager,
+        integrated_heatmap=integrated_heatmap,
     )

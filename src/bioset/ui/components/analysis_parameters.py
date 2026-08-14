@@ -133,7 +133,7 @@ def analysis_parameters_section(state, ctrl):
                                     style=("heatmap_visible ? 'color:white' : 'color:#555'",),
                                 )
 
-                            # Filled / Outline toggle
+                            # Filled / Outline / Integrated (shader) toggle
                             with vuetify.VBtnToggle(
                                     v_model=("heatmap_outline_only", "filled"),
                                     mandatory=True,
@@ -142,6 +142,7 @@ def analysis_parameters_section(state, ctrl):
                             ):
                                 vuetify.VBtn("Filled", value="filled", small=True, classes="text-capitalize", outlined=True)
                                 vuetify.VBtn("Outline", value="outline", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Integrated", value="integrated", small=True, classes="text-capitalize", outlined=True)
 
                             # Manual / Auto toggle
                             with vuetify.VBtnToggle(
@@ -152,6 +153,36 @@ def analysis_parameters_section(state, ctrl):
                             ):
                                 vuetify.VBtn("Manual", value="manual", small=True, classes="text-capitalize", outlined=True)
                                 vuetify.VBtn("Auto", value="auto", small=True, classes="text-capitalize", outlined=True)
+
+                        # Integrated-mode effect toggles (gain / importance
+                        # sampling / halo outline), each on by default. Tuning
+                        # lives in config.IntegratedHeatmapConfig.
+                        with html.Div(
+                                classes="d-flex align-center justify-center mb-2",
+                                style="gap: 12px;",
+                                v_if="heatmap_outline_only === 'integrated'",
+                        ):
+                            vuetify.VSwitch(
+                                v_model=("ihm_gain_enabled", True),
+                                label="Gain",
+                                dense=True,
+                                hide_details=True,
+                                classes="mt-0 pt-0",
+                            )
+                            vuetify.VSwitch(
+                                v_model=("ihm_sampling_enabled", True),
+                                label="Sampling",
+                                dense=True,
+                                hide_details=True,
+                                classes="mt-0 pt-0",
+                            )
+                            vuetify.VSwitch(
+                                v_model=("ihm_outline_enabled", True),
+                                label="Outline",
+                                dense=True,
+                                hide_details=True,
+                                classes="mt-0 pt-0",
+                            )
 
                         # Combination dropdown
                         with html.Div(classes="d-flex justify-center mb-3"):

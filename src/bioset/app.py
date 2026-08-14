@@ -181,6 +181,8 @@ def run_app(*, idle_timeout: int | None = None):
         scene.streamer.set_render_callback(view.update)
     if scene.heatmap is not None:
         ctrl.set_heatmap(scene.heatmap)
+    if scene.integrated_heatmap is not None:
+        ctrl.set_integrated_heatmap(scene.integrated_heatmap)
     # Enable right-click tile picking/drill-down regardless of mesh availability.
     # (Mesh activation remains conditional inside the picker callback.)
     if scene.interactor is not None and hasattr(ctrl, "setup_right_click_picker"):
