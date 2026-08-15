@@ -181,15 +181,20 @@ class HeatmapLOD:
         """Runs in worker thread: compute the field from the loader, cropped
         to the viewport at fine levels.
 
-        Emits twice when a cheap preview is available: a coarse-pyramid field
-        first so the scene updates promptly, then the exact level-0 field. The
-        preview never drops an occupied cell (the pyramid is min-reduced), so
-        the two differ in shading, not in what is there.
+        Emits a coarse-pyramid preview first ONLY when the exact field would
+        have to be computed from scratch. Every emit costs a glyph rebuild on
+        the main thread, which is the same thread the volume uses to upload its
+        full-resolution texture on settle — so previewing a field that is
+        already cached just delays the volume for no visible gain.
         """
         print(f"[heatmap_lod] Computing level {req.level} for {req.channels}")
         try:
             preview_src = 0
-            if hasattr(req.loader, "coarse_level_for_interaction"):
+            cached = False
+            if hasattr(req.loader, "field_is_cached"):
+                cached = req.loader.field_is_cached(
+                    req.channels, req.dilation, req.level, 0)
+            if not cached and hasattr(req.loader, "coarse_level_for_interaction"):
                 preview_src = req.loader.coarse_level_for_interaction(req.level)
             if preview_src:
                 self._emit(req, source_level=preview_src)

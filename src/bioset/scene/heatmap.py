@@ -7,7 +7,6 @@ import numpy as np
 import vtk
 from vtkmodules.vtkCommonCore import vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkPolyData
-from vtkmodules.vtkFiltersSources import vtkCubeSource
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
     vtkGlyph3DMapper,
@@ -40,11 +39,14 @@ class HeatmapConfig:
 _LUT_SIZE = 256
 
 # Glyph roles: which persistent actor draws what, and on which layer.
-#   wire       — wireframe cubes (used when no box depth is configured), layer 2
-#   front      — box-grid front rectangles, layer-2 renderer
-#   back       — box-grid back rectangles, layer-0 renderer
-#   connectors — box-grid corner connectors, layer-2 renderer
-_ROLES = ("wire", "front", "back", "connectors")
+#   front — square outline in front of the volume, layer-2 renderer
+#   back  — square outline behind the volume, layer-0 renderer
+#
+# Two flat squares, never a box. Corner connectors joining the two planes used
+# to be drawn as well, which made each cell read as a wireframe cube; zoomed in,
+# those connectors project as long diverging lines across the volume depth and
+# swamp the grid.
+_ROLES = ("front", "back")
 
 
 class HeatmapRenderer:
@@ -52,11 +54,11 @@ class HeatmapRenderer:
     vtkGlyph3DMapper actor per role instead of one vtkActor per cell — the
     fine grid can carry hundreds of thousands of cells).
 
-    Draws the grid: a wireframe box bracketing the volume (front rect + corner
-    connectors in front, back rect behind), with cell value encoded as
-    grayscale brightness plus opacity at a fixed line width. The solid-cube
-    "filled" mode this used to also offer has been removed; the other heatmap
-    mode is the shader-based integrated one, which does not go through here.
+    Draws the grid: one square outline on the front face of the volume and a
+    matching one on the back, with cell value encoded as grayscale brightness
+    plus opacity at a fixed line width. The solid-cube "filled" mode this used
+    to also offer has been removed; the other heatmap mode is the shader-based
+    integrated one, which does not go through here.
 
     Actors and mappers are created once and reused across updates (input/source
     swaps only) so an update never re-creates GPU pipeline objects.
@@ -70,7 +72,7 @@ class HeatmapRenderer:
         config: Optional[HeatmapConfig] = None,
     ):
         # renderer: layer 0, behind the volume (back rects)
-        # outline_renderer: layer 2, in front (front rects + connectors)
+        # outline_renderer: layer 2, in front (front squares)
         self.renderer = renderer
         self.outline_renderer = outline_renderer
         self.config = config or HeatmapConfig()
@@ -83,7 +85,6 @@ class HeatmapRenderer:
         self._field: Optional[HeatmapField] = None
         self._current_spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
 
-        # Persistent hover-highlight actor (single wireframe rect, repositioned)
 
     # ──────────────────────────────────────────────
     # Update
@@ -161,32 +162,26 @@ class HeatmapRenderer:
         if self.outline_renderer is None:
             return
         lut = self._make_lut()
+        # Two flat squares bracketing the volume: one drawn in front of it, one
+        # behind. z offsets are baked into the glyph sources relative to the
+        # instance-point plane.
         if self.config.outline_box_depth and self.config.outline_box_depth > 0:
-            # Box grid: front + back rectangles bracketing the volume,
-            # corner connectors between them. z offsets are baked into the
-            # glyph sources relative to the instance-point plane.
             z_back = z_center
             if self.config.outline_box_front_z:
                 z_front = float(self.config.outline_box_front_z)
             else:
                 z_front = z_center + self.config.z_height / 2.0
                 z_back = z_front - float(self.config.outline_box_depth)
-            rel_front = z_front - z_center
-            rel_back = z_back - z_center
 
             self._activate("front", instances,
-                           self._rect_source(cw_x, cw_y, rel_front), lut)
+                           self._rect_source(cw_x, cw_y, z_front - z_center), lut)
             self._activate("back", instances,
-                           self._rect_source(cw_x, cw_y, rel_back), lut)
-            self._activate("connectors", instances,
-                           self._connector_source(cw_x, cw_y, rel_back, rel_front), lut)
+                           self._rect_source(cw_x, cw_y, z_back - z_center), lut)
         else:
-            cube = vtkCubeSource()
-            cube.SetXLength(cw_x)
-            cube.SetYLength(cw_y)
-            cube.SetZLength(self.config.z_height)
-            cube.Update()
-            self._activate("wire", instances, cube.GetOutput(), lut)
+            # No volume depth to bracket (bounds unknown): one square on the
+            # cell plane rather than a box of zero thickness.
+            self._activate("front", instances,
+                           self._rect_source(cw_x, cw_y, 0.0), lut)
 
     def _make_lut(self):
         """256-entry LUT encoding the value→brightness/opacity ramp, memoized.
@@ -235,8 +230,6 @@ class HeatmapRenderer:
         actor = vtkActor()
         actor.SetMapper(mapper)
         prop = actor.GetProperty()
-        if role == "wire":
-            prop.SetRepresentationToWireframe()
         prop.SetLineWidth(self.config.outline_line_width)
         # Analytic picking is used instead of geometric pickers.
         actor.SetPickable(False)
@@ -276,27 +269,6 @@ class HeatmapRenderer:
             ln = vtk.vtkLine()
             ln.GetPointIds().SetId(0, a)
             ln.GetPointIds().SetId(1, b)
-            lines.InsertNextCell(ln)
-        poly = vtkPolyData()
-        poly.SetPoints(pts)
-        poly.SetLines(lines)
-        return poly
-
-    @staticmethod
-    def _connector_source(w: float, h: float, z0: float, z1: float) -> vtkPolyData:
-        """4 corner connector lines between relative z planes z0 and z1."""
-        hx, hy = w / 2.0, h / 2.0
-        corners = ((-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy))
-        pts = vtkPoints()
-        for x, y in corners:
-            pts.InsertNextPoint(x, y, z0)
-        for x, y in corners:
-            pts.InsertNextPoint(x, y, z1)
-        lines = vtkCellArray()
-        for i in range(4):
-            ln = vtk.vtkLine()
-            ln.GetPointIds().SetId(0, i)
-            ln.GetPointIds().SetId(1, i + 4)
             lines.InsertNextCell(ln)
         poly = vtkPolyData()
         poly.SetPoints(pts)

@@ -19,10 +19,16 @@ from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
 from ..report.content_sections.General import GeneralContent, General
 
 
-# Rows fetched per UpSet query. Ranking is a sort over a preloaded array, so
-# this is cheap; it is bounded rather than unlimited because degree 4 holds
-# ~212k rows per radius and the browser has to receive whatever we send.
-UPSET_ROW_CAP = 20000
+# Rows sent to the browser per UpSet refresh.
+#
+# This is a DISPLAY cap, not a correctness one: the channel filter is applied
+# inside the query now, so the rows that come back are already the relevant
+# ones and truncating them only limits how deep you can page. It has to stay
+# modest because every refresh serialises the whole list over the same
+# websocket that carries the rendered frames — at 20k rows that was 2.4 MB per
+# refresh against 0.1 MB here, which starved the volume's high-res resolve.
+# 1000 rows is ~16 pages at the largest page size.
+UPSET_ROW_CAP = 1000
 
 
 def register_callbacks(ctrl, state, view, streamer=None):
@@ -1098,7 +1104,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if selection == []:
             # Nothing ticked -> nothing to show. Previously an empty selection
             # meant "no filter", so Deselect All displayed the whole plot.
+            # Clear the local array here too: the cascade that normally
+            # refreshes it only fires when `upset_data` actually changes, and
+            # it may already be empty.
             state.upset_data = []
+            state.upset_data_local = []
             state.upset_metric_label = ""
             print("[callbacks] UpSet data cleared (no channels selected)")
             return

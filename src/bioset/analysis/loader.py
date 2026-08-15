@@ -858,6 +858,28 @@ class AnalysisLoader:
             self._field_cache.popitem(last=False)
         return result
 
+    def field_is_cached(self, channels: list[str], dilation: float,
+                        hierarchy_level: int, source_level: int = 0) -> bool:
+        """Whether `get_heatmap_field` would return without recomputing.
+
+        Lets callers skip a coarse preview pass when the exact field is already
+        a cache hit — drawing the preview then costs a second glyph rebuild on
+        the main thread for no gain.
+        """
+        if not self.is_loaded or not channels:
+            return False
+        try:
+            indices = tuple(sorted(self.registry.indices_of(channels)))
+        except KeyError:
+            return False
+        code = self._code(dilation)
+        src = self._clamp_source_level(source_level)
+        if (indices, code, int(hierarchy_level), src) in self._field_cache:
+            return True
+        # The summed-area table is the expensive part; with it cached, applying
+        # a different cell size is a four-corner difference.
+        return (indices, code, src) in self._colcount_cache
+
     def _clamp_source_level(self, source_level: Optional[int]) -> int:
         if not source_level:
             return 0

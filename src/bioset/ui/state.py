@@ -608,10 +608,12 @@ def register_state_change_handlers(state, ctrl):
         leaves three of the four modes showing stale results, so the control
         looks dead unless you happen to be in Global + All.
         """
+        # `update_upset_data_local` is NOT called here: writing `upset_data`
+        # already cascades into it via on_upset_data_change, and calling both
+        # computed the local array twice per refresh. Both derive from the same
+        # inputs, so if the global result is unchanged the local one is too.
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
-        if hasattr(ctrl, 'update_upset_data_local'):
-            ctrl.update_upset_data_local()
         # Pushes the size and selection into the viewport worker and requeues it,
         # so Local scope no longer waits for a camera nudge.
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
