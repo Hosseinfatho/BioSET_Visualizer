@@ -267,11 +267,7 @@ class HeatmapLOD:
         )
         from bioset.scene.heatmap import hex_to_rgb
         color = hex_to_rgb(getattr(state, "heatmap_color", "#FFFFFF"))
-        outline_only = getattr(state, "heatmap_outline_only", "filled") == "outline"
-
-        heatmap_renderer.update_field(
-            result.field, spacing=spacing, color=color, outline_only=outline_only,
-        )
+        heatmap_renderer.update_field(result.field, spacing=spacing, color=color)
         state.heatmap_tile_count = heatmap_renderer.tile_count
         print(f"[heatmap_lod] Applied level {result.level}: "
               f"{heatmap_renderer.tile_count} cells")

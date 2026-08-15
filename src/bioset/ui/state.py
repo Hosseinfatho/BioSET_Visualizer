@@ -198,7 +198,9 @@ def init_state(state):
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", "auto")  # "auto" or "manual" LOD level selection
-    state.setdefault("heatmap_outline_only", "outline")  # "filled" | "outline" | "integrated"
+    # Heatmap mode. The solid-cube "filled" mode was removed; the grid and the
+    # shader-based integrated heatmap are the two that remain.
+    state.setdefault("heatmap_mode", "grid")  # "grid" | "integrated"
     # Integrated (shader) heatmap effect toggles — all on by default.
     state.setdefault("ihm_gain_enabled", True)
     state.setdefault("ihm_sampling_enabled", True)
@@ -466,8 +468,8 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'print_dilation_curve'):
             ctrl.print_dilation_curve()
 
-    @state.change("heatmap_outline_only")
-    def on_heatmap_outline_only_change(heatmap_outline_only, **kwargs):
+    @state.change("heatmap_mode")
+    def on_heatmap_mode_change(heatmap_mode, **kwargs):
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
 
@@ -475,7 +477,7 @@ def register_state_change_handlers(state, ctrl):
     def on_integrated_effects_change(**kwargs):
         # Structural change (shader rebuild) — routed through update_heatmap's
         # integrated branch; no-op in glyph modes.
-        if state.heatmap_outline_only == "integrated" and hasattr(ctrl, 'update_heatmap'):
+        if state.heatmap_mode == "integrated" and hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
 
     @state.change("current_dilation")

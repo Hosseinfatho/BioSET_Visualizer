@@ -718,7 +718,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         # Channel membership changes the integrated heatmap's member-map set
         # (the streamer hook alone reinstalls with the previous members).
         if ((to_activate or to_deactivate)
-                and state.heatmap_outline_only == "integrated"):
+                and state.heatmap_mode == "integrated"):
             update_heatmap()
 
         if _refs["view"]:
@@ -893,7 +893,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         # ── Integrated (shader) mode: effects replace the glyph heatmap ──
         mgr = _refs.get("integrated_heatmap")
-        if state.heatmap_outline_only == "integrated" and mgr is not None:
+        if state.heatmap_mode == "integrated" and mgr is not None:
             _update_integrated_heatmap(mgr, loader, heatmap, heatmap_lod, streamer)
             return
         # Leaving (or not in) integrated mode: shader effects off, glyphs own
@@ -968,30 +968,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            outline_only = getattr(state, "heatmap_outline_only", "filled") == "outline"
-
-            # Configure "box" outlines: back outline + corner connectors.
-            # Uses analysis volume Z bounds (voxels) converted to world units via physical_size_z.
-            if outline_only:
-                bounds = getattr(state, "analysis_volume_bounds", {}) or {}
-                z0z1 = bounds.get("z", None)
-                if isinstance(z0z1, (list, tuple)) and len(z0z1) >= 2:
-                    z0_vox = float(z0z1[0])
-                    z1_vox = float(z0z1[1])
-                    z_depth_vox = max(0.0, z1_vox - z0_vox)
-                    sz = float(spacing[2]) if spacing and len(spacing) >= 3 else 1.0
-                    heatmap.config.outline_box_depth = z_depth_vox * sz
-                    # Front rectangle: in front of image (closer to camera). Back stays at heatmap position.
-                    volume_z_max = z1_vox * sz
-                    heatmap.config.outline_box_front_z = volume_z_max + 10.0
-                else:
-                    heatmap.config.outline_box_depth = 0.0
-                    heatmap.config.outline_box_front_z = 0.0
+            # Box grid: back outline + corner connectors, bracketing the volume.
+            # Uses the analysis volume Z bounds (voxels) converted to world units
+            # via physical_size_z.
+            bounds = getattr(state, "analysis_volume_bounds", {}) or {}
+            z0z1 = bounds.get("z", None)
+            if isinstance(z0z1, (list, tuple)) and len(z0z1) >= 2:
+                z0_vox = float(z0z1[0])
+                z1_vox = float(z0z1[1])
+                z_depth_vox = max(0.0, z1_vox - z0_vox)
+                sz = float(spacing[2]) if spacing and len(spacing) >= 3 else 1.0
+                heatmap.config.outline_box_depth = z_depth_vox * sz
+                # Front rectangle: in front of the image (closer to camera).
+                # Back stays at the heatmap position.
+                volume_z_max = z1_vox * sz
+                heatmap.config.outline_box_front_z = volume_z_max + 10.0
             else:
                 heatmap.config.outline_box_depth = 0.0
                 heatmap.config.outline_box_front_z = 0.0
 
-            heatmap.update_field(field, spacing=spacing, color=color, outline_only=outline_only)
+            heatmap.update_field(field, spacing=spacing, color=color)
             state.heatmap_tile_count = heatmap.tile_count
             print(f"[callbacks] Heatmap: {heatmap.tile_count} cells "
                   f"({field.cell_size_vox}-voxel, level {field.level})")

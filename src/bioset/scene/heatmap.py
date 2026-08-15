@@ -22,22 +22,16 @@ from ..analysis import HeatmapField, TileData
 @dataclass
 class HeatmapConfig:
     base_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)
-    min_opacity: float = 0.1
-    max_opacity: float = 0.8
-    # Outline opacity is independent from filled-cell opacity.
-    # In outline mode we encode cell value via opacity (and grayscale brightness),
-    # while keeping line thickness fixed.
+    # Cell value is encoded as grayscale brightness plus opacity, at a fixed
+    # line width.
     outline_min_opacity: float = 0.05
     outline_max_opacity: float = 0.95
     z_height: float = 1.0
     z_offset: float = 0.0
     percentile_cutoff: float = 0.01  # Only show cells above this active_fraction percentile
-    opacity_scale: str = 'exponential'  # 'linear' or 'exponential'
-    gamma: float = 0.5  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
-    outline_only: bool = False
-    outline_line_width: float = 5.0  # Fixed line width for all outline cells
-    # If >0 in outline_only mode, draw a matching outline behind the volume (back)
-    # and connect the 4 corners with the same line width/brightness.
+    outline_line_width: float = 5.0  # Fixed line width for all cells
+    # If >0, draw a matching outline behind the volume (back) and connect the
+    # 4 corners with the same line width/brightness.
     outline_box_depth: float = 0.0
     outline_box_back_z: float = 0.0
     outline_box_front_z: float = 0.0  # if set, world Z of front plane (in front of image)
@@ -46,12 +40,11 @@ class HeatmapConfig:
 _LUT_SIZE = 256
 
 # Glyph roles: which persistent actor draws what, and on which layer.
-#   filled     — solid cubes, layer-0 renderer (behind the volume)
-#   wire       — wireframe cubes (simple outline mode), layer-2 renderer
+#   wire       — wireframe cubes (used when no box depth is configured), layer 2
 #   front      — box-grid front rectangles, layer-2 renderer
 #   back       — box-grid back rectangles, layer-0 renderer
 #   connectors — box-grid corner connectors, layer-2 renderer
-_ROLES = ("filled", "wire", "front", "back", "connectors")
+_ROLES = ("wire", "front", "back", "connectors")
 
 
 class HeatmapRenderer:
@@ -59,11 +52,11 @@ class HeatmapRenderer:
     vtkGlyph3DMapper actor per role instead of one vtkActor per cell — the
     fine grid can carry hundreds of thousands of cells).
 
-    Modes (same visual encodings as the per-actor implementation this replaces):
-      - filled: solid cubes behind the volume; value → opacity at constant color
-      - outline: wireframe box grid bracketing the volume (front rect + corner
-        connectors in front, back rect behind); value → grayscale brightness +
-        opacity at fixed line width
+    Draws the grid: a wireframe box bracketing the volume (front rect + corner
+    connectors in front, back rect behind), with cell value encoded as
+    grayscale brightness plus opacity at a fixed line width. The solid-cube
+    "filled" mode this used to also offer has been removed; the other heatmap
+    mode is the shader-based integrated one, which does not go through here.
 
     Actors and mappers are created once and reused across updates (input/source
     swaps only) so an update never re-creates GPU pipeline objects.
@@ -76,7 +69,7 @@ class HeatmapRenderer:
         outline_renderer: Optional[vtkRenderer] = None,
         config: Optional[HeatmapConfig] = None,
     ):
-        # renderer: layer 0, behind the volume (filled cells + back rects)
+        # renderer: layer 0, behind the volume (back rects)
         # outline_renderer: layer 2, in front (front rects + connectors)
         self.renderer = renderer
         self.outline_renderer = outline_renderer
@@ -101,13 +94,18 @@ class HeatmapRenderer:
         field: Optional[HeatmapField],
         spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         color: Optional[Tuple[float, float, float]] = None,
-        outline_only: Optional[bool] = None,
     ):
+        """Draw the grid for `field`.
+
+        `color` is accepted and stored but does not affect the ramp: cells are
+        drawn grayscale-by-value so brightness reads as magnitude. It was only
+        ever used by the removed filled mode.
+        """
         self.clear()
         if field is None or field.counts.size == 0:
             return
-        if outline_only is not None:
-            self.config.outline_only = outline_only
+        if color is not None:
+            self.config.base_color = color
 
         fractions = field.fractions.astype(np.float64)
 
@@ -160,60 +158,45 @@ class HeatmapRenderer:
         scalars.SetName("value")
         instances.GetPointData().SetScalars(scalars)
 
-        if self.config.outline_only:
-            if self.outline_renderer is None:
-                return
-            lut = self._make_lut(outline=True)
-            if self.config.outline_box_depth and self.config.outline_box_depth > 0:
-                # Box grid: front + back rectangles bracketing the volume,
-                # corner connectors between them. z offsets are baked into the
-                # glyph sources relative to the instance-point plane.
-                z_back = z_center
-                if self.config.outline_box_front_z:
-                    z_front = float(self.config.outline_box_front_z)
-                else:
-                    z_front = z_center + self.config.z_height / 2.0
-                    z_back = z_front - float(self.config.outline_box_depth)
-                rel_front = z_front - z_center
-                rel_back = z_back - z_center
-
-                self._activate("front", instances,
-                               self._rect_source(cw_x, cw_y, rel_front), lut)
-                self._activate("back", instances,
-                               self._rect_source(cw_x, cw_y, rel_back), lut)
-                self._activate("connectors", instances,
-                               self._connector_source(cw_x, cw_y, rel_back, rel_front), lut)
+        if self.outline_renderer is None:
+            return
+        lut = self._make_lut()
+        if self.config.outline_box_depth and self.config.outline_box_depth > 0:
+            # Box grid: front + back rectangles bracketing the volume,
+            # corner connectors between them. z offsets are baked into the
+            # glyph sources relative to the instance-point plane.
+            z_back = z_center
+            if self.config.outline_box_front_z:
+                z_front = float(self.config.outline_box_front_z)
             else:
-                cube = vtkCubeSource()
-                cube.SetXLength(cw_x)
-                cube.SetYLength(cw_y)
-                cube.SetZLength(self.config.z_height)
-                cube.Update()
-                self._activate("wire", instances, cube.GetOutput(), lut)
+                z_front = z_center + self.config.z_height / 2.0
+                z_back = z_front - float(self.config.outline_box_depth)
+            rel_front = z_front - z_center
+            rel_back = z_back - z_center
+
+            self._activate("front", instances,
+                           self._rect_source(cw_x, cw_y, rel_front), lut)
+            self._activate("back", instances,
+                           self._rect_source(cw_x, cw_y, rel_back), lut)
+            self._activate("connectors", instances,
+                           self._connector_source(cw_x, cw_y, rel_back, rel_front), lut)
         else:
-            lut = self._make_lut(outline=False, color=color or self.config.base_color)
             cube = vtkCubeSource()
             cube.SetXLength(cw_x)
             cube.SetYLength(cw_y)
             cube.SetZLength(self.config.z_height)
             cube.Update()
-            self._activate("filled", instances, cube.GetOutput(), lut)
+            self._activate("wire", instances, cube.GetOutput(), lut)
 
-    def _make_lut(self, outline: bool, color: Tuple[float, float, float] = (1, 1, 1)):
-        """256-entry LUT encoding the value→color/opacity ramps, memoized.
+    def _make_lut(self):
+        """256-entry LUT encoding the value→brightness/opacity ramp, memoized.
 
         Per-instance color+alpha comes from mapping the instance scalar through
         this table (avoids per-instance RGBA direct-scalar quirks on glyph
         mappers).
         """
         c = self.config
-        key = (
-            outline,
-            tuple(round(x, 4) for x in color),
-            c.opacity_scale, round(c.gamma, 4),
-            round(c.min_opacity, 4), round(c.max_opacity, 4),
-            round(c.outline_min_opacity, 4), round(c.outline_max_opacity, 4),
-        )
+        key = (round(c.outline_min_opacity, 4), round(c.outline_max_opacity, 4))
         cached = self._lut_cache.get(key)
         if cached is not None:
             return cached
@@ -223,15 +206,9 @@ class HeatmapRenderer:
         lut.SetRange(0.0, 1.0)
         for i in range(_LUT_SIZE):
             t = i / (_LUT_SIZE - 1)
-            if outline:
-                # grayscale brightness + opacity ramp, fixed line width
-                a = (c.outline_min_opacity
-                     + t * (c.outline_max_opacity - c.outline_min_opacity))
-                lut.SetTableValue(i, t, t, t, a)
-            else:
-                tt = t ** c.gamma if c.opacity_scale == 'exponential' else t
-                a = c.min_opacity + tt * (c.max_opacity - c.min_opacity)
-                lut.SetTableValue(i, color[0], color[1], color[2], a)
+            a = (c.outline_min_opacity
+                 + t * (c.outline_max_opacity - c.outline_min_opacity))
+            lut.SetTableValue(i, t, t, t, a)
         lut.Build()
         if len(self._lut_cache) > 16:
             self._lut_cache.clear()
@@ -239,7 +216,7 @@ class HeatmapRenderer:
         return lut
 
     def _role_renderer(self, role: str) -> Optional[vtkRenderer]:
-        if role in ("filled", "back"):
+        if role == "back":
             return self.renderer
         return self.outline_renderer
 
@@ -258,10 +235,9 @@ class HeatmapRenderer:
         actor = vtkActor()
         actor.SetMapper(mapper)
         prop = actor.GetProperty()
-        if role != "filled":
-            if role == "wire":
-                prop.SetRepresentationToWireframe()
-            prop.SetLineWidth(self.config.outline_line_width)
+        if role == "wire":
+            prop.SetRepresentationToWireframe()
+        prop.SetLineWidth(self.config.outline_line_width)
         # Analytic picking is used instead of geometric pickers.
         actor.SetPickable(False)
 

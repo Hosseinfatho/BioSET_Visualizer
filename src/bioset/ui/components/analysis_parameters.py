@@ -123,7 +123,7 @@ def analysis_parameters_section(state, ctrl):
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
                     with vuetify.VListItemContent():
-                        # Eye toggle + Filled/Outline + Manual/Auto in one row
+                        # Eye toggle + Grid/Integrated + Manual/Auto in one row
                         with html.Div(classes="d-flex align-center justify-center mb-2", style="gap: 8px;"):
                             # Eye visibility toggle (square icon button)
                             with vuetify.VBtn(
@@ -139,15 +139,15 @@ def analysis_parameters_section(state, ctrl):
                                     style=("heatmap_visible ? 'color:white' : 'color:#555'",),
                                 )
 
-                            # Filled / Outline / Integrated (shader) toggle
+                            # Grid / Integrated (shader) toggle. The solid-cube
+                            # "filled" mode was removed.
                             with vuetify.VBtnToggle(
-                                    v_model=("heatmap_outline_only", "filled"),
+                                    v_model=("heatmap_mode", "grid"),
                                     mandatory=True,
                                     dense=True,
                                     style="background: transparent;",
                             ):
-                                vuetify.VBtn("Filled", value="filled", small=True, classes="text-capitalize", outlined=True)
-                                vuetify.VBtn("Outline", value="outline", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Grid", value="grid", small=True, classes="text-capitalize", outlined=True)
                                 vuetify.VBtn("Integrated", value="integrated", small=True, classes="text-capitalize", outlined=True)
 
                             # Manual / Auto toggle
@@ -166,7 +166,7 @@ def analysis_parameters_section(state, ctrl):
                         with html.Div(
                                 classes="d-flex align-center justify-center mb-2",
                                 style="gap: 12px;",
-                                v_if="heatmap_outline_only === 'integrated'",
+                                v_if="heatmap_mode === 'integrated'",
                         ):
                             vuetify.VSwitch(
                                 v_model=("ihm_gain_enabled", True),
