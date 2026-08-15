@@ -1,4 +1,5 @@
 from .loader import (
+    ALL_DEGREES,
     AnalysisLoader,
     AnalysisMetadata,
     CombinationData,
@@ -8,6 +9,7 @@ from .loader import (
 )
 
 __all__ = [
+    "ALL_DEGREES",
     "AnalysisLoader",
     "AnalysisMetadata",
     "CombinationData",

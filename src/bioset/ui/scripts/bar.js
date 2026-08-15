@@ -1,3 +1,39 @@
+// Axis helpers, guarded so whichever chart script loads first defines them.
+if (typeof bsNiceLogTicks === 'undefined') {
+    window.bsNiceLogTicks = function (lo, hi, maxTicks) {
+        if (!(lo > 0) || !(hi > lo)) return [];
+        const n = Math.max(2, maxTicks || 5);
+        const e0 = Math.ceil(Math.log10(lo));
+        const e1 = Math.floor(Math.log10(hi));
+        const decades = [];
+        for (let e = e0; e <= e1; e++) decades.push(Math.pow(10, e));
+        if (decades.length >= 3 && decades.length <= n) return decades;
+        const l0 = Math.log10(lo), l1 = Math.log10(hi);
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            const v = Math.pow(10, l0 + ((l1 - l0) * i) / (n - 1));
+            const mag = Math.pow(10, Math.floor(Math.log10(v)) - 1);
+            const r = Math.round(v / mag) * mag;
+            if (r > 0 && isFinite(r)) out.push(r);
+        }
+        return out.filter((v, i, a) => i === 0 || v !== a[i - 1]);
+    };
+}
+if (typeof bsCompactNum === 'undefined') {
+    window.bsCompactNum = function (v) {
+        const a = Math.abs(v);
+        if (!isFinite(v)) return "";
+        if (a >= 1e9) return (v / 1e9).toFixed(a >= 1e10 ? 0 : 1) + "G";
+        if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+        if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "k";
+        if (a >= 100) return v.toFixed(0);
+        if (a >= 10) return v.toFixed(a % 1 ? 1 : 0);
+        if (a >= 1) return v.toFixed(1);
+        if (a >= 0.01) return v.toFixed(2);
+        return v.toExponential(0);
+    };
+}
+
 
 // Bar Plot Component
 Vue.component('bar-plot', {
@@ -9,6 +45,10 @@ Vue.component('bar-plot', {
         channelData: Array,
         scopeMode: String,
         channelMode: String,
+        scaleMode: {
+            type: String,
+            default: 'log'
+        },
         offset: {
             type: Number,
             default: 0
@@ -34,6 +74,7 @@ Vue.component('bar-plot', {
         dataViewportSelected: 'render',
         scopeMode: 'render',
         channelMode: 'render',
+        scaleMode: 'render',
         offset: 'render',
         limit: 'render',
         channelData: {
@@ -81,9 +122,21 @@ Vue.component('bar-plot', {
                 .range([marginLeft, width - marginRight])
                 .padding(0.1);
 
-            const y = d3.scaleLinear()
-                .domain([0, maxCount])
-                .range([height - marginBottom, marginTop]);
+            // Y scale. Coverage can legitimately be 0, and log(0) is undefined,
+            // so the domain floors at the smallest positive value on the page
+            // (or a decade below the max when everything is zero). The floor
+            // doubles as the bar baseline below — `y(0)` would be -Infinity.
+            const positives = sourceData.map(d => d[1]).filter(v => v > 0 && isFinite(v));
+            const minPositive = positives.length ? Math.min(...positives) : 0;
+            const useLog = this.scaleMode === 'log' && minPositive > 0 && maxCount > 0;
+            const yFloor = useLog ? minPositive / 2 : 0;
+            const yTop = maxCount > yFloor ? maxCount : (yFloor || 1);
+
+            const y = (useLog ? d3.scaleLog() : d3.scaleLinear())
+                .domain([yFloor || (useLog ? 1e-6 : 0), yTop])
+                .range([height - marginBottom, marginTop])
+                .clamp(true);
+            const yBase = y.range()[0];
 
             const svg = d3.select(container)
                 .append("svg")
@@ -97,8 +150,8 @@ Vue.component('bar-plot', {
                 .data(chartData)
                 .join("rect")
                 .attr("x", d => x(d.name))
-                .attr("y", d => y(d.pct))
-                .attr("height", d => y(0) - y(d.pct))
+                .attr("y", d => (d.pct > 0 ? y(d.pct) : yBase))
+                .attr("height", d => (d.pct > 0 ? Math.max(0, yBase - y(d.pct)) : 0))
                 .attr("width", x.bandwidth())
                 .attr("fill", d => {
                     if (this.channelData) {
@@ -136,7 +189,18 @@ Vue.component('bar-plot', {
             // Y-axis
             svg.append("g")
                 .attr("transform", `translate(${marginLeft},0)`)
-                .call(d3.axisLeft(y).ticks(5).tickFormat(d => d + "%"))
+                // Explicit tick values: d3's log scale emits every 1..9 multiple
+                // per decade when the span is short (10+ labels here), and a
+                // custom tickFormat discards its own label thinning.
+                .call(
+                    d3.axisLeft(y)
+                        .tickValues(
+                            useLog
+                                ? bsNiceLogTicks(y.domain()[0], y.domain()[1], 5)
+                                : y.ticks(5)
+                        )
+                        .tickFormat(d => bsCompactNum(d) + "%")
+                )
                 .call(g => g.select(".domain").remove())
                 .selectAll("text")
                 .attr("fill", "white")

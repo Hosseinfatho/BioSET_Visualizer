@@ -19,6 +19,12 @@ from ..report.content_sections.Chat import ChatContent, Chat, LLMSettings
 from ..report.content_sections.General import GeneralContent, General
 
 
+# Rows fetched per UpSet query. Ranking is a sort over a preloaded array, so
+# this is cheap; it is bounded rather than unlimited because degree 4 holds
+# ~212k rows per radius and the browser has to receive whatever we send.
+UPSET_ROW_CAP = 20000
+
+
 def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
     from bioset.ui.utils.scale_bar import compute_scale_bar
@@ -1024,31 +1030,42 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 for pt in curve:
                     print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt['iou']:>10.6f}  {pt.get('overlap_coeff', 0):>10.6f}")
 
-    def _filter_combinations_by_channel_selection(combinations, selected_channels):
+    def _upset_selection(loader):
+        """Channels ticked in the UpSet dialog, restricted to ones that exist.
+
+        Returns None when everything is selected (no restriction worth pushing
+        into the query) and [] when nothing is — which must render an empty
+        plot, not the unfiltered one. The old post-filter treated an empty
+        selection as "no filter", so Deselect All showed everything.
         """
-        Filter combinations to only include those whose channels are all
-        within the selected set.
+        sel = list(getattr(state, "upset_selected_channels", None) or [])
+        known = set(loader.metadata.channels if loader.metadata else [])
+        sel = [c for c in sel if c in known]
+        if not sel:
+            return []
+        if len(sel) >= len(known):
+            return None
+        return sel
+
+    def _combo_size(loader) -> int:
+        """Requested combination size: an exact degree, or ALL_DEGREES for every size.
+
+        Clamps a stale or bookmarked value above what the tables cover. Note
+        the sentinel is 0, so this must not coerce falsy values to a default.
         """
-        if len(selected_channels) == 0:
-            return combinations
-
-        filtered_combinations = []
-
-        for combo in combinations:
-            if all(ch in selected_channels for ch in combo.channels):
-                filtered_combinations.append(combo)
-
-        return filtered_combinations
-
-    def _clamp_combo_size(loader) -> int:
-        """Requested combination size, clamped to what the dataset can rank.
-
-        The ranked tables stop at `max_combo_degree`; asking above it returns
-        nothing, so a stale selection (or one restored from a bookmark) would
-        silently show an empty plot.
-        """
-        want = int(getattr(state, "upset_min_channels", 2) or 2)
+        from bioset.analysis import ALL_DEGREES
+        raw = getattr(state, "upset_min_channels", 2)
+        try:
+            want = int(raw)
+        except (TypeError, ValueError):
+            want = ALL_DEGREES
+        if want == ALL_DEGREES:
+            return ALL_DEGREES
         cap = int(getattr(loader, "max_combo_degree", 0) or 0)
+        if want < 2:
+            # Size 1 is meaningless: a set's IoU against itself is always 1.0,
+            # so it drew a row of identical full-height bars.
+            return ALL_DEGREES
         if cap and want > cap:
             print(f"[callbacks] combination size {want} exceeds the ranked "
                   f"tables (max {cap}); using {cap}")
@@ -1074,101 +1091,97 @@ def register_callbacks(ctrl, state, view, streamer=None):
         )
 
     def update_upset_data():
-        """Update UpSet plot data based on current analysis settings.
-
-        Uses aggregated IoU across tiles, sorted descending.
-        """
+        """Global-scope UpSet rows for the current size, selection and metric."""
         loader = _refs.get("analysis_loader")
-        
         if not loader or not loader.is_loaded:
             state.upset_data = []
             return
 
-        print(f"[callbacks] Updating UpSet data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
+        size = _combo_size(loader)
+        selection = _upset_selection(loader)
+        if selection == []:
+            # Nothing ticked -> nothing to show. Previously an empty selection
+            # meant "no filter", so Deselect All displayed the whole plot.
+            state.upset_data = []
+            state.upset_metric_label = ""
+            print("[callbacks] UpSet data cleared (no channels selected)")
+            return
 
-        min_number_channels = _clamp_combo_size(loader)
+        print(f"[callbacks] Updating UpSet data: dilation={state.current_dilation}, "
+              f"size={size or 'all'}, metric={state.upset_metric}")
 
-        # Get all combinations from analysis (large limit), sorted by agg IoU desc
+        # Size, selection and metric all go INTO the query: filtering a
+        # truncated top-N afterwards drops combinations that rank below the
+        # cutoff globally, which for a few low-abundance channels is all of them.
         combinations = loader.get_top_combinations(
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
-            limit=1000,
-            min_channels=min_number_channels,
+            limit=UPSET_ROW_CAP,
+            min_channels=size,
+            channel_filter=selection,
+            metric=state.upset_metric,
         )
 
-        # Filter to selected channels
-        filtered_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
-
-        mapped_combinations = []
-        for combination in filtered_data:
-            mapped_combinations.append({
-                "channels": combination.channels,
-                "iou": combination.iou,
-                "overlap_coeff": combination.overlap_coeff,
-            })
-
-        state.upset_data = mapped_combinations
+        state.upset_data = [
+            {"channels": c.channels, "iou": c.iou, "overlap_coeff": c.overlap_coeff}
+            for c in combinations
+        ]
         _set_upset_label(combinations)
-        
-        print(f"[callbacks] UpSet data updated: {len(mapped_combinations)} total")
+        print(f"[callbacks] UpSet data updated: {len(combinations)} rows")
 
     def update_upset_data_local():
-        """Update local UpSet data filtered by active channels."""
+        """UpSet rows restricted to the channels active in the 3D view."""
         loader = _refs.get("analysis_loader")
-        
         if not loader or not loader.is_loaded:
             state.upset_data_local = []
             return
-        
-        # Get active channel names
-        active_channel_ids = state.active_channels or []
-        channels_list = state.channels or []
-        active_channel_names = [
-            ch["name"] for ch in channels_list if ch["id"] in active_channel_ids
-        ]
 
-        if not active_channel_names:
+        active_ids = state.active_channels or []
+        active_names = [ch["name"] for ch in (state.channels or [])
+                        if ch["id"] in active_ids]
+        if not active_names:
             state.upset_data_local = []
             print("[callbacks] UpSet local data cleared (no active channels)")
             return
-        
-        # Filter active channels by upset_selected_channels as well
-        active_and_selected = [name for name in active_channel_names if name in state.upset_selected_channels]
-        
-        if not active_and_selected:
+
+        selection = _upset_selection(loader)
+        if selection == []:
             state.upset_data_local = []
-            print("[callbacks] UpSet local data cleared (no active channels in selected channels)")
+            print("[callbacks] UpSet local data cleared (no channels selected)")
+            return
+        # Two different filters, deliberately:
+        #   channel_filter -> exclusion. A combination naming a channel the user
+        #                     unticked is never shown, whatever else it contains.
+        #   require_any    -> inclusion (OR). Show combinations involving AT
+        #                     LEAST ONE active channel, not only those made
+        #                     entirely of them.
+        # Requiring every member to be active (the old behaviour) hid pairings
+        # between something you are looking at and something you are not.
+        scope = active_names if selection is None else             [n for n in active_names if n in set(selection)]
+        if not scope:
+            state.upset_data_local = []
+            print("[callbacks] UpSet local data cleared (no active channel is selected)")
             return
 
-        print(f"[callbacks] Updating UpSet local data for channels: {active_channel_names}")
-
         try:
-            combinations = loader.get_filtered_combinations(
-                channel_filter=active_channel_names,
+            combinations = loader.get_top_combinations(
                 dilation=state.current_dilation,
                 hierarchy_level=state.current_hierarchy_level,
-                limit=1000,
-                exact_match=False,
+                limit=UPSET_ROW_CAP,
+                min_channels=_combo_size(loader),   # was ignored entirely
+                channel_filter=selection,
+                require_any=scope,
+                metric=state.upset_metric,
             )
-            
-            # Post-filter by selected channels
-            local_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
-
-            mapped_combinations = []
-            for combination in local_data:
-                mapped_combinations.append({
-                    "channels": combination.channels,
-                    "iou": combination.iou,
-                    "overlap_coeff": combination.overlap_coeff,
-                })
-
-            state.upset_data_local = mapped_combinations
-
-            print(f"[callbacks] UpSet local data updated: {len(mapped_combinations)} combinations")
+            state.upset_data_local = [
+                {"channels": c.channels, "iou": c.iou, "overlap_coeff": c.overlap_coeff}
+                for c in combinations
+            ]
+            print(f"[callbacks] UpSet local data updated: {len(combinations)} rows")
         except Exception as e:
             print(f"[callbacks] Error updating local upset data: {e}")
             state.upset_data_local = []
-    
+
     def update_bar_data():
         """Update bar chart data with coverage percentage per channel.
 
@@ -1329,7 +1342,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
             active_names = [id_to_name[ch_id] for ch_id in active_ids if ch_id in id_to_name]
             vp.update_active_channels(active_names)
             vp.update_dilation(getattr(state, "current_dilation", 0.0))
-            vp.update_min_channels(int(getattr(state, "upset_min_channels", 2)))
+            loader = _refs.get("analysis_loader")
+            if loader and loader.is_loaded:
+                vp.update_min_channels(_combo_size(loader))
+                vp.update_selected_channels(_upset_selection(loader))
 
             # Trigger immediate computation with current viewport
             ranges = _compute_current_tile_ranges()

@@ -133,6 +133,21 @@ def crop_field_to_roi(
     )
 
 
+# Sentinel for "every combination size at once" wherever a degree is expected.
+# 0 rather than None because it crosses to the browser as a plain integer and
+# compares cleanly against the size buttons.
+ALL_DEGREES: int = 0
+
+
+def _metric_of(combo: "CombinationData", metric: str) -> float:
+    """The ranked field of a row, defaulting to IoU for anything unrecognised."""
+    if metric == "overlap_coeff":
+        return combo.overlap_coeff
+    if metric == "count":
+        return float(combo.total_count)
+    return combo.iou
+
+
 def _extend(seed: Sequence[int], pool: Sequence[int], k: int) -> list[tuple]:
     """Every way to grow `seed` to size `k` using members of `pool`.
 
@@ -209,6 +224,12 @@ class AnalysisLoader:
         cap = min(self.radius_max_um, self.grid.clamp_um) \
             if self.radius_max_um is not None else self.grid.clamp_um
         cap = max(cap, radii.max_um)
+        # ...but never far enough to reach the top EDT code. That code is the
+        # saturation flag ("at least clamp_um"), where every far or unwritten
+        # bin sits, so querying it selects the whole volume — the far end of the
+        # slider used to report every channel covering 100%.
+        top = (self.grid.levels - 2) * self.grid.quant_um
+        cap = min(cap, top)
 
         vz, vy, vx = self.grid.volume_shape_zyx
         self.metadata = AnalysisMetadata(
@@ -347,22 +368,97 @@ class AnalysisLoader:
         hierarchy_level: int = 0,
         limit: int = 50,
         min_channels: int = 2,
+        channel_filter: Optional[Sequence[str]] = None,
+        metric: str = "iou",
+        require_any: Optional[Sequence[str]] = None,
     ) -> list[CombinationData]:
-        """Top combinations of exactly `min_channels` channels, best metric first.
+        """Top combinations, best metric first. Counts are RAW VOXELS.
 
-        Counts are RAW VOXELS (see `CombinationData.count_unit`). Ranked from
-        the precomputed combination table, which is exhaustive over every
-        channel at every degree it covers — the ranking is complete, not a
-        sampled candidate pool.
+        `min_channels` is an EXACT degree, not a minimum (the state variable's
+        name predates that). Pass `ALL_DEGREES` (0) for every size at once,
+        merged into one strictly descending list.
+
+        `channel_filter` restricts to combinations lying entirely inside that
+        set, applied to the whole table BEFORE the ranking is truncated —
+        filtering the top-N afterwards silently loses rows whose combinations
+        rank below the cutoff globally, which for a handful of low-abundance
+        channels means losing all of them.
+
+        `require_any` keeps only combinations naming AT LEAST ONE of those
+        channels. The two filters compose as: exclude anything containing a
+        channel outside `channel_filter`, then keep what touches
+        `require_any` — "combinations involving what I am looking at, and
+        nothing I have hidden".
+
+        `metric` is the field ranked on, so the list matches what the plot
+        draws instead of always being the top-N by IoU.
         """
         if not self.is_loaded:
             return []
-        return self._ranked_combos(dilation, int(min_channels), limit)
+        degree = int(min_channels)
+        if degree == ALL_DEGREES:
+            return self._ranked_all_degrees(dilation, limit, channel_filter,
+                                            metric, require_any)
+        return self._ranked_combos(dilation, degree, limit,
+                                   channel_filter=channel_filter, metric=metric,
+                                   require_any=require_any)
 
     @property
     def max_combo_degree(self) -> int:
         """Largest combination size the ranked tables cover (0 if none)."""
         return int(self.tally.max_degree) if self.tally else 0
+
+    def _ranked_all_degrees(
+        self,
+        r_um: float,
+        limit: int,
+        channel_filter: Optional[Sequence[str]] = None,
+        metric: str = "iou",
+        require_any: Optional[Sequence[str]] = None,
+    ) -> list[CombinationData]:
+        """Every degree from 2 up, merged into one descending list.
+
+        Note the ranking is genuinely dominated by pairs: adding a channel can
+        only shrink an intersection while growing the union, so IoU falls with
+        degree. That is a property of the measure, not of this merge.
+        """
+        out: list[CombinationData] = []
+        for degree in range(2, self.max_combo_degree + 1):
+            out.extend(self._ranked_combos(
+                r_um, degree, limit, channel_filter=channel_filter,
+                metric=metric, require_any=require_any))
+        out.sort(key=lambda c: _metric_of(c, metric), reverse=True)
+        return out[:max(1, int(limit))]
+
+    def _indices_for(self, names: Sequence[str]) -> list[int]:
+        known = set(self.registry.display_names())
+        return [self.registry.index_of(c) for c in names if c in known]
+
+    def _any_row_mask(self, rows, names: Sequence[str]):
+        """Rows naming AT LEAST ONE of `names` — the OR half of the filter."""
+        indices = self._indices_for(names)
+        if not indices:
+            return None
+        m0, m1 = self.registry.fp_masks(indices)
+        return (((rows.fp0 & m0) != np.uint64(0))
+                | ((rows.fp1 & m1) != np.uint64(0)))
+
+    def _subset_row_mask(self, rows, channel_filter: Sequence[str]):
+        """Rows whose fingerprint lies entirely inside `channel_filter`.
+
+        Returns None when the filter names nothing usable, and an all-False
+        mask when it names channels the registry does not know.
+        """
+        try:
+            indices = self.registry.indices_of([c for c in channel_filter])
+        except KeyError:
+            indices = [self.registry.index_of(c) for c in channel_filter
+                       if c in self.registry.display_names()]
+        if not indices:
+            return None
+        m0, m1 = self.registry.fp_masks(indices)
+        return (((rows.fp0 & ~m0) == np.uint64(0))
+                & ((rows.fp1 & ~m1) == np.uint64(0)))
 
     def _ranked_combos(
         self,
@@ -370,6 +466,9 @@ class AnalysisLoader:
         degree: int,
         limit: int,
         row_mask: Optional[np.ndarray] = None,
+        channel_filter: Optional[Sequence[str]] = None,
+        metric: str = "iou",
+        require_any: Optional[Sequence[str]] = None,
     ) -> list[CombinationData]:
         """Top rows of one degree from the combination table.
 
@@ -386,12 +485,28 @@ class AnalysisLoader:
         if rows is None or len(rows) == 0:
             return []
 
-        score = rows.iou if rows.iou is not None else rows.n_inter.astype(float)
+        if metric == "overlap_coeff" and rows.overlap_coeff is not None:
+            score = rows.overlap_coeff
+        elif rows.iou is not None:
+            score = rows.iou
+        else:
+            score = rows.n_inter.astype(float)
+
         idx = np.arange(len(rows))
         if row_mask is not None:
             idx = idx[row_mask]
-            if idx.size == 0:
-                return []
+        if channel_filter:
+            # Exclusion: drop anything naming a channel the user unticked.
+            sub = self._subset_row_mask(rows, channel_filter)
+            if sub is not None:
+                idx = idx[sub[idx]]
+        if require_any:
+            # Inclusion (OR): keep only rows naming at least one of these.
+            anym = self._any_row_mask(rows, require_any)
+            if anym is not None:
+                idx = idx[anym[idx]]
+        if idx.size == 0:
+            return []
         order = idx[np.argsort(score[idx])[::-1][:max(1, int(limit))]]
 
         label = self.detent_label_um(ri)
@@ -803,7 +918,13 @@ class AnalysisLoader:
                     region: Optional[Tuple[slice, slice]]) -> dict[str, list[dict]]:
         """Curves for all subcombinations, optionally restricted to a y/x bin
         slice of the level-0 grid."""
-        max_code = self._code(self.metadata.radius_max_um)
+        # Stop one code short of the top. The highest code is the EDT's
+        # saturation flag ("at least clamp_um"), not a measured distance: every
+        # far or unwritten bin sits there, so `edt <= 255` selects the entire
+        # volume. Including it put a vertical jump to 100% at the end of every
+        # curve — which also dragged the y-axis domain up to 100% and squashed
+        # the real range (0.7-33% on the reference pair) into the bottom.
+        max_code = min(self._code(self.metadata.radius_max_um), self.grid.levels - 2)
         codes = np.arange(0, max_code + 1)
         quant = self.grid.quant_um
 
@@ -942,15 +1063,10 @@ class AnalysisLoader:
         bar.sort(key=lambda t: t[1], reverse=True)
 
         k = int(min_channels)
-        if k <= 1:
-            upset = [
-                {"channels": [self.registry.name_of(c)], "iou": 1.0,
-                 "overlap_coeff": 1.0, "count": int(diag[i])}
-                for i, c in sorted(enumerate(included),
-                                   key=lambda t: -diag[t[0]])[:limit]
-            ]
-            return {"bar": bar, "upset": upset,
-                    "exact": level == 0, "unit": "bins"}
+        # ALL_DEGREES asks for every size merged; degree 1 is not offered (a
+        # set's IoU against itself is always 1.0), so it maps to the same thing.
+        want_all = k <= 1
+        degrees = list(range(2, self.max_combo_degree + 1)) if want_all else [k]
 
         # Pairs come straight off the matrix; higher degrees extend the best
         # pairs and are exact-counted by AND-ing the region masks already read.
@@ -971,15 +1087,16 @@ class AnalysisLoader:
                 ))
         pairs.sort(reverse=True)
 
-        if k == 2:
-            scored = [(iou, oc, cnt, (i, j)) for iou, oc, cnt, i, j in pairs[:limit]]
-        else:
+        scored = []
+        if 2 in degrees:
+            scored.extend((iou, oc, cnt, (i, j))
+                          for iou, oc, cnt, i, j in pairs[:limit])
+        for k_deg in [d for d in degrees if d >= 3]:
             seeds = pairs[: max(limit, 40)]
             hot = [i for i, _ in sorted(enumerate(diag), key=lambda t: -t[1])[:24]]
             seen: set[tuple] = set()
-            scored = []
             for _, _, _, i, j in seeds:
-                for extra in _extend(sorted((i, j)), hot, k):
+                for extra in _extend(sorted((i, j)), hot, k_deg):
                     if extra in seen:
                         continue
                     seen.add(extra)
@@ -1001,8 +1118,8 @@ class AnalysisLoader:
                     ))
                 if len(seen) >= 400:
                     break
-            scored.sort(reverse=True, key=lambda t: t[0])
-            scored = scored[:limit]
+        scored.sort(reverse=True, key=lambda t: t[0])
+        scored = scored[:limit]
 
         upset = [
             {"channels": [self.registry.name_of(included[m]) for m in members],

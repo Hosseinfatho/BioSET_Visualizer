@@ -105,6 +105,8 @@ class ViewportPlotComputer:
 
         self._channels: List[str] = []          # active channels (for dilation curves + filtering)
         self._active_channels: List[str] = []   # active channel names (for filtering viewport results)
+        # Channels ticked in the UpSet dialog. None = no restriction.
+        self._selected_channels = None
         self._dilation: float = 0.0
         self._min_channels: int = 2
         self._enabled: bool = False
@@ -147,6 +149,14 @@ class ViewportPlotComputer:
 
     def update_min_channels(self, min_ch: int):
         self._min_channels = min_ch
+
+    def update_selected_channels(self, names):
+        """Channels ticked in the UpSet dialog; None means no restriction.
+
+        The viewport arrays previously ignored this entirely and filtered only
+        by the 3D view's active channels, so the dialog's checkboxes were inert
+        in Local scope."""
+        self._selected_channels = None if names is None else list(names)
 
     def update_needed_plots(self, need_bar: bool, need_upset: bool, need_dilation: bool):
         """Set which plot types need viewport computation."""
@@ -229,15 +239,27 @@ class ViewportPlotComputer:
         state.upset_data_viewport = result.upset_data
         state.dilation_data_viewport = result.dilation_data
 
-        # Filtered viewport data (active/selected channels only)
-        active_set = set(self._active_channels)
+        # Filtered viewport data, matching the global scope's two-part rule:
+        #   allowed  -> exclusion. Never show a combination naming a channel
+        #               the user unticked in the dialog.
+        #   touching -> inclusion (OR). Keep combinations involving at least
+        #               one active channel, not only those made entirely of them.
+        allowed = None if self._selected_channels is None else set(self._selected_channels)
+        touching = set(self._active_channels)
+        if allowed is not None:
+            touching &= allowed
+
+        def _keep(names):
+            if allowed is not None and not allowed.issuperset(names):
+                return False
+            return bool(touching.intersection(names))
+
         state.bar_data_viewport_selected = [
-            item for item in result.bar_data if item[0] in active_set
-        ] if active_set else []
+            item for item in result.bar_data if _keep([item[0]])
+        ] if touching else []
         state.upset_data_viewport_selected = [
-            item for item in result.upset_data
-            if any(ch in active_set for ch in item["channels"])
-        ] if active_set else []
+            item for item in result.upset_data if _keep(item["channels"])
+        ] if touching else []
 
         try:
             state.dirty(

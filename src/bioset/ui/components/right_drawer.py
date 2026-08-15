@@ -155,6 +155,7 @@ def right_drawer(state, ctrl):
                                 :scope-mode="upset_scope_mode"
                                 :channel-mode="upset_channel_mode"
                                 :metric="upset_metric"
+                    :scale-mode="upset_scale_mode"
                                 :offset="upset_expanded_offset"
                                 :limit="upset_expanded_limit"
                                 :width="1200"
@@ -195,16 +196,50 @@ def right_drawer(state, ctrl):
 
                         with html.Div(classes="mb-4 mt-2"):
                             html.Div("Combination Size", classes="text-caption mb-2 text-left", style="color: white;")
-                            # Sizes the ranked tables cover. Degree 5 was offered
-                            # before but is not tallied — ranking it would mean
-                            # scoring all C(49,5) = 1.9M combinations.
+                            # 0 = every size merged into one descending list.
+                            # Size 1 was offered before and was meaningless: a
+                            # set's IoU against itself is always 1.0, so it drew
+                            # a row of identical full-height bars. Degree 5 is
+                            # not tallied (ranking it means scoring C(49,5) = 1.9M).
                             with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
-                                for val in [1, 2, 3, 4]:
+                                for val, label in [(0, "All"), (2, "2"), (3, "3"), (4, "4")]:
                                     vuetify.VBtn(
-                                        str(val),
+                                        label,
                                         click=f"upset_min_channels = {val}",
                                         color=(f"upset_min_channels === {val} ? 'white' : 'grey darken-3'",),
                                         dark=(f"upset_min_channels !== {val}",),
+                                        class_="flex-grow-1 rounded px-4",
+                                        elevation=0,
+                                        style="flex: 1;",
+                                    )
+
+                        # Rows per page. Without this the plot is stuck at 7 and
+                        # "show all combinations of that size" is unreachable.
+                        with html.Div(classes="mb-4 mt-2"):
+                            html.Div("Rows per page", classes="text-caption mb-2 text-left", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                for val in [7, 15, 30, 60]:
+                                    vuetify.VBtn(
+                                        str(val),
+                                        click=f"upset_limit = {val}; upset_offset = 0",
+                                        color=(f"upset_limit === {val} ? 'white' : 'grey darken-3'",),
+                                        dark=(f"upset_limit !== {val}",),
+                                        class_="flex-grow-1 rounded px-4",
+                                        elevation=0,
+                                        style="flex: 1;",
+                                    )
+
+                        # Axis scale. Log is the default; see upset.js for why the
+                        # library's own log scale cannot be used for these metrics.
+                        with html.Div(classes="mb-4 mt-2"):
+                            html.Div("Scale", classes="text-caption mb-2 text-left", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                for val, label in [("log", "Log"), ("linear", "Linear")]:
+                                    vuetify.VBtn(
+                                        label,
+                                        click=f"upset_scale_mode = '{val}'",
+                                        color=(f"upset_scale_mode === '{val}' ? 'white' : 'grey darken-3'",),
+                                        dark=(f"upset_scale_mode !== '{val}'",),
                                         class_="flex-grow-1 rounded px-4",
                                         elevation=0,
                                         style="flex: 1;",
@@ -228,7 +263,7 @@ def right_drawer(state, ctrl):
                             )
 
                             vuetify.VBtn("Select All", text=True, color="white", classes="ma-1", 
-                                    click="upset_selected_channels = analysis_channels")
+                                    click="upset_selected_channels = [...analysis_channels]")
                             vuetify.VBtn("Deselect All", text=True, color="white", classes="ma-1", 
                                     click="upset_selected_channels = []")
 
@@ -238,7 +273,7 @@ def right_drawer(state, ctrl):
                         with html.Div():
                             vuetify.VCheckbox(
                                 v_for=("channel in upset_filtered_channels",),
-                                key="channel",
+                                key=("channel",),
                                 v_model=("upset_selected_channels",),
                                 label=("channel",),
                                 value=("channel",),
@@ -273,6 +308,7 @@ def right_drawer(state, ctrl):
                     :scope-mode="upset_scope_mode"
                     :channel-mode="upset_channel_mode"
                     :metric="upset_metric"
+                    :scale-mode="upset_scale_mode"
                     :offset="upset_offset"
                     :limit="upset_limit"
                     @click="upset_click = $event"
@@ -413,6 +449,7 @@ def right_drawer(state, ctrl):
                                 :channelData="channels"
                                 :scope-mode="bar_scope_mode"
                                 :channel-mode="bar_channel_mode"
+                    :scale-mode="bar_scale_mode"
                                 :offset="bar_expanded_offset"
                                 :limit="bar_expanded_limit"
                                 :width="1200"
@@ -429,6 +466,22 @@ def right_drawer(state, ctrl):
                     vuetify.VDivider()
                     
                     with vuetify.VCardText():
+                        # Axis scale. Log by default.
+                        with html.Div(classes="mb-4"):
+                            html.Div("Scale", classes="text-overline mb-1", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                for _v, _lbl in [("log", "Log"), ("linear", "Linear")]:
+                                    vuetify.VBtn(
+                                        _lbl,
+                                        click=f"bar_scale_mode = '{_v}'",
+                                        color=(f"bar_scale_mode === '{_v}' ? 'white' : 'grey darken-3'",),
+                                        dark=(f"bar_scale_mode !== '{_v}'",),
+                                        class_="flex-grow-1 rounded px-4",
+                                        elevation=0,
+                                        style="flex: 1;",
+                                    )
+                            vuetify.VDivider(classes="mt-3")
+
                         with html.Div(classes="d-flex justify-space-between my-2"):
                             # Search bar
                             vuetify.VTextField(
@@ -443,7 +496,7 @@ def right_drawer(state, ctrl):
                             )
 
                             vuetify.VBtn("Select All", text=True, color="white", classes="ma-1", 
-                                click="bar_selected_channels = analysis_channels")
+                                click="bar_selected_channels = [...analysis_channels]")
                             vuetify.VBtn("Deselect All", text=True, color="white", classes="ma-1",
                                 click="bar_selected_channels = []")
                         
@@ -453,7 +506,7 @@ def right_drawer(state, ctrl):
                         with html.Div():
                             vuetify.VCheckbox(
                                 v_for=("channel in bar_filtered_channels",),
-                                key="channel",
+                                key=("channel",),
                                 v_model=("bar_selected_channels",),
                                 label=("channel",),
                                 value=("channel",),
@@ -485,6 +538,7 @@ def right_drawer(state, ctrl):
                     :channelData="channels"
                     :scope-mode="bar_scope_mode"
                     :channel-mode="bar_channel_mode"
+                    :scale-mode="bar_scale_mode"
                     :offset="bar_offset"
                     :limit="bar_limit"
                     @click="trigger('bar_click', $event)"
@@ -527,6 +581,22 @@ def right_drawer(state, ctrl):
                     vuetify.VDivider()
 
                     with vuetify.VCardText():
+                        # Axis scale. Log by default.
+                        with html.Div(classes="mb-4"):
+                            html.Div("Scale", classes="text-overline mb-1", style="color: white;")
+                            with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
+                                for _v, _lbl in [("log", "Log"), ("linear", "Linear")]:
+                                    vuetify.VBtn(
+                                        _lbl,
+                                        click=f"dilation_scale_mode = '{_v}'",
+                                        color=(f"dilation_scale_mode === '{_v}' ? 'white' : 'grey darken-3'",),
+                                        dark=(f"dilation_scale_mode !== '{_v}'",),
+                                        class_="flex-grow-1 rounded px-4",
+                                        elevation=0,
+                                        style="flex: 1;",
+                                    )
+                            vuetify.VDivider(classes="mt-3")
+
                         # Intersection metric (multiple mode only)
                         with html.Div(v_show="dilation_view_mode === 'multiple'", classes="mb-4"):
                             html.Div("Intersection Metric", classes="text-overline mb-1", style="color: white;")
@@ -597,6 +667,7 @@ def right_drawer(state, ctrl):
                     :data="dilation_scope_mode === 'local' ? dilation_data_viewport : dilation_data"
                     :channelData="channels"
                     :view-mode="dilation_view_mode"
+                    :scale-mode="dilation_scale_mode"
                     :metric="dilation_view_mode === 'single' ? dilation_metric_single : dilation_metric_multiple"
                 />
                 """

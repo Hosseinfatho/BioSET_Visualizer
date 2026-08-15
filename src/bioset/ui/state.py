@@ -109,12 +109,14 @@ def init_state(state):
     state.setdefault("upset_data", [])
     state.setdefault("upset_data_local", [])
     state.setdefault("upset_selection", None)
+    state.setdefault("upset_scale_mode", "log")  # "log" | "linear" (axis scale)
     state.setdefault("upset_offset", 0)
     state.setdefault("upset_limit", 7)
 
     # Bar chart
     state.setdefault("bar_data", [])
     state.setdefault("bar_data_local", [])
+    state.setdefault("bar_scale_mode", "log")  # "log" | "linear" (axis scale)
     state.setdefault("bar_offset", 0)
     state.setdefault("bar_limit", 10)
 
@@ -124,7 +126,9 @@ def init_state(state):
     state.setdefault("dilation_scope_mode", "global")  # "global" (all tiles) or "local" (viewport tiles)
     state.setdefault("dilation_metric_single", "density")  # always fixed to density
     state.setdefault("dilation_metric_multiple", "iou")  # one of: ["iou", "overlap_coeff", "count", "density"]
+    state.setdefault("dilation_scale_mode", "log")  # "log" | "linear" (y axis)
     state.setdefault("dilation_filter_dialog", False)
+    state.setdefault("dilation_selected_channels", [])  # curves ticked in the dialog
     state.setdefault("dilation_filter_options", [])  # Available curve keys for current mode
 
     # Expanded View States
@@ -211,7 +215,9 @@ def init_state(state):
     state.setdefault("upset_filter_dialog", False)
     state.setdefault("upset_expanded", False)
     state.setdefault("upset_metric", "iou")  # one of ["iou", "overlap_coeff"]
-    state.setdefault("upset_min_channels", 2)  # default minimum combination limit
+    # Exact combination degree to rank; 0 = every size merged (analysis.ALL_DEGREES).
+    # Size 1 is not offered: a set's IoU against itself is always 1.0.
+    state.setdefault("upset_min_channels", 0)
 
     # Bar Plot filtering
     state.setdefault("bar_selected_channels", [])  # Channels to include in Bar
@@ -591,25 +597,42 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
 
-    @state.change("upset_selected_channels")
-    def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
-        print(f"[state] UpSet selected channels changed: {len(upset_selected_channels)} channels")
-        if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data()
+    def _refresh_all_upset_scopes():
+        """Rebuild every array the UpSet can read.
 
-    @state.change("upset_min_channels")
-    def on_upset_min_channels_change(upset_min_channels, **kwargs):
-        print(f"[state] UpSet min channels changed: {upset_min_channels}")
-        if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data()
-
-    @state.change("upset_metric")
-    def on_upset_metric_change(upset_metric, **kwargs):
-        print(f"[state] UpSet metric changed: {upset_metric}")
+        There are four: global/all (`upset_data`), global/selected
+        (`upset_data_local`) and the two viewport arrays. Refreshing only the
+        first — which is what the size and selection handlers used to do —
+        leaves three of the four modes showing stale results, so the control
+        looks dead unless you happen to be in Global + All.
+        """
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_upset_data_local'):
             ctrl.update_upset_data_local()
+        # Pushes the size and selection into the viewport worker and requeues it,
+        # so Local scope no longer waits for a camera nudge.
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
+
+    @state.change("upset_selected_channels")
+    def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
+        print(f"[state] UpSet selected channels changed: {len(upset_selected_channels)} channels")
+        _refresh_all_upset_scopes()
+
+    @state.change("upset_min_channels")
+    def on_upset_min_channels_change(upset_min_channels, **kwargs):
+        print(f"[state] UpSet combination size changed: {upset_min_channels or 'all'}")
+        state.upset_offset = 0
+        state.upset_expanded_offset = 0
+        _refresh_all_upset_scopes()
+
+    @state.change("upset_metric")
+    def on_upset_metric_change(upset_metric, **kwargs):
+        # Not cosmetic: the ranking is truncated by this metric server-side, so
+        # switching it changes which rows are returned, not just their order.
+        print(f"[state] UpSet metric changed: {upset_metric}")
+        _refresh_all_upset_scopes()
 
     @state.change("bar_selected_channels")
     def on_bar_selected_channels_change(bar_selected_channels, **kwargs):
