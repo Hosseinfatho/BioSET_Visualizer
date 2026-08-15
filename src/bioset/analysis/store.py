@@ -2,8 +2,13 @@
 
 - `GridInfo`: parsed `colocalization.zarr` root attrs (radius->code, shapes).
 - `FieldStore`: cached access to the per-channel EDT/occ planes.
-- `TallyStore`: the tally parquets as per-radius numpy arrays, with vectorized
-  fingerprint queries (no SQL, no DuckDB).
+- `TallyStore`: the tally parquets, sized for interaction rather than
+  completeness — see its docstring for what is loaded and what deliberately is not.
+
+UNITS — the sharpest edge in this package. The combination tables and
+`channel_stats` count **raw voxels**; everything derived from the EDT/occ arrays
+counts **bins**, which are 256 raw voxels each. Both are legitimate measures and
+they are never interchangeable. Method names here say which one they return.
 """
 from __future__ import annotations
 
@@ -16,7 +21,8 @@ from typing import Dict, Optional, Sequence, Tuple
 import numpy as np
 import zarr
 
-from .constants import BLOCK_VOX, DETENT_RADII_UM
+from .constants import BLOCK_VOX
+from .radii import RadiusTable
 from .registry import ChannelRegistry
 
 
@@ -36,19 +42,23 @@ class GridInfo:
     volume_shape_zyx: Tuple[int, int, int] # raw voxel volume
     n_levels: int                          # pyramid levels present
     levels: int = 256                      # EDT code count
+    radii: Optional[RadiusTable] = None    # tallied radii; see analysis/radii.py
 
     @classmethod
-    def from_attrs(cls, attrs) -> "GridInfo":
+    def from_attrs(cls, attrs, results_dir=None) -> "GridInfo":
+        quant_um = float(attrs["quant_um"])
+        levels = int(attrs.get("levels", 256))
         return cls(
             bin_factors=tuple(attrs["bin_factors"]),
             bin_um=tuple(attrs["bin_um"]),
-            quant_um=float(attrs["quant_um"]),
+            quant_um=quant_um,
             clamp_um=float(attrs["clamp_um"]),
             voxel_um=tuple(attrs["voxel_um"]),
             grid_shape_zyx=tuple(attrs["grid_shape_zyx"]),
             volume_shape_zyx=tuple(attrs["volume_shape_zyx"]),
             n_levels=int(attrs.get("n_levels", 1)),
-            levels=int(attrs.get("levels", 256)),
+            levels=levels,
+            radii=RadiusTable.from_dataset(attrs, results_dir, quant_um, levels),
         )
 
     def code_for(self, r_um: float) -> int:
@@ -90,15 +100,18 @@ class FieldStore:
     MASK_CACHE_SIZE = 8  # (channel, code, level) bool planes
 
     def __init__(self, zarr_path: str | Path, edt_cache_bytes: int = 1 << 30):
+        self.zarr_path = Path(zarr_path)
         self.root = zarr.open(str(zarr_path), mode="r")
-        self.grid = GridInfo.from_attrs(self.root.attrs)
+        # The radius mapping falls back to meta.json, which sits beside the store.
+        self.grid = GridInfo.from_attrs(self.root.attrs, self.zarr_path.parent)
         self._edt_cache_bytes = int(edt_cache_bytes)
         self._lock = threading.Lock()
         self._edt_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
         self._edt_cache_used = 0
         self._mask_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
         self._cumhist_cache: Dict[tuple, np.ndarray] = {}
-        self._occ_cache: "OrderedDict[int, np.ndarray]" = OrderedDict()
+        self._occ_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
+        self._occ_levels_ok: Optional[bool] = None
 
     @property
     def channel_names(self) -> list:
@@ -108,10 +121,18 @@ class FieldStore:
         _, _, z, y, x = self.root["edt"][str(level)].shape
         return (z, y, x)
 
+    @property
+    def n_edt_levels(self) -> int:
+        return max(1, int(self.grid.n_levels))
+
     # ── planes ─────────────────────────────────────────────
 
     def edt_plane(self, channel: int, level: int = 0) -> np.ndarray:
-        """Decoded (z, y, x) uint8 EDT plane for one channel, LRU-cached."""
+        """Decoded (z, y, x) uint8 EDT plane for one channel, LRU-cached.
+
+        The pyramid is MIN-reduced, so a coarse level is a strict display
+        *superset* of level 0 — usable to preview a mask, never to count with.
+        """
         key = (channel, level)
         with self._lock:
             if key in self._edt_cache:
@@ -126,43 +147,63 @@ class FieldStore:
                 self._edt_cache_used -= old.nbytes
         return arr
 
-    def occ_plane(self, channel: int) -> np.ndarray:
-        """Level-0 occupancy plane (foreground voxels per bin, exact).
+    def edt_region(self, channel: int, ys: slice, xs: slice, level: int = 0) -> np.ndarray:
+        """(z, dy, dx) uint8 EDT for one channel over a bin sub-rectangle.
 
-        Level 0 ONLY: occ pyramid levels >= 1 are sum-clipped at 255 and
-        quantitatively meaningless — coarse occupancy must be derived by
-        reducing this plane instead.
+        Reads only the intersecting zarr chunks. Slicing a cached whole plane
+        instead is ~20x slower here, because 49 channels x 46 MB thrashes the
+        plane LRU — so viewport-scoped work must come through this, not
+        `edt_plane`. Uncached: callers hold the region for the length of one query.
         """
+        return np.asarray(self.root["edt"][str(level)][0, channel, :, ys, xs])
+
+    def occ_levels_usable(self) -> bool:
+        """Whether occ levels >= 1 carry a meaningful density.
+
+        Cannot be read off the attrs: runs whose occ pyramid is mean-reduced
+        (usable) and runs whose pyramid is sum-clipped at 255 (meaningless)
+        both report ``occupancy_reduction: "sum"``. Probe instead — a
+        sum-clipped pyramid piles up at the 255 ceiling as it coarsens, a
+        mean-reduced one thins out.
+        """
+        if self._occ_levels_ok is not None:
+            return self._occ_levels_ok
+        ok = False
+        try:
+            if self.n_edt_levels > 1:
+                fine = np.asarray(self.root["occ"]["0"][0, 0])
+                coarse = np.asarray(self.root["occ"]["1"][0, 0])
+                f_nz, c_nz = fine[fine > 0], coarse[coarse > 0]
+                if f_nz.size and c_nz.size:
+                    # Mean-reduced: coarse values sit at or below the fine ones.
+                    ok = bool(c_nz.mean() <= f_nz.mean() * 1.05)
+        except Exception as exc:
+            print(f"[fields] could not probe the occ pyramid ({exc}); using level 0 only")
+        self._occ_levels_ok = ok
+        return ok
+
+    def occ_plane(self, channel: int, level: int = 0) -> np.ndarray:
+        """Occupancy plane (foreground voxels per bin at level 0; a mean density
+        at coarser levels, when `occ_levels_usable()` says the pyramid supports it)."""
+        if level != 0 and not self.occ_levels_usable():
+            level = 0
+        key = (channel, level)
         with self._lock:
-            if channel in self._occ_cache:
-                self._occ_cache.move_to_end(channel)
-                return self._occ_cache[channel]
-        arr = np.asarray(self.root["occ"]["0"][0, channel])
+            if key in self._occ_cache:
+                self._occ_cache.move_to_end(key)
+                return self._occ_cache[key]
+        arr = np.asarray(self.root["occ"][str(level)][0, channel])
         with self._lock:
-            self._occ_cache[channel] = arr
+            self._occ_cache[key] = arr
             while len(self._occ_cache) > 4:
                 self._occ_cache.popitem(last=False)
         return arr
 
     # ── derived ────────────────────────────────────────────
 
-    def channel_mask(self, channel: int, code: int, level: int = 0) -> np.ndarray:
-        """Bool dilated mask `edt <= code`, small LRU."""
-        key = (channel, code, level)
-        with self._lock:
-            if key in self._mask_cache:
-                self._mask_cache.move_to_end(key)
-                return self._mask_cache[key]
-        mask = self.edt_plane(channel, level) <= np.uint8(code)
-        with self._lock:
-            self._mask_cache[key] = mask
-            while len(self._mask_cache) > self.MASK_CACHE_SIZE:
-                self._mask_cache.popitem(last=False)
-        return mask
-
     def channel_cumhist(self, channel: int, level: int = 0) -> np.ndarray:
-        """Cumulative EDT histogram (256,) int64: bins within any radius code
-        in O(1). Cached permanently (1 KB per entry)."""
+        """Cumulative EDT histogram (256,) int64: **bins** within any radius code
+        in O(1). Cached permanently (2 KB per entry)."""
         key = (channel, level)
         with self._lock:
             hist = self._cumhist_cache.get(key)
@@ -175,6 +216,62 @@ class FieldStore:
         with self._lock:
             self._cumhist_cache[key] = hist
         return hist
+
+    # ── cumulative histograms: warm once, reuse forever ────
+    #
+    # These are what make per-channel coverage O(1) at ANY radius, but building
+    # one costs a full 46 MB plane read, so the first caller that wants all 49
+    # channels waits ~8 s. They are also tiny (256 int64 each) and depend only
+    # on the dataset — so they are computed once off the main thread and cached
+    # beside the store, making every later session instant.
+
+    def _sidecar_path(self, level: int) -> Path:
+        return self.zarr_path.parent / f".cumhist_L{level}.npz"
+
+    def load_cumhist_cache(self, level: int = 0) -> bool:
+        """Populate the histogram cache from the sidecar, if one is present."""
+        path = self._sidecar_path(level)
+        if not path.exists():
+            return False
+        try:
+            with np.load(path) as z:
+                if int(z["levels"]) != self.grid.levels:
+                    return False
+                channels, table = z["channels"], z["table"]
+            with self._lock:
+                for c, row in zip(channels.tolist(), table):
+                    self._cumhist_cache[(int(c), level)] = row.astype(np.int64)
+            return True
+        except Exception as exc:
+            print(f"[fields] ignoring unreadable histogram cache {path}: {exc}")
+            return False
+
+    def warm_cumhists(self, channels: Sequence[int], level: int = 0,
+                      save: bool = True) -> None:
+        """Build every channel's histogram, then persist them.
+
+        Safe to run on a worker thread: `channel_cumhist` is lock-guarded, and
+        callers that arrive mid-warm simply compute their own entry.
+        """
+        for c in channels:
+            self.channel_cumhist(int(c), level)
+        if not save:
+            return
+        path = self._sidecar_path(level)
+        try:
+            with self._lock:
+                rows = [(c, h) for (c, lv), h in self._cumhist_cache.items() if lv == level]
+            rows.sort()
+            np.savez_compressed(
+                path,
+                channels=np.array([c for c, _ in rows], dtype=np.int32),
+                table=np.stack([h for _, h in rows]).astype(np.int64),
+                levels=np.int64(self.grid.levels),
+            )
+        except Exception as exc:
+            # A read-only results directory is normal; the cost is just a
+            # re-warm next session.
+            print(f"[fields] could not write {path} ({exc}); histograms stay in memory")
 
     def clear(self):
         with self._lock:
@@ -197,191 +294,290 @@ def _union_rowmask(fp0, fp1, m0: np.uint64, m1: np.uint64) -> np.ndarray:
     return ((fp0 & m0) != np.uint64(0)) | ((fp1 & m1) != np.uint64(0))
 
 
-class TallyStore:
-    """The tally parquets held as per-radius numpy arrays.
+@dataclass
+class ComboRows:
+    """Ranked combination rows. All counts are RAW VOXELS."""
+    fp0: np.ndarray          # uint64
+    fp1: np.ndarray          # uint64
+    n_inter: np.ndarray      # int64 — voxels containing AT LEAST this set
+    n_union: np.ndarray      # int64 — voxels containing at least one member
+    iou: Optional[np.ndarray] = None            # None for regional sums
+    overlap_coeff: Optional[np.ndarray] = None
 
-    Fingerprints are pre-masked to included channels at load time (excluded
-    channels become invisible to every query) and rows re-aggregated.
-    Re-including a channel requires `reload()` — a rare action.
+    def __len__(self) -> int:
+        return int(self.fp0.size)
+
+
+class TallyStore:
+    """The tally tables, sized for interaction rather than completeness.
+
+    Preloaded (small, hot):
+        combos_global.parquet   ranked combinations, degree 1..4, per radius
+        channel_stats.parquet   per (radius, block, channel), held dense
+        tally_blocks.parquet    per-block bookkeeping (truncation check)
+
+    Deliberately never read:
+        tally.parquet / tally_global.parquet — 75M fingerprint rows and ~3 GB
+        resident. They are the only source of exactly-this-set counts and of
+        combinations above `combos_max_degree`; neither is surfaced by the UI.
+        Datasets that predate combos_global fall back to reading tally_global
+        one radius at a time (see `_legacy_global_rows`).
+
+        combos_blocks.parquet — truncated per block; see the note below.
+
+    UNITS: every count returned here is a RAW VOXEL count. Bin counts come from
+    `FieldStore.channel_cumhist` / `edt_region` instead. They differ by up to 256x.
     """
 
-    def __init__(self, tally_dir: str | Path, registry: ChannelRegistry):
+    def __init__(self, tally_dir: str | Path, registry: ChannelRegistry,
+                 radii: Optional[RadiusTable] = None):
         self.tally_dir = Path(tally_dir)
         self.registry = registry
-        # per-radius arrays
-        self.global_by_radius: Dict[int, tuple] = {}   # ri -> (fp0, fp1, count)
-        self.blocks_by_radius: Dict[int, tuple] = {}   # ri -> (fp0, fp1, count, by, bx)
-        self.chstats_by_radius: Dict[int, tuple] = {}  # ri -> (by, bx, channel, voxel_count, sum_intensity)
+        self.radii = radii
         self.n_radii = 0
+        self.max_degree = 0
+        self.has_combos = False
+        self.n_blocks_y = 0
+        self.n_blocks_x = 0
+        self.residual_total = 0
+
+        self._combos: Dict[Tuple[int, int], ComboRows] = {}
+        self._cs_voxels: Optional[np.ndarray] = None    # (ri, by, bx, ch) int64
+        self._cs_intensity: Optional[np.ndarray] = None # (ri, by, bx, ch) float64
+        self._legacy_cache: Dict[int, tuple] = {}
         self._pair_matrix_cache: Dict[int, np.ndarray] = {}
         self._lock = threading.Lock()
         self._load()
 
     # ── loading ────────────────────────────────────────────
 
+    @property
+    def _combos_global_path(self) -> Path:
+        return self.tally_dir / "combos_global.parquet"
+
     def _load(self):
-        import pyarrow.parquet as pq
-
-        m0, m1 = self.registry.included_fp_masks()
-
-        g = pq.read_table(self.tally_dir / "tally_global.parquet")
-        fp0 = g.column("fp_0").to_numpy().astype(np.uint64)
-        fp1 = g.column("fp_1").to_numpy().astype(np.uint64)
-        count = g.column("count").to_numpy().astype(np.int64)
-        ridx = g.column("radius_idx").to_numpy().astype(np.int64)
-
-        self.n_radii = int(ridx.max()) + 1
-        if self.n_radii != len(DETENT_RADII_UM):
-            raise ValueError(
-                f"tally has {self.n_radii} radii but DETENT_RADII_UM has "
-                f"{len(DETENT_RADII_UM)} — the hardcoded radius mapping in "
-                f"analysis/constants.py does not match this dataset"
-            )
-
-        for ri in range(self.n_radii):
-            sel = ridx == ri
-            self.global_by_radius[ri] = self._mask_and_regroup(
-                fp0[sel], fp1[sel], count[sel], m0, m1
-            )
-
-        t = pq.read_table(self.tally_dir / "tally.parquet")
-        fp0 = t.column("fp_0").to_numpy().astype(np.uint64)
-        fp1 = t.column("fp_1").to_numpy().astype(np.uint64)
-        count = t.column("count").to_numpy().astype(np.int64)
-        by = t.column("block_y").to_numpy().astype(np.int32)
-        bx = t.column("block_x").to_numpy().astype(np.int32)
-        ridx = t.column("radius_idx").to_numpy().astype(np.int64)
-        for ri in range(self.n_radii):
-            sel = ridx == ri
-            self.blocks_by_radius[ri] = self._mask_and_regroup(
-                fp0[sel], fp1[sel], count[sel], m0, m1, by[sel], bx[sel]
-            )
-
-        c = pq.read_table(self.tally_dir / "channel_stats.parquet")
-        by = c.column("block_y").to_numpy().astype(np.int32)
-        bx = c.column("block_x").to_numpy().astype(np.int32)
-        ch = c.column("channel").to_numpy().astype(np.int32)
-        vc = c.column("voxel_count").to_numpy().astype(np.int64)
-        si = c.column("sum_intensity").to_numpy().astype(np.float64)
-        ridx = c.column("radius_idx").to_numpy().astype(np.int64)
-        for ri in range(self.n_radii):
-            sel = ridx == ri
-            self.chstats_by_radius[ri] = (by[sel], bx[sel], ch[sel], vc[sel], si[sel])
-
+        self._load_channel_stats()
+        if self._combos_global_path.exists():
+            self._load_combos_global()
+            self.has_combos = True
+        else:
+            print("[tally] no combos_global.parquet — falling back to the "
+                  "fingerprint tables (legacy dataset, loaded one radius at a time)")
+            self._probe_legacy_radii()
         self._check_truncation()
 
+        if self.radii is not None and self.n_radii and self.n_radii != len(self.radii):
+            # Not fatal: the tables are keyed by radius_idx, so a mismatch only
+            # means the labels are wrong. It does mean the mapping came from the
+            # fallback constant rather than the dataset — say so loudly.
+            print(
+                f"[tally] WARNING: tally has {self.n_radii} radii but the radius "
+                f"mapping ({self.radii.source}) has {len(self.radii)} — radius "
+                f"labels will be wrong above index {len(self.radii) - 1}."
+            )
+
+    def _load_channel_stats(self):
+        import pyarrow.parquet as pq
+
+        t = pq.read_table(self.tally_dir / "channel_stats.parquet")
+        by = t.column("block_y").to_numpy().astype(np.int32)
+        bx = t.column("block_x").to_numpy().astype(np.int32)
+        ch = t.column("channel").to_numpy().astype(np.int32)
+        ri = t.column("radius_idx").to_numpy().astype(np.int32)
+        vc = t.column("voxel_count").to_numpy().astype(np.int64)
+        si = t.column("sum_intensity").to_numpy().astype(np.float64)
+
+        self.n_radii = int(ri.max()) + 1
+        self.n_blocks_y = int(by.max()) + 1
+        self.n_blocks_x = int(bx.max()) + 1
+        n_ch = max(int(ch.max()) + 1, self.registry.n_channels)
+
+        shape = (self.n_radii, self.n_blocks_y, self.n_blocks_x, n_ch)
+        self._cs_voxels = np.zeros(shape, dtype=np.int64)
+        self._cs_intensity = np.zeros(shape, dtype=np.float64)
+        # Scatter, rather than group-by: one pass, and every later query is a slice.
+        self._cs_voxels[ri, by, bx, ch] = vc
+        self._cs_intensity[ri, by, bx, ch] = si
+
+    def _load_combos_global(self):
+        import pyarrow.parquet as pq
+
+        t = pq.read_table(self._combos_global_path, columns=[
+            "degree", "radius_idx", "fp_0", "fp_1",
+            "n_inter", "n_union", "iou", "overlap_coeff",
+        ])
+        deg = t.column("degree").to_numpy().astype(np.int8)
+        ri = t.column("radius_idx").to_numpy().astype(np.int16)
+        # uint64 must not pass through float: bits above 2^53 vanish silently.
+        fp0 = t.column("fp_0").to_numpy().astype(np.uint64)
+        fp1 = t.column("fp_1").to_numpy().astype(np.uint64)
+        ni = t.column("n_inter").to_numpy().astype(np.int64)
+        nu = t.column("n_union").to_numpy().astype(np.int64)
+        iou = t.column("iou").to_numpy().astype(np.float64)
+        oc = t.column("overlap_coeff").to_numpy().astype(np.float64)
+
+        self.n_radii = max(self.n_radii, int(ri.max()) + 1)
+        self.max_degree = int(deg.max())
+
+        m0, m1 = self.registry.included_fp_masks()
+        stray = int(np.count_nonzero((fp0 & ~m0) | (fp1 & ~m1)))
+        if stray:
+            print(f"[tally] WARNING: {stray} combos rows name channels the registry "
+                  f"excludes — the analysed-channel rule disagrees with the pipeline's")
+
+        for r in range(self.n_radii):
+            for d in range(1, self.max_degree + 1):
+                sel = (ri == r) & (deg == d)
+                if not sel.any():
+                    continue
+                self._combos[(r, d)] = ComboRows(
+                    fp0=fp0[sel], fp1=fp1[sel], n_inter=ni[sel], n_union=nu[sel],
+                    iou=iou[sel], overlap_coeff=oc[sel],
+                )
+
+    def _probe_legacy_radii(self):
+        import pyarrow.parquet as pq
+        path = self.tally_dir / "tally_global.parquet"
+        if not path.exists():
+            return
+        t = pq.read_table(path, columns=["radius_idx"])
+        self.n_radii = max(self.n_radii,
+                           int(t.column("radius_idx").to_numpy().max()) + 1)
+
     def _check_truncation(self):
-        """Warn if the per-block tally was truncated (residual > 0)."""
+        """Record whether the per-block tally was truncated (residual > 0)."""
         import pyarrow.parquet as pq
         path = self.tally_dir / "tally_blocks.parquet"
         if not path.exists():
             return
         tb = pq.read_table(path, columns=["residual"])
-        residual = int(tb.column("residual").to_numpy().sum())
-        if residual > 0:
+        self.residual_total = int(tb.column("residual").to_numpy().sum())
+        if self.residual_total > 0:
             print(
                 f"[tally] WARNING: per-block tally is truncated "
-                f"(total residual {residual} bins) — block-local counts are "
+                f"(total residual {self.residual_total}) — block-local counts are "
                 f"lower bounds for rare combinations"
             )
 
-    @staticmethod
-    def _mask_and_regroup(fp0, fp1, count, m0, m1, by=None, bx=None):
-        """Mask fingerprints to included channels and re-aggregate duplicates.
-
-        Rows whose fingerprint becomes empty (bins holding only excluded
-        channels) are dropped.
-        """
-        fp0 = fp0 & m0
-        fp1 = fp1 & m1
-        keep = (fp0 != np.uint64(0)) | (fp1 != np.uint64(0))
-        fp0, fp1, count = fp0[keep], fp1[keep], count[keep]
-        if by is not None:
-            by, bx = by[keep], bx[keep]
-            rec = np.empty(fp0.size, dtype=[
-                ("a", np.uint64), ("b", np.uint64), ("y", np.int32), ("x", np.int32)])
-            rec["a"], rec["b"], rec["y"], rec["x"] = fp0, fp1, by, bx
-        else:
-            rec = np.empty(fp0.size, dtype=[("a", np.uint64), ("b", np.uint64)])
-            rec["a"], rec["b"] = fp0, fp1
-        uniq, inverse = np.unique(rec, return_inverse=True)
-        agg = np.zeros(uniq.size, dtype=np.int64)
-        np.add.at(agg, inverse, count)
-        if by is not None:
-            return uniq["a"].copy(), uniq["b"].copy(), agg, uniq["y"].copy(), uniq["x"].copy()
-        return uniq["a"].copy(), uniq["b"].copy(), agg
-
     def reload(self):
-        """Re-read parquets (needed after registry inclusion changes)."""
-        self.global_by_radius.clear()
-        self.blocks_by_radius.clear()
-        self.chstats_by_radius.clear()
+        """Re-read the tables (needed after registry inclusion changes)."""
+        self._combos.clear()
         with self._lock:
+            self._legacy_cache.clear()
             self._pair_matrix_cache.clear()
         self._load()
 
-    # ── fingerprint queries ────────────────────────────────
+    # ── combinations (raw voxels) ──────────────────────────
 
-    def inter_union_counts(
+    def combos(self, radius_idx: int, degree: int) -> Optional[ComboRows]:
+        """Whole-volume ranked rows for one degree, or None if not tallied."""
+        return self._combos.get((int(radius_idx), int(degree)))
+
+    # NOTE — why there is no `combos_region` reading combos_blocks.parquet.
+    #
+    # combos_blocks keeps only the top `combos_block_top_k` (200) rows per
+    # (block, radius, degree), so its per-block counts do NOT sum to the true
+    # regional total above degree 1. Measured on mis_v3 at radius_idx 3:
+    #
+    #     degree 1:  49 rows/block, never capped   -> sums are EXACT
+    #     degree 2:  2073/2519 blocks capped       -> median 32% of the truth
+    #     degree 3:  2193/2493 blocks capped       -> median  1.3% of the truth
+    #
+    # and its own `residual` column is non-zero on 90% of rows, saying so. (The
+    # zero `residual` in tally_blocks.parquet is a different table and does not
+    # cover this.) Regional metrics therefore come from the EDT arrays via
+    # `FieldStore.edt_region`, which is exact and, read region-scoped, fast
+    # enough for interaction. See AnalysisLoader.get_viewport_metrics.
+
+    # ── channel stats (raw voxels) ─────────────────────────
+
+    def _cs_slice(self, radius_idx, by_range, bx_range):
+        y0, y1 = by_range if by_range else (0, self.n_blocks_y)
+        x0, x1 = bx_range if bx_range else (0, self.n_blocks_x)
+        y0, y1 = max(0, y0), min(self.n_blocks_y, y1)
+        x0, x1 = max(0, x0), min(self.n_blocks_x, x1)
+        return (int(radius_idx), slice(y0, y1), slice(x0, x1))
+
+    def channel_voxel_counts(
         self,
-        indices: Sequence[int],
         radius_idx: int,
-        block_rows: Optional[np.ndarray] = None,
-    ) -> Tuple[int, int]:
-        """(intersection, union) bin counts for a channel set, in one pass.
+        by_range: Optional[Tuple[int, int]] = None,
+        bx_range: Optional[Tuple[int, int]] = None,
+    ) -> np.ndarray:
+        """Per-channel RAW VOXEL counts, indexed by channel index.
 
-        intersection = bins containing ALL the channels (superset sum);
-        union        = bins containing ANY of them.
-        `block_rows`: optional bool row mask over the per-block table — when
-        given, queries `tally.parquet` rows instead of the global table.
+        Verified identical to the degree-1 rows of `combos`, so this is the
+        correct denominator for a combination's overlap coefficient.
         """
+        sl = self._cs_slice(radius_idx, by_range, bx_range)
+        return self._cs_voxels[sl].sum(axis=(0, 1))
+
+    def channel_stats_sum(
+        self,
+        radius_idx: int,
+        by_range: Optional[Tuple[int, int]] = None,
+        bx_range: Optional[Tuple[int, int]] = None,
+    ) -> Dict[int, Tuple[int, float]]:
+        """Per-channel (voxel_count, sum_intensity) over a block range
+        (whole volume when no range given). Only channels with signal appear."""
+        sl = self._cs_slice(radius_idx, by_range, bx_range)
+        vc = self._cs_voxels[sl].sum(axis=(0, 1))
+        si = self._cs_intensity[sl].sum(axis=(0, 1))
+        nz = np.flatnonzero(vc)
+        return {int(c): (int(vc[c]), float(si[c])) for c in nz}
+
+    def channel_stats_block(self, block_y: int, block_x: int, radius_idx: int):
+        """[(channel, voxel_count, sum_intensity)] for one block."""
+        if not (0 <= block_y < self.n_blocks_y and 0 <= block_x < self.n_blocks_x):
+            return []
+        vc = self._cs_voxels[int(radius_idx), int(block_y), int(block_x)]
+        si = self._cs_intensity[int(radius_idx), int(block_y), int(block_x)]
+        return [(int(c), int(vc[c]), float(si[c])) for c in np.flatnonzero(vc)]
+
+    # ── legacy fingerprint path (datasets without combos_*) ─
+
+    def _legacy_global_rows(self, radius_idx: int):
+        """(fp0, fp1, count) for one radius from tally_global.parquet — BINS.
+
+        Only reached on datasets predating combos_global. One radius is held at
+        a time; this is the path the whole-table preload used to take eagerly.
+        """
+        with self._lock:
+            hit = self._legacy_cache.get(radius_idx)
+        if hit is not None:
+            return hit
+
+        import pyarrow.parquet as pq
+        t = pq.read_table(
+            self.tally_dir / "tally_global.parquet",
+            columns=["fp_0", "fp_1", "count"],
+            filters=[("radius_idx", "==", int(radius_idx))],
+        )
+        m0, m1 = self.registry.included_fp_masks()
+        fp0 = t.column("fp_0").to_numpy().astype(np.uint64) & m0
+        fp1 = t.column("fp_1").to_numpy().astype(np.uint64) & m1
+        count = t.column("count").to_numpy().astype(np.int64)
+        keep = (fp0 != np.uint64(0)) | (fp1 != np.uint64(0))
+        rows = (fp0[keep], fp1[keep], count[keep])
+        with self._lock:
+            self._legacy_cache = {radius_idx: rows}  # one radius at a time
+        return rows
+
+    def legacy_inter_union(self, indices: Sequence[int], radius_idx: int) -> Tuple[int, int]:
+        """(intersection, union) BIN counts from the fingerprint table."""
         m0, m1 = self.registry.fp_masks(indices)
-        if block_rows is None:
-            fp0, fp1, count = self.global_by_radius[radius_idx]
-        else:
-            fp0, fp1, count, _, _ = self.blocks_by_radius[radius_idx]
-            fp0, fp1, count = fp0[block_rows], fp1[block_rows], count[block_rows]
+        fp0, fp1, count = self._legacy_global_rows(radius_idx)
         inter = int(count[_superset_rowmask(fp0, fp1, m0, m1)].sum())
         union = int(count[_union_rowmask(fp0, fp1, m0, m1)].sum())
         return inter, union
 
-    def superset_count(
-        self,
-        indices: Sequence[int],
-        radius_idx: int,
-        block_rows: Optional[np.ndarray] = None,
-    ) -> int:
-        """Bins containing ALL the given channels."""
-        m0, m1 = self.registry.fp_masks(indices)
-        if block_rows is None:
-            fp0, fp1, count = self.global_by_radius[radius_idx]
-        else:
-            fp0, fp1, count, _, _ = self.blocks_by_radius[radius_idx]
-            fp0, fp1, count = fp0[block_rows], fp1[block_rows], count[block_rows]
-        return int(count[_superset_rowmask(fp0, fp1, m0, m1)].sum())
-
-    def block_row_mask(
-        self,
-        radius_idx: int,
-        by_range: Tuple[int, int],
-        bx_range: Tuple[int, int],
-    ) -> np.ndarray:
-        """Bool row mask over the per-block table for a block range
-        (half-open, [y0, y1) x [x0, x1)). Compute once per viewport request."""
-        _, _, _, by, bx = self.blocks_by_radius[radius_idx]
-        return (
-            (by >= by_range[0]) & (by < by_range[1])
-            & (bx >= bx_range[0]) & (bx < bx_range[1])
-        )
-
-    # ── pair matrix ────────────────────────────────────────
-
-    @staticmethod
-    def _accumulate_pair_matrix(fp0, fp1, count) -> np.ndarray:
-        """Count-weighted co-occurrence matrix from fingerprint rows.
-
-        Products stay < 2^53 so the float64 matmul is exact.
-        """
+    def legacy_pair_matrix(self, radius_idx: int) -> np.ndarray:
+        """(128, 128) int64 co-occurrence in BINS; diagonal = per-channel counts."""
+        with self._lock:
+            cached = self._pair_matrix_cache.get(radius_idx)
+        if cached is not None:
+            return cached
+        fp0, fp1, count = self._legacy_global_rows(radius_idx)
         n = fp0.size
         M = np.zeros((128, 128), dtype=np.float64)
         chunk = 262144
@@ -393,63 +589,7 @@ class TallyStore:
                 fp1[s:e].view(np.uint8).reshape(-1, 8), axis=1, bitorder="little")
             B = np.concatenate([b0, b1], axis=1).astype(np.float64)
             M += B.T @ (B * count[s:e, None])
-        return M.astype(np.int64)
-
-    def pair_matrix(self, radius_idx: int) -> np.ndarray:
-        """(128, 128) int64: M[a, b] = bins containing channels a AND b;
-        diagonal = per-channel bin counts. Lazy, cached per radius."""
-        with self._lock:
-            cached = self._pair_matrix_cache.get(radius_idx)
-        if cached is not None:
-            return cached
-        fp0, fp1, count = self.global_by_radius[radius_idx]
-        M = self._accumulate_pair_matrix(fp0, fp1, count)
+        M = M.astype(np.int64)
         with self._lock:
             self._pair_matrix_cache[radius_idx] = M
         return M
-
-    def pair_matrix_rows(self, radius_idx: int, block_rows: np.ndarray) -> np.ndarray:
-        """Pair matrix over a block-filtered subset of tally.parquet rows
-        (viewport-local upset). Not cached — viewport subsets are small."""
-        fp0, fp1, count, _, _ = self.blocks_by_radius[radius_idx]
-        return self._accumulate_pair_matrix(
-            fp0[block_rows], fp1[block_rows], count[block_rows]
-        )
-
-    def channel_bin_counts(self, radius_idx: int) -> np.ndarray:
-        """(128,) int64 per-channel bin counts at a tallied radius."""
-        return np.diag(self.pair_matrix(radius_idx)).copy()
-
-    # ── channel stats (voxel-exact) ────────────────────────
-
-    def channel_stats_sum(
-        self,
-        radius_idx: int,
-        by_range: Optional[Tuple[int, int]] = None,
-        bx_range: Optional[Tuple[int, int]] = None,
-    ) -> Dict[int, Tuple[int, float]]:
-        """Per-channel (voxel_count, sum_intensity) summed over a block range
-        (whole volume when no range given)."""
-        by, bx, ch, vc, si = self.chstats_by_radius[radius_idx]
-        sel = np.ones(by.size, dtype=bool)
-        if by_range is not None:
-            sel &= (by >= by_range[0]) & (by < by_range[1])
-        if bx_range is not None:
-            sel &= (bx >= bx_range[0]) & (bx < bx_range[1])
-        out: Dict[int, Tuple[int, float]] = {}
-        chs = ch[sel]
-        vcs = vc[sel]
-        sis = si[sel]
-        for c in np.unique(chs):
-            m = chs == c
-            out[int(c)] = (int(vcs[m].sum()), float(sis[m].sum()))
-        return out
-
-    def channel_stats_block(self, block_y: int, block_x: int, radius_idx: int):
-        """[(channel, voxel_count, sum_intensity)] for one block."""
-        by, bx, ch, vc, si = self.chstats_by_radius[radius_idx]
-        sel = (by == block_y) & (bx == block_x)
-        return [
-            (int(c), int(v), float(s))
-            for c, v, s in zip(ch[sel], vc[sel], si[sel])
-        ]

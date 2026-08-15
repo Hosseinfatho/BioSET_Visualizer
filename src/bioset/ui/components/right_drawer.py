@@ -195,8 +195,11 @@ def right_drawer(state, ctrl):
 
                         with html.Div(classes="mb-4 mt-2"):
                             html.Div("Combination Size", classes="text-caption mb-2 text-left", style="color: white;")
+                            # Sizes the ranked tables cover. Degree 5 was offered
+                            # before but is not tallied — ranking it would mean
+                            # scoring all C(49,5) = 1.9M combinations.
                             with html.Div(classes="d-flex justify-space-between", style="width: 100%; gap: 8px;"):
-                                for val in [1, 2, 3, 4, 5]:
+                                for val in [1, 2, 3, 4]:
                                     vuetify.VBtn(
                                         str(val),
                                         click=f"upset_min_channels = {val}",
@@ -249,6 +252,15 @@ def right_drawer(state, ctrl):
                         vuetify.VSpacer()
                         vuetify.VBtn("Close", color="surface-variant", click="upset_filter_dialog = false")
             
+            # Count unit + the radius the ranking actually describes. Bar
+            # heights are ratios and comparable across scopes; the counts are
+            # not — global rows are raw voxels, viewport rows are analysis bins.
+            html.Div(
+                "{{ upset_metric_label }}",
+                v_if="upset_metric_label",
+                classes="text-caption text-center",
+                style="color: #9e9e9e; font-size: 10px;",
+            )
             # Vue component for UpSet plot
             vuetify.Template(
                 """
@@ -455,8 +467,7 @@ def right_drawer(state, ctrl):
                         vuetify.VSpacer()
                         vuetify.VBtn("Close", color="surface-variant", click="bar_filter_dialog = false")
 
-            # Coverage semantics note: voxel-exact at tallied radii, bin
-            # fraction at arbitrary radii
+            # Coverage unit — the same at every radius (analysis bins)
             html.Div(
                 "{{ bar_metric_label }}",
                 v_if="bar_metric_label",

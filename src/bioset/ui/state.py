@@ -170,8 +170,12 @@ def init_state(state):
 
     # Analysis metadata (from the results store)
     state.setdefault("analysis_channels", [])  # Display names (filtered, unique)
-    state.setdefault("analysis_dilation_amounts", [])  # Tallied detent radii (µm)
-    state.setdefault("analysis_radius_max", 4.0)  # Continuous radius slider cap (µm)
+    # Tallied detent radii (µm) to QUERY with. The matching *effective* radii are
+    # display labels only — see analysis/radii.py for why they must not be queried.
+    state.setdefault("analysis_dilation_amounts", [])
+    state.setdefault("analysis_dilation_labels", [])  # Effective radii, 2dp, for ticks
+    state.setdefault("analysis_radius_max", 0.0)  # Continuous radius slider cap (µm)
+    state.setdefault("analysis_detent_snap", 0.08)  # Magnetic-snap half-window (µm)
     state.setdefault("analysis_hierarchy_levels", [])  # Heatmap LOD levels
     state.setdefault("analysis_volume_bounds", {})  # Spatial bounds (voxels)
 
@@ -179,7 +183,8 @@ def init_state(state):
     state.setdefault("current_dilation", 0)  # Selected radius in µm (continuous)
     state.setdefault("radius_slider", 0.0)  # Client-side slider thumb (committed on release)
     state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
-    state.setdefault("bar_metric_label", "")  # Voxel/bin semantics note for the bar chart
+    state.setdefault("bar_metric_label", "")  # Unit note under the bar chart
+    state.setdefault("upset_metric_label", "")  # Unit + effective radius under UpSet
 
     # Heatmap state
     state.setdefault("heatmap_visible", True)
@@ -195,7 +200,9 @@ def init_state(state):
     state.setdefault("ihm_sampling_enabled", True)
     state.setdefault("ihm_outline_enabled", True)
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
-    state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
+    # Channels whose mesh surfaces the user has opted into. Empty by default:
+    # the manifest holds thousands of tiles, so surfaces are never implicit.
+    state.setdefault("surface_enabled_channels", [])
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
@@ -472,12 +479,15 @@ def register_state_change_handlers(state, ctrl):
         except (TypeError, ValueError):
             return
 
-        # Magnetic detents: within ±0.08 µm of a tallied radius, snap to it
-        # (those radii are answered exactly from the tally). Arbitrary values
-        # between detents pass through and are computed from the EDT field.
+        # Magnetic detents: near a tallied radius, snap to it (those are
+        # answered exactly from the tally). Arbitrary values between detents
+        # pass through and are computed from the EDT field. The window scales
+        # with the dataset's own radius spacing — a fixed one is a dead zone on
+        # coarsely-spaced runs and overlapping on finely-spaced ones.
+        window = float(getattr(state, "analysis_detent_snap", 0.08) or 0.08)
         snapped = val
         for d in (state.analysis_dilation_amounts or []):
-            if abs(val - d) <= 0.08:
+            if abs(val - d) <= window:
                 snapped = float(d)
                 break
         cap = float(state.analysis_radius_max or 0.0)
@@ -515,15 +525,12 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
         if state.heatmap_auto_level == "auto":
             return
+        # The level selects the heatmap's cell size and nothing else — the
+        # UpSet, bar and dilation answers are level-independent (see the loader
+        # docstring), so recomputing them here was pure duplicate work. The
+        # UpSet call was additionally issued twice.
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
-        if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data()
-            ctrl.update_upset_data()
-        if hasattr(ctrl, 'update_bar_data'):
-            ctrl.update_bar_data()
-        if hasattr(ctrl, 'update_dilation_data'):
-            ctrl.update_dilation_data()
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 

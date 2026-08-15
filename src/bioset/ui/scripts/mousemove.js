@@ -1,10 +1,13 @@
-// Hover tracker — emits throttled mousemove coords from the VTK canvas
+// Canvas mouse tracking.
+//
+// The hover-highlight and right-click drill-down were removed: every hover
+// emit cost a server round-trip plus a full render/JPEG-encode/push cycle at
+// 12.5 fps just for moving the mouse, and surface visibility is no longer tied
+// to picking a tile. This component now only suppresses the browser context
+// menu over the canvas so right-drag camera moves are not interrupted.
 Vue.component('hover-tracker', {
   template: '<span style="display:none"></span>',
   mounted() {
-    var self = this;
-    var THROTTLE_MS = 80;
-    var lastSend = 0;
     var attached = false;
 
     function tryAttach() {
@@ -12,22 +15,9 @@ Vue.component('hover-tracker', {
       var canvas = document.querySelector('canvas');
       if (!canvas) return false;
       attached = true;
-
-      canvas.addEventListener('mousemove', function (e) {
-        // No hover while a button is held: camera drags (rotate/pan/zoom)
-        // must not trigger server-side hover picking/rendering.
-        if (e.buttons !== 0) return;
-        var now = Date.now();
-        if (now - lastSend < THROTTLE_MS) return;
-        lastSend = now;
-        self.$emit('hover', [e.offsetX, e.offsetY]);
-      });
-
       canvas.addEventListener('contextmenu', function (e) {
         e.preventDefault();
-        self.$emit('rightclick', [e.offsetX, e.offsetY]);
       });
-
       return true;
     }
 

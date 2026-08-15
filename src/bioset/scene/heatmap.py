@@ -89,11 +89,8 @@ class HeatmapRenderer:
 
         self._field: Optional[HeatmapField] = None
         self._current_spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
-        self._index_grid: Optional[np.ndarray] = None  # (ny, nx) int32 -> field row
 
         # Persistent hover-highlight actor (single wireframe rect, repositioned)
-        self._highlight_actor: Optional[vtkActor] = None
-        self._highlight_cell: Optional[tuple[int, int]] = None
 
     # ──────────────────────────────────────────────
     # Update
@@ -144,10 +141,6 @@ class HeatmapRenderer:
             fractions=fracs.astype(np.float32),
         )
         self._current_spacing = spacing
-        # Dense picking index: vectorized build, O(1) lookup (the Python-dict
-        # variant dominated main-thread apply time at fine levels).
-        self._index_grid = np.full((field.ny, field.nx), -1, dtype=np.int32)
-        self._index_grid[cells[:, 0], cells[:, 1]] = np.arange(n, dtype=np.int32)
 
         sx, sy, _ = spacing
         cw_x = field.cell_size_vox * sx  # cell width in world units
@@ -356,134 +349,24 @@ class HeatmapRenderer:
                     entry["renderer"].AddActor(entry["actor"])
             else:
                 entry["renderer"].RemoveActor(entry["actor"])
-        if not visible:
-            self.clear_highlight()
+
 
     def clear(self):
         self._deactivate_all()
         self._field = None
-        self._index_grid = None
-        self.clear_highlight()
-
-    # ──────────────────────────────────────────────
-    # Analytic picking (no geometric pickers: the heatmap is an axis-aligned
-    # grid on a known z-plane, so a display ray → plane intersection resolves
-    # the cell directly, independent of the instanced geometry)
-    # ──────────────────────────────────────────────
 
     @property
     def current_cell_size_vox(self) -> int:
         return self._field.cell_size_vox if self._field else 0
 
-    def cell_at(self, cy: int, cx: int) -> Optional[TileData]:
-        f = self._field
-        if f is None or self._index_grid is None:
-            return None
-        if not (0 <= cy < self._index_grid.shape[0] and 0 <= cx < self._index_grid.shape[1]):
-            return None
-        i = int(self._index_grid[cy, cx])
-        if i < 0:
-            return None
-        return TileData(
-            x0=int(f.cells_yx[i, 1]), x1=int(f.cells_yx[i, 1]) + 1,
-            y0=int(f.cells_yx[i, 0]), y1=int(f.cells_yx[i, 0]) + 1,
-            count=int(f.counts[i]),
-            active_fraction=float(f.fractions[i]),
-        )
-
-    def get_cell_at_display(self, x_disp: float, y_disp: float) -> Optional[TileData]:
-        """Cell under a display-space point (VTK display coords, y up)."""
-        if self._field is None:
-            return None
-        ren = self.renderer
-        plane_z = self.config.z_height / 2.0 + self.config.z_offset
-
-        def world_at(depth: float):
-            ren.SetDisplayPoint(float(x_disp), float(y_disp), depth)
-            ren.DisplayToWorld()
-            w = ren.GetWorldPoint()
-            if w[3] != 0:
-                return np.array(w[:3]) / w[3]
-            return np.array(w[:3])
-
-        p0 = world_at(0.0)
-        p1 = world_at(1.0)
-        dz = p1[2] - p0[2]
-        if abs(dz) < 1e-12:
-            return None
-        t = (plane_z - p0[2]) / dz
-        wx = p0[0] + t * (p1[0] - p0[0])
-        wy = p0[1] + t * (p1[1] - p0[1])
-
-        sx, sy, _ = self._current_spacing
-        cw_x = self._field.cell_size_vox * sx
-        cw_y = self._field.cell_size_vox * sy
-        if cw_x <= 0 or cw_y <= 0:
-            return None
-        cx = int(np.floor(wx / cw_x))
-        cy = int(np.floor(wy / cw_y))
-        return self.cell_at(cy, cx)
-
-    def cell_world_center(self, tile: TileData) -> Tuple[float, float]:
-        """World-space (x, y) center of a picked cell."""
-        sx, sy, _ = self._current_spacing
-        cs = self.current_cell_size_vox
-        return (
-            (tile.x0 + tile.x1) / 2.0 * cs * sx,
-            (tile.y0 + tile.y1) / 2.0 * cs * sy,
-        )
-
-    # ──────────────────────────────────────────────
-    # Hover highlight (one persistent actor, repositioned)
-    # ──────────────────────────────────────────────
-
-    def highlight_cell(self, tile: Optional[TileData]) -> bool:
-        """Show the hover highlight on a cell (None clears). Returns True if
-        the highlight changed."""
-        if tile is None:
-            return self.clear_highlight()
-        key = (tile.y0, tile.x0)
-        if key == self._highlight_cell:
-            return False
-        self._highlight_cell = key
-
-        sx, sy, _ = self._current_spacing
-        cs = self.current_cell_size_vox
-        cx, cy = self.cell_world_center(tile)
-        target = self.outline_renderer or self.renderer
-
-        if self._highlight_actor is None:
-            src = self._rect_source(1.0, 1.0, 0.0)
-            mapper = vtkPolyDataMapper()
-            mapper.SetInputData(src)
-            actor = vtkActor()
-            actor.SetMapper(mapper)
-            prop = actor.GetProperty()
-            prop.SetColor(1.0, 1.0, 0.0)
-            prop.SetLineWidth(3.0)
-            prop.SetOpacity(1.0)
-            actor.SetPickable(False)
-            self._highlight_actor = actor
-
-        actor = self._highlight_actor
-        actor.SetScale(cs * sx, cs * sy, 1.0)
-        z = self.config.outline_box_front_z or (
-            self.config.z_height / 2.0 + self.config.z_offset)
-        actor.SetPosition(cx, cy, z + 1.0)
-        if not target.HasViewProp(actor):
-            target.AddActor(actor)
-        return True
+    # Analytic picking (display ray -> z-plane -> cell) and the hover highlight
+    # actor lived here. Both existed only to serve hover-highlighting and the
+    # right-click tile drill-down; each hover cost a pick plus a full
+    # render/encode/push, and neither drives anything now that surfaces are
+    # opt-in. `clear_highlight` remains as a no-op for existing call sites.
 
     def clear_highlight(self) -> bool:
-        if self._highlight_actor is None or self._highlight_cell is None:
-            return False
-        self._highlight_cell = None
-        for ren in (self.outline_renderer, self.renderer):
-            if ren is not None and ren.HasViewProp(self._highlight_actor):
-                ren.RemoveActor(self._highlight_actor)
-        return True
-
-    # ──────────────────────────────────────────────
+        return False
 
     @property
     def tile_count(self) -> int:

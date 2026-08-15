@@ -89,10 +89,16 @@ def analysis_parameters_section(state, ctrl):
                                         "background: ' + (Math.abs(d - current_dilation) < 0.001 ? '#4caf50' : '#9e9e9e')",
                                     ),
                                 )
+                                # Label with the EFFECTIVE radius (what the tally
+                                # rows actually describe), positioned at the
+                                # requested one (what we query with). Every other
+                                # label is drawn so 8 detents stay legible.
                                 html.Span(
-                                    v_for="d in analysis_dilation_amounts",
+                                    v_for="(d, di) in analysis_dilation_amounts",
                                     key=("'l' + d",),
-                                    v_text="d",
+                                    v_if="di % 2 === 0",
+                                    v_text="(analysis_dilation_labels[di] !== undefined "
+                                           "? analysis_dilation_labels[di] : d)",
                                     style=(
                                         "'position: absolute; top: 22px; font-size: 9px; "
                                         "pointer-events: none; transform: translateX(-50%); "

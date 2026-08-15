@@ -112,6 +112,11 @@ def run_app(*, idle_timeout: int | None = None):
                     if scene.viewport_plots is not None:
                         if scene.viewport_plots.check_and_apply(server.state):
                             updated = True
+                    if scene.mesh_streamer is not None:
+                        # Actor creation for streamed mesh tiles — must be here,
+                        # the worker only produces polydata.
+                        if scene.mesh_streamer.check_and_apply():
+                            updated = True
                     ctrl.check_label_setup()
                     if updated:
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
@@ -193,6 +198,8 @@ def run_app(*, idle_timeout: int | None = None):
         ctrl.set_viewport_plots(scene.viewport_plots)
     if scene.mesh_manager is not None:
         ctrl.set_mesh_manager(scene.mesh_manager)
+    if scene.mesh_streamer is not None:
+        ctrl.set_mesh_streamer(scene.mesh_streamer)
     if scene.heatmap_lod is not None:
         ctrl.set_heatmap_lod(scene.heatmap_lod)
     ctrl.set_renderer(scene.renderer)

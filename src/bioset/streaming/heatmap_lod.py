@@ -179,29 +179,56 @@ class HeatmapLOD:
 
     def _bg_load(self, req: HeatmapRequest):
         """Runs in worker thread: compute the field from the loader, cropped
-        to the viewport at fine levels."""
+        to the viewport at fine levels.
+
+        Emits twice when a cheap preview is available: a coarse-pyramid field
+        first so the scene updates promptly, then the exact level-0 field. The
+        preview never drops an occupied cell (the pyramid is min-reduced), so
+        the two differ in shading, not in what is there.
+        """
         print(f"[heatmap_lod] Computing level {req.level} for {req.channels}")
         try:
-            field = req.loader.get_heatmap_field(
-                channels=req.channels,
-                dilation=req.dilation,
-                hierarchy_level=req.level,
-            )
-            cropped = False
-            if field is not None and req.roi_vox is not None:
-                from bioset.analysis import crop_field_to_roi
-                sub = crop_field_to_roi(field, req.roi_vox, self.CROP_MARGIN_FRAC)
-                cropped = sub is not field
-                field = sub
-            n = field.counts.size if field is not None else 0
-            print(f"[heatmap_lod] Level {req.level}: {n} cells"
-                  f"{' (viewport-cropped)' if cropped else ''}")
-            self._queue.put(HeatmapResult(
-                level=req.level, field=field, roi_vox=req.roi_vox, cropped=cropped))
+            preview_src = 0
+            if hasattr(req.loader, "coarse_level_for_interaction"):
+                preview_src = req.loader.coarse_level_for_interaction(req.level)
+            if preview_src:
+                self._emit(req, source_level=preview_src)
+            self._emit(req, source_level=0)
         except Exception as e:
             import traceback
             print(f"[heatmap_lod] Background compute failed: {e}")
             traceback.print_exc()
+
+    def _emit(self, req: HeatmapRequest, source_level: int):
+        """Compute one field, crop it, and queue it for the main thread."""
+        if self._is_superseded(req):
+            return
+        field = req.loader.get_heatmap_field(
+            channels=req.channels,
+            dilation=req.dilation,
+            hierarchy_level=req.level,
+            source_level=source_level or None,
+        )
+        cropped = False
+        if field is not None and req.roi_vox is not None:
+            from bioset.analysis import crop_field_to_roi
+            sub = crop_field_to_roi(field, req.roi_vox, self.CROP_MARGIN_FRAC)
+            cropped = sub is not field
+            field = sub
+        if self._is_superseded(req):
+            return
+        n = field.counts.size if field is not None else 0
+        kind = "exact" if not source_level else f"preview L{source_level}"
+        print(f"[heatmap_lod] Level {req.level} ({kind}): {n} cells"
+              f"{' (viewport-cropped)' if cropped else ''}")
+        self._queue.put(HeatmapResult(
+            level=req.level, field=field, roi_vox=req.roi_vox, cropped=cropped))
+
+    def _is_superseded(self, req: HeatmapRequest) -> bool:
+        """True once a newer request has arrived — drop the in-flight one
+        rather than spending the exact pass on a view the user has left."""
+        with self._debounce_lock:
+            return bool(self._pending and self._pending.timestamp != req.timestamp)
 
     # ── Main thread ──
 

@@ -19,22 +19,22 @@ def viewer(ctrl, render_window):
         with html.Div(style="position: relative; width: 100%; height: 100%; min-height: 200px;"):
             view = vtk.VtkRemoteView(
                 render_window,
-                # Render/encode/push at half resolution WHILE INTERACTING so the
-                # server-side JPEG encode + network transfer stay cheap (this is
-                # CPU-bound and matters on both local and remote viewing); still
-                # frames go back to full resolution once the user settles.
-                interactive_ratio=0.5,
+                # Render/encode/push at reduced resolution WHILE INTERACTING so
+                # the server-side JPEG encode + network transfer stay cheap
+                # (CPU-bound, and it matters on both local and remote viewing);
+                # still frames go back to full resolution once the user settles.
+                # 0.4 rather than 0.5 roughly halves the encoded pixels per drag
+                # frame, which is the dominant per-frame cost with mesh tiles in
+                # the scene.
+                interactive_ratio=0.4,
                 still_ratio=1.0,
+                interactive_quality=60,
             )
-            # Client-side mouse tracker: emits hover + right-click on the VTK canvas and forwards to server triggers.
-            vuetify.Template(
-                """
-                <hover-tracker
-                  @hover="trigger('on_hover', $event)"
-                  @rightclick="trigger('on_right_click', $event)"
-                />
-                """
-            )
+            # Suppresses the context menu over the canvas. It no longer emits
+            # hover or right-click: both round-tripped to the server and forced
+            # a full render, and neither drives anything now that surfaces are
+            # opt-in rather than tied to picking a tile.
+            vuetify.Template("<hover-tracker />")
             ctrl.view_update = view.update
             # 2D NOV lens: drag to move via Trame v_on (no custom JS); +/- for size.
             # Overlay: pointer-events auto when lens visible so lens can receive clicks (script needs this to start drag)

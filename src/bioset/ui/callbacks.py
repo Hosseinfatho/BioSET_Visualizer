@@ -37,6 +37,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "analysis_loader": None,
         "heatmap": None,
         "mesh_manager": None,
+        "mesh_streamer": None,
         "heatmap_lod": None,
         "viewport_plots": None,
         "renderer": None,
@@ -87,6 +88,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         _refs["mesh_manager"] = mesh_manager
         print(f"[callbacks] Mesh manager set: {mesh_manager}"
               f" (available={mesh_manager.is_available if mesh_manager else False})")
+
+    def set_mesh_streamer(mesh_streamer):
+        """Set the viewport-driven mesh tile streamer."""
+        _refs["mesh_streamer"] = mesh_streamer
+        print(f"[callbacks] Mesh streamer set: {mesh_streamer}")
 
     def set_heatmap_lod(heatmap_lod):
         """Set the heatmap LOD renderer reference."""
@@ -442,34 +448,53 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def toggle_channel_surface(channel_id):
         """Toggle mesh surface visibility for a channel."""
         mesh_mgr = _refs.get("mesh_manager")
-        hidden = list(state.surface_hidden_channels)
+        # Surfaces are opt-in per channel: enabling one starts streaming the
+        # tiles the viewport covers, disabling drops its actors at once. With
+        # 7.5k tiles / 157M triangles in the manifest, showing everything is
+        # not an option, so the cost stays under the user's control.
+        enabled = list(state.surface_enabled_channels)
+        mesh_streamer = _refs.get("mesh_streamer")
 
-        if channel_id in hidden:
-            hidden.remove(channel_id)
-            state.surface_hidden_channels = hidden
-            if (channel_id in state.active_channels
-                    and state.selected_tile and mesh_mgr and mesh_mgr.is_available):
-                color_hex = "#FFFFFF"
-                for ch in state.channels:
-                    if ch["id"] == channel_id:
-                        color_hex = ch["color"]
-                        break
-                color_rgb = _hex_to_rgb_tuple(color_hex)
-                mesh_mgr.activate_channel_mesh(
-                    channel_idx=channel_id,
-                    color_rgb=color_rgb,
-                    tile_x=state.selected_tile["tile_x"],
-                    tile_y=state.selected_tile["tile_y"],
-                    opacity=1.0,
-                )
-        else:
-            hidden.append(channel_id)
-            state.surface_hidden_channels = hidden
+        if channel_id in enabled:
+            enabled.remove(channel_id)
+            state.surface_enabled_channels = enabled
             if mesh_mgr:
-                mesh_mgr.deactivate_channel_mesh(channel_id)
+                mesh_mgr.disable_channel(channel_id)
+        else:
+            if not (mesh_mgr and mesh_mgr.is_available):
+                print("[callbacks] No mesh manifest loaded — surfaces unavailable")
+                return
+            enabled.append(channel_id)
+            state.surface_enabled_channels = enabled
+            mesh_idx = _mesh_channel_index(mesh_mgr, channel_id)
+            if mesh_idx is None:
+                print(f"[callbacks] Channel {channel_id} has no surfaces in the manifest")
+                return
+            color_hex = "#FFFFFF"
+            for ch in state.channels:
+                if ch["id"] == channel_id:
+                    color_hex = ch["color"]
+                    break
+            mesh_mgr.enable_channel(mesh_idx, _hex_to_rgb_tuple(color_hex))
+            if mesh_streamer:
+                mesh_streamer.refresh_now()
 
         if _refs["view"]:
             _refs["view"].update()
+
+    def _mesh_channel_index(mesh_mgr, channel_id):
+        """Map a UI channel id to the manifest's channel_idx.
+
+        The manifest indexes by acquisition channel, which is not a dense
+        0..N-1 counter, so the two only coincide by luck. Resolve by name.
+        """
+        name = next((ch["name"] for ch in state.channels if ch["id"] == channel_id), None)
+        if name is not None:
+            idx = mesh_mgr.channel_idx_for_name(name)
+            if idx is not None:
+                return idx
+        # Fall back to treating the id as a manifest index if it names real tiles.
+        return channel_id if mesh_mgr.get_tiles_for_channel(channel_id) else None
 
     def clear_analysis():
         """Clear only analysis data (not zarr/volume data)."""
@@ -494,9 +519,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.analysis_file_name = ""
         state.analysis_channels = []
         state.analysis_dilation_amounts = []
+        state.analysis_dilation_labels = []
         state.analysis_hierarchy_levels = []
         state.analysis_volume_bounds = {}
-        state.analysis_radius_max = 4.0
+        state.analysis_radius_max = 0.0
+        state.analysis_detent_snap = 0.08
         state.bar_metric_label = ""
         state.heatmap_tile_count = 0
         print("[callbacks] Analysis cleared")
@@ -525,6 +552,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
             loader = _refs["analysis_loader"]
             metadata = loader.load(results_dir)
 
+            # The meshes now ship inside the results directory, so one path
+            # drives both. cfg.mesh_dir stays an override for standalone use.
+            mesh_mgr = _refs.get("mesh_manager")
+            mesh_path = Path(results_dir) / "meshes"
+            if mesh_mgr is not None and mesh_path.exists():
+                mesh_mgr.set_mesh_dir(mesh_path)
+                state.surface_enabled_channels = []
+                ms = _refs.get("mesh_streamer")
+                if ms:
+                    ms.clear()
+                print(f"[callbacks] Mesh manifest: {mesh_path} "
+                      f"({len(mesh_mgr.manifest_channels)} channels)")
+
             z_depth = 1
             bounds = metadata.volume_bounds
             if bounds and "z" in bounds:
@@ -552,10 +592,20 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
             state.analysis_volume_bounds = metadata.volume_bounds
             state.analysis_radius_max = metadata.radius_max_um
+            state.analysis_detent_snap = metadata.detent_snap_um
+            # Tick labels carry the effective radius (what the numbers describe),
+            # rounded — the raw values run to 16 significant figures.
+            state.analysis_dilation_labels = [
+                round(r, 2) for r in (metadata.dilation_amounts_effective
+                                      or metadata.dilation_amounts)
+            ]
 
             if metadata.dilation_amounts:
-                mid = len(metadata.dilation_amounts) // 2
-                state.current_dilation = metadata.dilation_amounts[mid]
+                # Start at the smallest non-zero radius. The old "middle detent"
+                # default lands at ~6.7 um on an 8-radius run, which is a large
+                # dilation to open on.
+                start = 1 if len(metadata.dilation_amounts) > 1 else 0
+                state.current_dilation = metadata.dilation_amounts[start]
                 state.radius_slider = state.current_dilation
 
             if metadata.hierarchy_levels:
@@ -634,19 +684,17 @@ def register_callbacks(ctrl, state, view, streamer=None):
             # The first activated channel frames the canonical default view
             # (top-down, fit to the live volume bounds) inside activate_channel ->
             # frame_default_view; no dataset-specific camera distance here.
-            if (state.selected_tile and mesh_mgr and mesh_mgr.is_available
-                    and channel_id not in state.surface_hidden_channels):
-                tile_x = state.selected_tile["tile_x"]
-                tile_y = state.selected_tile["tile_y"]
-                color_rgb = _hex_to_rgb_tuple(color_hex)
-                mesh_mgr.activate_channel_mesh(
-                    channel_idx=channel_id,
-                    color_rgb=color_rgb,
-                    tile_x=tile_x,
-                    tile_y=tile_y,
-                    opacity=1.0,
-                )
-                print(f"[callbacks] Added mesh for ch {channel_id} at tile ({tile_x}, {tile_y})")
+            # Surfaces are opt-in: activating a channel no longer pulls its
+            # meshes in. If the user had already enabled them, keep the colour
+            # in step and let the streamer fill the viewport.
+            if mesh_mgr and mesh_mgr.is_available and channel_id in (
+                    state.surface_enabled_channels or []):
+                mesh_idx = _mesh_channel_index(mesh_mgr, channel_id)
+                if mesh_idx is not None:
+                    mesh_mgr.enable_channel(mesh_idx, _hex_to_rgb_tuple(color_hex))
+                    ms = _refs.get("mesh_streamer")
+                    if ms:
+                        ms.refresh_now()
 
         if streamer._channel_histograms:
             state.channel_histograms = {
@@ -992,6 +1040,39 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         return filtered_combinations
 
+    def _clamp_combo_size(loader) -> int:
+        """Requested combination size, clamped to what the dataset can rank.
+
+        The ranked tables stop at `max_combo_degree`; asking above it returns
+        nothing, so a stale selection (or one restored from a bookmark) would
+        silently show an empty plot.
+        """
+        want = int(getattr(state, "upset_min_channels", 2) or 2)
+        cap = int(getattr(loader, "max_combo_degree", 0) or 0)
+        if cap and want > cap:
+            print(f"[callbacks] combination size {want} exceeds the ranked "
+                  f"tables (max {cap}); using {cap}")
+            state.upset_min_channels = cap
+            return cap
+        return want
+
+    def _set_upset_label(combinations):
+        """Say which unit the UpSet counts are in, and which radius they describe.
+
+        Ranked counts come from the combination tables in raw voxels; the
+        viewport scope computes bins from the fields. The bar heights are
+        ratios and so comparable either way, but the counts are not.
+        """
+        if not combinations:
+            state.upset_metric_label = ""
+            return
+        first = combinations[0]
+        unit = getattr(first, "count_unit", "bins")
+        eff = getattr(first, "radius_um_effective", 0.0)
+        state.upset_metric_label = (
+            f"counts in {unit}" + (f" @ {eff:.2f} µm" if eff else "")
+        )
+
     def update_upset_data():
         """Update UpSet plot data based on current analysis settings.
 
@@ -1005,7 +1086,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         print(f"[callbacks] Updating UpSet data: dilation={state.current_dilation}, level={state.current_hierarchy_level}")
 
-        min_number_channels = int(getattr(state, "upset_min_channels", 2))
+        min_number_channels = _clamp_combo_size(loader)
 
         # Get all combinations from analysis (large limit), sorted by agg IoU desc
         combinations = loader.get_top_combinations(
@@ -1014,7 +1095,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             limit=1000,
             min_channels=min_number_channels,
         )
-        
+
         # Filter to selected channels
         filtered_data = _filter_combinations_by_channel_selection(combinations, state.upset_selected_channels)
 
@@ -1027,6 +1108,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             })
 
         state.upset_data = mapped_combinations
+        _set_upset_label(combinations)
         
         print(f"[callbacks] UpSet data updated: {len(mapped_combinations)} total")
 
@@ -1106,12 +1188,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
             dilation=state.current_dilation,
             hierarchy_level=state.current_hierarchy_level,
         )
-        if hasattr(loader, "coverage_is_voxel_exact"):
-            state.bar_metric_label = (
-                "% of voxels (exact)"
-                if loader.coverage_is_voxel_exact(state.current_dilation)
-                else "% of analysis bins (1.12 µm)"
-            )
+        # One unit at every radius. The series used to switch to voxel-exact
+        # percentages on a tallied radius, so the axis silently changed meaning
+        # mid-drag between two numbers that differ by up to 256x.
+        state.bar_metric_label = "% of analysis bins (1.12 µm)"
 
         # Filter to selected channels
         filtered = [
@@ -1987,16 +2067,57 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 v.update()
 
     def setup_label_interaction_observer(interactor):
-        """Register EndInteractionEvent observer to refresh labels on camera move."""
+        """Refresh labels when the camera actually moves.
+
+        `label_manager.update()` clears every label actor and re-runs
+        hierarchical placement from scratch, which is the most expensive thing
+        on the main thread per interaction. It used to run on every
+        EndInteractionEvent — including the ones the streamer synthesises and
+        the ones that end a drag which barely moved the camera. Gate it on a
+        real change in camera pose so a nudge, a zoom that settles back, or a
+        synthetic event costs nothing.
+        """
+        _last_pose = [None]
+        # Relative move that counts as "the view changed": 0.5% of the camera's
+        # distance to its focal point, so the threshold scales with zoom.
+        REL_EPS = 0.005
+
+        def _pose(cam):
+            p, f, u = cam.GetPosition(), cam.GetFocalPoint(), cam.GetViewUp()
+            return (p, f, u, cam.GetViewAngle(), cam.GetParallelScale())
+
+        def _moved(a, b):
+            if a is None:
+                return True
+            (pa, fa, ua, va, sa), (pb, fb, ub, vb, sb) = a, b
+            scale = max(1e-9, sum((pb[i] - fb[i]) ** 2 for i in range(3)) ** 0.5)
+            tol = scale * REL_EPS
+            for x, y in ((pa, pb), (fa, fb)):
+                if any(abs(x[i] - y[i]) > tol for i in range(3)):
+                    return True
+            if any(abs(ua[i] - ub[i]) > 1e-4 for i in range(3)):
+                return True
+            return abs(va - vb) > 1e-4 or abs(sa - sb) > tol
+
         def _on_end_interaction(obj, event):
-            if state.anchor_labels:
-                return  # labels are pinned — skip recompute
-            if not state.show_labels:
-                return  # labels are hidden — skip recompute
+            if state.anchor_labels or not state.show_labels:
+                return  # pinned or hidden — nothing to place
+            label_mgr = _refs.get("label_manager")
+            if label_mgr is None:
+                return
+            try:
+                pose = _pose(obj.GetRenderWindow().GetRenderers()
+                             .GetFirstRenderer().GetActiveCamera())
+            except Exception:
+                pose = None
+            if pose is not None:
+                if not _moved(_last_pose[0], pose):
+                    return
+                _last_pose[0] = pose
             refresh_labels()
 
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
-        print("[callbacks] Label EndInteractionEvent observer registered")
+        print("[callbacks] Label EndInteractionEvent observer registered (pose-gated)")
 
     def capture_screenshot():
         """Capture current VTK view as base64-encoded JPEG, capped under 5 MB."""
@@ -2078,122 +2199,16 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[picker] channel_stats cached: {len(stats)} channels, "
               f"total_voxels={total_voxels}, dtype_max={dtype_max}")
 
-    def _drill_down_to_cell(tile, zoom_factor: float = 4.0):
-        """Shared drill-down: stats, camera fly-to, and mesh activation for a
-        picked heatmap cell (coordinates in cell units)."""
-        heatmap = _refs.get("heatmap")
-        mesh_mgr = _refs.get("mesh_manager")
-        streamer = _refs.get("streamer")
-        if not heatmap or not streamer:
-            return
-
-        print(f"[picker] Picked heatmap cell: x0={tile.x0}, y0={tile.y0}, "
-              f"count={tile.count}, frac={tile.active_fraction:.3f}")
-        _print_tile_channel_stats(tile, state.current_dilation)
-
-        sx = getattr(state, 'physical_size_x', 0.14)
-        sy = getattr(state, 'physical_size_y', 0.14)
-        cs = heatmap.current_cell_size_vox or 1
-
-        cell_center_x, cell_center_y = heatmap.cell_world_center(tile)
-        cell_extent = max((tile.x1 - tile.x0) * cs * sx, (tile.y1 - tile.y0) * cs * sy)
-
-        cam = streamer.renderer.GetActiveCamera()
-        cam.SetFocalPoint(cell_center_x, cell_center_y, 0.0)
-        cam.SetPosition(cell_center_x, cell_center_y, cell_extent * zoom_factor)
-        cam.SetViewUp(0, 1, 0)
-        streamer.renderer.ResetCameraClippingRange()
-
-        print(f"[picker] Camera -> cell center ({cell_center_x:.1f}, {cell_center_y:.1f}), "
-              f"extent={cell_extent:.1f}")
-
-        active_channels = list(state.active_channels or [])
-        if mesh_mgr and mesh_mgr.is_available and active_channels:
-            vox_x = (tile.x0 + tile.x1) / 2.0 * cs
-            vox_y = (tile.y0 + tile.y1) / 2.0 * cs
-            state.selected_tile = None
-
-            for ch_id in active_channels:
-                mesh_tile = mesh_mgr.find_tile_at_voxel(ch_id, vox_x, vox_y)
-                if not mesh_tile:
-                    print(f"[picker] No mesh tile for ch {ch_id} at voxel ({vox_x:.0f}, {vox_y:.0f})")
-                    continue
-                if state.selected_tile is None:
-                    state.selected_tile = {"tile_x": mesh_tile.tile_x, "tile_y": mesh_tile.tile_y}
-                    print(f"[picker] Found mesh tile: ({mesh_tile.tile_x}, {mesh_tile.tile_y})")
-                if ch_id not in state.surface_hidden_channels:
-                    color_hex = "#FFFFFF"
-                    for ch in state.channels:
-                        if ch["id"] == ch_id:
-                            color_hex = ch["color"]
-                            break
-                    color_rgb = _hex_to_rgb_tuple(color_hex)
-                    mesh_mgr.activate_channel_mesh(
-                        channel_idx=ch_id,
-                        color_rgb=color_rgb,
-                        tile_x=mesh_tile.tile_x,
-                        tile_y=mesh_tile.tile_y,
-                        opacity=1.0,
-                    )
-
-        if _refs["view"]:
-            _refs["view"].update()
-
     def setup_right_click_picker(interactor):
-        """Register right-click drill-down on heatmap cells.
+        """No-op: heatmap tile picking was removed.
 
-        Picking is analytic (display ray → heatmap plane → cell grid), so it
-        works with the instanced glyph rendering on any layer.
+        Right-click drill-down existed to choose which mesh tile to show. Now
+        that surfaces are opt-in per channel and stream with the viewport, it
+        drove nothing — while the picker plus the hover highlight it shared code
+        with cost a display-ray pick and a full render/encode/push per event.
+        Kept as a no-op so the app wiring and any bookmark replay stay valid.
         """
-        if getattr(interactor, "_bioset_right_click_picker_registered", False):
-            return
-        setattr(interactor, "_bioset_right_click_picker_registered", True)
-
-        def _on_right_button_press(obj, _evt):
-            heatmap = _refs.get("heatmap")
-            if not heatmap:
-                return
-            click_pos = obj.GetEventPosition()
-            tile = heatmap.get_cell_at_display(click_pos[0], click_pos[1])
-            if tile is None:
-                print(f"[picker] No heatmap cell at ({click_pos[0]}, {click_pos[1]})")
-                return
-            _drill_down_to_cell(tile)
-
-        interactor.AddObserver("RightButtonPressEvent", _on_right_button_press)
-        print("[callbacks] Right-click picker registered on interactor")
-
-    def on_right_click(px, py):
-        """Handle right-click from client JS (contextmenu) on the VTK canvas."""
-        heatmap = _refs.get("heatmap")
-        streamer = _refs.get("streamer")
-        if not heatmap or not streamer:
-            return
-        win_size = streamer.renderer.GetRenderWindow().GetSize()
-        tile = heatmap.get_cell_at_display(int(px), win_size[1] - int(py))
-        if tile is None:
-            return
-        _drill_down_to_cell(tile)
-
-    def on_hover(px, py):
-        """Handle throttled mousemove from client JS: highlight hovered cell."""
-        heatmap = _refs.get("heatmap")
-        streamer = _refs.get("streamer")
-        if not heatmap or not streamer:
-            return
-        # Never do hover picking (or the render it triggers) while the camera
-        # is being dragged, when there is nothing to pick, or when hidden.
-        if getattr(streamer, "interacting", False):
-            return
-        if not state.heatmap_visible or not state.analysis_loaded:
-            return
-        if heatmap.tile_count == 0:
-            return
-        win_size = streamer.renderer.GetRenderWindow().GetSize()
-        tile = heatmap.get_cell_at_display(int(px), win_size[1] - int(py))
-        if heatmap.highlight_cell(tile):
-            if _refs["view"]:
-                _refs["view"].update()
+        return
 
     def generate_pdf_report(report_data=None):
         """
@@ -2282,13 +2297,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.toggle_labels = toggle_labels
     ctrl.deselect_tile = deselect_tile
     ctrl.set_mesh_manager = set_mesh_manager
+    ctrl.set_mesh_streamer = set_mesh_streamer
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
     ctrl.set_viewport_plots = set_viewport_plots
     ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
-    ctrl.trigger("on_hover")(on_hover)
-    ctrl.trigger("on_right_click")(on_right_click)
     ctrl.trigger("clear_analysis")(clear_analysis)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer

@@ -34,6 +34,7 @@ from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, color_name_to_rgb
 from ..streaming import VolumeStreamer
 from ..streaming.heatmap_lod import HeatmapLOD
+from ..streaming.mesh_streamer import MeshStreamer
 from ..streaming.viewport_plots import ViewportPlotComputer
 from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
@@ -173,6 +174,7 @@ class VtkScene:
     nov_renderer: Optional[vtkRenderer] = None
     nov_render_window: Optional[vtkRenderWindow] = None
     mesh_manager: Optional[MeshManager] = None
+    mesh_streamer: Optional[MeshStreamer] = None
     integrated_heatmap: Optional[object] = None  # IntegratedHeatmapManager
 
 
@@ -229,6 +231,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     nov_render_window: Optional[vtkRenderWindow] = None
     _heatmap_lod_ref: list = [None]  # mutable so _on_end_interaction closure can access it
     _viewport_plots_ref: list = [None]
+    _mesh_streamer_ref: list = [None]
 
     heatmap = HeatmapRenderer(heatmap_fill_renderer, outline_renderer=heatmap_outline_renderer)
 
@@ -291,9 +294,11 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                 except Exception as e:
                     print(f"[builder] ROI computation error: {e}")
 
+                roi_vox = (roi.x0, roi.x1, roi.y0, roi.y1) if roi is not None else None
                 if _heatmap_lod_ref[0] is not None:
-                    roi_vox = (roi.x0, roi.x1, roi.y0, roi.y1) if roi is not None else None
                     _heatmap_lod_ref[0].on_camera_moved(dist, roi_vox=roi_vox)
+                if _mesh_streamer_ref[0] is not None:
+                    _mesh_streamer_ref[0].on_camera_moved(roi_vox=roi_vox)
                 vp = _viewport_plots_ref[0]
                 if vp is not None and vp._enabled and roi is not None:
                     # Convert ROI voxel coords to tally-block indices (128 voxels)
@@ -389,14 +394,16 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.ResetCameraClippingRange()
     renderer.ResetCamera()
 
-    mesh_manager: Optional[MeshManager] = None
-    if cfg.mesh_dir:
-        mesh_manager = MeshManager(
-            mesh_dir=cfg.mesh_dir,
-            renderer=renderer,
-            base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
-            nov_renderer=nov_renderer,
-        )
+    # The meshes now ship inside the analysis results, so the manager starts
+    # empty and is pointed at <results>/meshes when one is loaded. cfg.mesh_dir
+    # remains an override for using meshes without an analysis directory.
+    mesh_manager = MeshManager(
+        mesh_dir=cfg.mesh_dir,
+        renderer=renderer,
+        base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
+    )
+    mesh_streamer = MeshStreamer(manager=mesh_manager, renderer=renderer)
+    _mesh_streamer_ref[0] = mesh_streamer
 
     heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules) if streamer is not None else None
     _heatmap_lod_ref[0] = heatmap_lod
@@ -424,5 +431,6 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         nov_renderer=nov_renderer,
         nov_render_window=nov_render_window,
         mesh_manager=mesh_manager,
+        mesh_streamer=mesh_streamer,
         integrated_heatmap=integrated_heatmap,
     )

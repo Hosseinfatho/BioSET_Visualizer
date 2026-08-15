@@ -197,7 +197,9 @@ class VolumeConfig:
     globus_https_base: Optional[str] = None
     globus_token_file: str = "~/.bioset/globus_token.json"
 
-    # surfaces directory
+    # Surfaces directory. Normally None: the meshes ship inside the analysis
+    # results, so the manager is pointed at <results>/meshes when one loads.
+    # Set this only to use meshes without an analysis directory.
     mesh_dir: Optional[Path] = None
 
     # Rendering Defaults
@@ -229,7 +231,7 @@ def default_config() -> VolumeConfig:
         base_sx=0.14,
         base_sy=0.14,
         base_sz=0.28,
-        mesh_dir=data_dir / "output_meshes",
+        mesh_dir=None,  # taken from <results>/meshes on analysis load
         # Globus HTTPS: env-overridable, with the known working collection as default.
         globus_client_id=os.environ.get(
             "BIOSET_GLOBUS_CLIENT_ID", "6be7e29d-6cf6-42a0-bf49-90ccba4bf8a3"),

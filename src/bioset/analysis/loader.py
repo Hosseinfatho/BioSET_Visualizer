@@ -3,9 +3,11 @@
 Replaces the old gzipped-SQLite ``.bioset`` backend. The public surface keeps
 the old class/method names so UI call sites stay mechanical:
 
-- ``dilation=`` kwargs now mean a radius in micrometers (continuous; the five
-  preprocessed radii are exact "detent" fast paths through the tally tables,
-  anything else is computed from the EDT fields).
+- ``dilation=`` kwargs now mean a radius in micrometers (continuous; the
+  preprocessed radii — read from the dataset, see ``analysis/radii.py`` — are
+  exact "detent" fast paths through the tally tables, anything else is computed
+  from the EDT fields). These are always the *requested* radii; the *effective*
+  ones are labels only and must never be passed back in as a query value.
 - ``hierarchy_level=`` now selects the heatmap cell size (see
   ``constants.DEFAULT_CELL_SIZES_VOX``); global plot queries ignore it (their
   answers are level-independent).
@@ -14,6 +16,8 @@ the old class/method names so UI call sites stay mechanical:
 """
 from __future__ import annotations
 
+import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from itertools import combinations as iter_combinations
@@ -23,13 +27,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from . import compute
-from .constants import (
-    BLOCK_VOX,
-    DEFAULT_CELL_SIZES_VOX,
-    DETENT_RADII_UM,
-    detent_idx,
-    nearest_detent_idx,
-)
+from .constants import BLOCK_VOX, DEFAULT_CELL_SIZES_VOX
 from .registry import ChannelRegistry
 from .store import FieldStore, GridInfo, TallyStore
 
@@ -38,10 +36,14 @@ from .store import FieldStore, GridInfo, TallyStore
 class AnalysisMetadata:
     channels: list[str]
     hierarchy_levels: list[dict]
-    dilation_amounts: list[float]      # detent radii (µm); slider tick source
+    dilation_amounts: list[float]      # detent radii (µm) to QUERY with; slider ticks
     volume_bounds: dict
-    radius_max_um: float = 4.0         # continuous-slider cap
+    radius_max_um: float = 0.0         # continuous-slider cap (set from the dataset)
     dtype_max: int = 65535             # kept for Biomni payloads; prefer image metadata
+    # Radii to LABEL with. Never query with these: they floor to the next EDT
+    # code, selecting a larger mask than the tally row (see analysis/radii.py).
+    dilation_amounts_effective: list[float] = field(default_factory=list)
+    detent_snap_um: float = 0.08       # slider magnetic-snap half-window
 
 
 @dataclass
@@ -64,17 +66,27 @@ class HeatmapField:
     nx: int
     cells_yx: np.ndarray        # (N, 2) int32 — (cy, cx) of non-zero cells
     counts: np.ndarray          # (N,) int64 — active bins per cell
-    fractions: np.ndarray       # (N,) float32 — exact active fraction per cell
+    fractions: np.ndarray       # (N,) float32 — active fraction per cell
+    source_level: int = 0       # EDT pyramid level the mask came from
+    exact: bool = True          # False = built from a coarse superset (preview)
 
 
 @dataclass
 class CombinationData:
-    """A biomarker combination with aggregated overlap metrics (bin counts)."""
+    """A biomarker combination with aggregated overlap metrics.
+
+    `iou` and `overlap_coeff` are ratios and so unit-free — they are comparable
+    across scopes. `total_count` is NOT: `count_unit` says whether it counts raw
+    voxels (the combination tables) or 1.12 µm analysis bins (the EDT fields),
+    which differ by up to 256x. Never sum or compare counts across units.
+    """
     channels: list[str]
     total_count: int
     iou: float = 0.0
     overlap_coeff: float = 0.0
     tiles: list[TileData] = field(default_factory=list)
+    count_unit: str = "bins"            # "voxels" | "bins"
+    radius_um_effective: float = 0.0    # radius the numbers describe, for display
 
 
 def crop_field_to_roi(
@@ -116,17 +128,38 @@ def crop_field_to_roi(
         cells_yx=field.cells_yx[keep],
         counts=field.counts[keep],
         fractions=field.fractions[keep],
+        source_level=field.source_level,
+        exact=field.exact,
     )
+
+
+def _extend(seed: Sequence[int], pool: Sequence[int], k: int) -> list[tuple]:
+    """Every way to grow `seed` to size `k` using members of `pool`.
+
+    Used to turn the exact top pairs of a region into degree>=3 candidates,
+    which are then exact-counted from masks already in hand.
+    """
+    need = k - len(seed)
+    if need <= 0:
+        return [tuple(sorted(seed))]
+    rest = [p for p in pool if p not in seed]
+    return [tuple(sorted(tuple(seed) + extra))
+            for extra in iter_combinations(rest, need)]
 
 
 class AnalysisLoader:
     """Query interface over a results directory containing
     ``colocalization.zarr`` and ``tally/``."""
 
+    # Region-query budget in analysis bins. Above this, viewport metrics step
+    # down the EDT pyramid rather than reading the full-resolution region.
+    MAX_REGION_BINS = 4_000_000
+
     def __init__(self, cell_sizes_vox: Optional[Dict[int, int]] = None,
-                 radius_max_um: float = 4.0):
+                 radius_max_um: Optional[float] = None):
         self.cell_sizes_vox = dict(cell_sizes_vox or DEFAULT_CELL_SIZES_VOX)
-        self.radius_max_um = float(radius_max_um)
+        # None = span whatever the dataset tallied, clipped by its clamp.
+        self.radius_max_um = None if radius_max_um is None else float(radius_max_um)
         self.registry: Optional[ChannelRegistry] = None
         self.fields: Optional[FieldStore] = None
         self.tally: Optional[TallyStore] = None
@@ -137,6 +170,9 @@ class AnalysisLoader:
         # small caches
         self._curve_cache: "OrderedDict[tuple, dict]" = OrderedDict()
         self._field_cache: "OrderedDict[tuple, HeatmapField]" = OrderedDict()
+        # (indices, code, source_level) -> (summed-area table, mask shape).
+        # Cell size is applied by differencing, so LOD changes reuse this.
+        self._colcount_cache: "OrderedDict[tuple, tuple]" = OrderedDict()
 
     # ──────────────────────────────────────────────
     # Lifecycle
@@ -165,25 +201,63 @@ class AnalysisLoader:
         self.fields = FieldStore(zarr_path)
         self.grid = self.fields.grid
         self.registry = ChannelRegistry(self.fields.channel_names)
-        self.tally = TallyStore(tally_path, self.registry)
+        self.tally = TallyStore(tally_path, self.registry, self.grid.radii)
         self._results_dir = path
+
+        radii = self.grid.radii
+        # The slider spans what the run actually tallied, not a hardcoded cap.
+        cap = min(self.radius_max_um, self.grid.clamp_um) \
+            if self.radius_max_um is not None else self.grid.clamp_um
+        cap = max(cap, radii.max_um)
 
         vz, vy, vx = self.grid.volume_shape_zyx
         self.metadata = AnalysisMetadata(
             channels=self.registry.display_names(),
             hierarchy_levels=[{"level": lvl} for lvl in sorted(self.cell_sizes_vox)],
-            dilation_amounts=list(DETENT_RADII_UM),
+            dilation_amounts=list(radii.requested_um),
             volume_bounds={"x": [0, vx], "y": [0, vy], "z": [0, vz]},
-            radius_max_um=min(self.radius_max_um, self.grid.clamp_um),
+            radius_max_um=cap,
+            dilation_amounts_effective=list(radii.effective_um),
+            detent_snap_um=radii.snap_window_um(),
         )
         self._loaded = True
+        self._warm_histograms()
         n_excluded = self.registry.n_channels - len(self.metadata.channels)
         print(
             f"[analysis] Loaded: {len(self.metadata.channels)} channels "
-            f"({n_excluded} hidden), {self.tally.n_radii} tallied radii, "
+            f"({n_excluded} hidden), {self.tally.n_radii} tallied radii "
+            f"(from {radii.source}, up to {radii.max_um:.2f} um), "
             f"grid {self.grid.grid_shape_zyx}"
         )
         return self.metadata
+
+    def _warm_histograms(self):
+        """Build the per-channel EDT histograms off the main thread.
+
+        Coverage is O(1) per channel once these exist, but building all of them
+        cold costs one full plane read each — ~8 s for 49 channels, which is
+        unacceptable on the first bar-chart render and pointless to repeat every
+        session. Loading the sidecar makes it instant; otherwise a daemon thread
+        builds and saves it while the UI comes up.
+        """
+        indices = self.registry.included_indices()
+        if self.fields.load_cumhist_cache(0):
+            print(f"[analysis] channel histograms restored from cache ({len(indices)} channels)")
+            return
+
+        def _run():
+            t0 = time.perf_counter()
+            try:
+                self.fields.warm_cumhists(indices, 0)
+                print(f"[analysis] channel histograms warmed in "
+                      f"{time.perf_counter() - t0:.1f} s — coverage is now O(1) at any radius")
+            except Exception as exc:
+                print(f"[analysis] histogram warm-up failed ({exc}); "
+                      f"coverage will build them on demand")
+
+        self._warm_thread = threading.Thread(
+            target=_run, name="bioset-cumhist-warm", daemon=True)
+        self._warm_thread.start()
 
     def close(self):
         if self.fields:
@@ -197,6 +271,7 @@ class AnalysisLoader:
         self._loaded = False
         self._curve_cache.clear()
         self._field_cache.clear()
+        self._colcount_cache.clear()
 
     def __del__(self):
         try:
@@ -210,7 +285,14 @@ class AnalysisLoader:
 
     def is_detent(self, r_um: float) -> Optional[int]:
         """radius_idx if `r_um` is a tallied radius, else None."""
-        return detent_idx(r_um)
+        return self.grid.radii.idx_for(r_um) if self.grid else None
+
+    def _nearest_detent(self, r_um: float) -> int:
+        return self.grid.radii.nearest_idx(r_um)
+
+    def detent_label_um(self, radius_idx: int) -> float:
+        """Effective radius for `radius_idx` — for display, never for querying."""
+        return self.grid.radii.label_um(radius_idx)
 
     def _code(self, r_um: float) -> int:
         return self.grid.code_for(r_um)
@@ -220,10 +302,13 @@ class AnalysisLoader:
     # ──────────────────────────────────────────────
 
     def _inter_union(self, indices: Sequence[int], r_um: float) -> Tuple[int, int]:
-        """(intersection, union) bin counts at any radius (exact both paths)."""
-        ri = self.is_detent(r_um)
-        if ri is not None:
-            return self.tally.inter_union_counts(indices, ri)
+        """(intersection, union) BIN counts at any radius, from the EDT fields.
+
+        Always the field path, at every radius. The combination tables answer
+        the same question in raw voxels; keeping this one in bins means
+        `_inter_union`, `_channel_counts` and `_curves_for` share a unit and
+        their ratios can be compared. See `_ranked_combos` for the voxel side.
+        """
         code = self._code(r_um)
         if len(indices) == 1:
             n = int(self.fields.channel_cumhist(indices[0])[code])
@@ -233,13 +318,16 @@ class AnalysisLoader:
         return int(inter_cum[code]), int(union_cum[code])
 
     def _channel_counts(self, indices: Sequence[int], r_um: float) -> List[int]:
-        """Per-channel bin counts at any radius."""
-        ri = self.is_detent(r_um)
-        if ri is not None:
-            diag = self.tally.channel_bin_counts(ri)
-            return [int(diag[c]) for c in indices]
+        """Per-channel BIN counts at any radius — O(1) from the cached histograms."""
         code = self._code(r_um)
         return [int(self.fields.channel_cumhist(c)[code]) for c in indices]
+
+    def _decode_fp(self, fp0: int, fp1: int) -> List[int]:
+        """Channel indices named by a 128-bit fingerprint."""
+        a, b = int(fp0), int(fp1)
+        out = [i for i in range(64) if (a >> i) & 1]
+        out += [64 + i for i in range(64) if (b >> i) & 1]
+        return out
 
     @staticmethod
     def _metrics(_indices: Sequence[int], inter: int, union: int,
@@ -260,24 +348,90 @@ class AnalysisLoader:
         limit: int = 50,
         min_channels: int = 2,
     ) -> list[CombinationData]:
-        """Top combinations of exactly `min_channels` channels by IoU."""
+        """Top combinations of exactly `min_channels` channels, best metric first.
+
+        Counts are RAW VOXELS (see `CombinationData.count_unit`). Ranked from
+        the precomputed combination table, which is exhaustive over every
+        channel at every degree it covers — the ranking is complete, not a
+        sampled candidate pool.
+        """
         if not self.is_loaded:
             return []
-        if min_channels == 2:
-            return self._top_pairs(dilation, limit)
-        return self._top_ktuples(dilation, limit, min_channels)
+        return self._ranked_combos(dilation, int(min_channels), limit)
 
-    def _top_pairs(self, r_um: float, limit: int) -> list[CombinationData]:
+    @property
+    def max_combo_degree(self) -> int:
+        """Largest combination size the ranked tables cover (0 if none)."""
+        return int(self.tally.max_degree) if self.tally else 0
+
+    def _ranked_combos(
+        self,
+        r_um: float,
+        degree: int,
+        limit: int,
+        row_mask: Optional[np.ndarray] = None,
+    ) -> list[CombinationData]:
+        """Top rows of one degree from the combination table.
+
+        Off-detent radii rank at the nearest tallied radius: an exact recount
+        would need one full-volume pass per candidate (~2-4 s for a page of
+        pairs), whereas the table is a sort over rows already computed. The
+        radius actually used is reported on every row.
+        """
+        if not self.tally.has_combos or degree < 1:
+            return self._ranked_combos_legacy(r_um, degree, limit)
         ri = self.is_detent(r_um)
-        base_ri = ri if ri is not None else nearest_detent_idx(r_um)
-        M = self.tally.pair_matrix(base_ri)
-        idx = self.registry.included_indices()
-        diag = np.diag(M)
+        ri = ri if ri is not None else self._nearest_detent(r_um)
+        rows = self.tally.combos(ri, degree)
+        if rows is None or len(rows) == 0:
+            return []
 
-        results = []
-        if ri is not None:
-            for ai in range(len(idx)):
-                a = idx[ai]
+        score = rows.iou if rows.iou is not None else rows.n_inter.astype(float)
+        idx = np.arange(len(rows))
+        if row_mask is not None:
+            idx = idx[row_mask]
+            if idx.size == 0:
+                return []
+        order = idx[np.argsort(score[idx])[::-1][:max(1, int(limit))]]
+
+        label = self.detent_label_um(ri)
+        out = []
+        for i in order:
+            if rows.n_inter[i] <= 0:
+                continue
+            names = [self.registry.name_of(c)
+                     for c in self._decode_fp(rows.fp0[i], rows.fp1[i])]
+            out.append(CombinationData(
+                channels=names,
+                total_count=int(rows.n_inter[i]),
+                iou=float(rows.iou[i]) if rows.iou is not None else 0.0,
+                overlap_coeff=(float(rows.overlap_coeff[i])
+                               if rows.overlap_coeff is not None else 0.0),
+                count_unit="voxels",
+                radius_um_effective=label,
+            ))
+        return out
+
+    def _ranked_combos_legacy(self, r_um: float, degree: int, limit: int
+                              ) -> list[CombinationData]:
+        """Ranking for datasets with no combination table (pre-combos runs).
+
+        Pairs come from the fingerprint co-occurrence matrix; higher degrees
+        from k-subsets of the highest-count fingerprints, exact-counted. Both
+        are in BINS. This is the old behaviour, kept only for those datasets.
+        """
+        if self.tally.n_radii == 0:
+            return []
+        ri = self.is_detent(r_um)
+        base_ri = ri if ri is not None else self._nearest_detent(r_um)
+        idx = self.registry.included_indices()
+        label = self.detent_label_um(base_ri)
+
+        if degree == 2:
+            M = self.tally.legacy_pair_matrix(base_ri)
+            diag = np.diag(M)
+            scored = []
+            for ai, a in enumerate(idx):
                 if diag[a] == 0:
                     continue
                 for b in idx[ai + 1:]:
@@ -285,61 +439,30 @@ class AnalysisLoader:
                     if inter == 0:
                         continue
                     union = int(diag[a] + diag[b] - inter)
-                    iou = inter / union if union > 0 else 0.0
-                    oc = inter / int(min(diag[a], diag[b]))
-                    results.append((iou, oc, inter, a, b))
-        else:
-            # candidates from the nearest detent, exact recount from EDT masks
-            cands = []
-            for ai in range(len(idx)):
-                a = idx[ai]
-                for b in idx[ai + 1:]:
-                    if M[a, b] > 0:
-                        cands.append((int(M[a, b]), a, b))
-            cands.sort(reverse=True)
-            cands = cands[: max(limit * 4, 200)]
-            code = self._code(r_um)
-            for _, a, b in cands:
-                pa = self.fields.edt_plane(a)
-                pb = self.fields.edt_plane(b)
-                na = int(self.fields.channel_cumhist(a)[code])
-                nb = int(self.fields.channel_cumhist(b)[code])
-                inter = int(np.count_nonzero(np.maximum(pa, pb) <= code))
-                if inter == 0:
-                    continue
-                union = na + nb - inter
-                iou = inter / union if union > 0 else 0.0
-                mn = min(na, nb)
-                oc = inter / mn if mn > 0 else 0.0
-                results.append((iou, oc, inter, a, b))
+                    scored.append((
+                        inter / union if union > 0 else 0.0,
+                        inter / int(min(diag[a], diag[b])),
+                        inter, a, b,
+                    ))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            return [
+                CombinationData(
+                    channels=[self.registry.name_of(a), self.registry.name_of(b)],
+                    total_count=inter, iou=iou, overlap_coeff=oc,
+                    count_unit="bins", radius_um_effective=label,
+                )
+                for iou, oc, inter, a, b in scored[:limit]
+            ]
 
-        results.sort(key=lambda t: t[0], reverse=True)
-        out = []
-        for iou, oc, inter, a, b in results[:limit]:
-            out.append(CombinationData(
-                channels=[self.registry.name_of(a), self.registry.name_of(b)],
-                total_count=inter, iou=iou, overlap_coeff=oc,
-            ))
-        return out
-
-    def _top_ktuples(self, r_um: float, limit: int, k: int) -> list[CombinationData]:
-        """Top combinations of exactly k>=3 channels.
-
-        Candidates: k-subsets of the highest-count exact fingerprints at the
-        nearest detent, exact-counted afterwards.
-        """
-        base_ri = self.is_detent(r_um)
-        base_ri = base_ri if base_ri is not None else nearest_detent_idx(r_um)
-        fp0, fp1, count = self.tally.global_by_radius[base_ri]
+        fp0, fp1, count = self.tally._legacy_global_rows(base_ri)
         order = np.argsort(count)[::-1][:4096]
         cand: dict[tuple, None] = {}
         for i in order:
-            bits = [c for c in self.registry.included_indices()
-                    if ((int(fp0[i]) >> (c % 64)) & 1 if c < 64
-                        else (int(fp1[i]) >> (c % 64)) & 1)]
-            if len(bits) < k:
+            bits = [c for c in self._decode_fp(fp0[i], fp1[i])
+                    if c in self.registry._index_by_name.values()]
+            if len(bits) < degree:
                 continue
-            for combo in iter_combinations(bits, k):
+            for combo in iter_combinations(sorted(bits), degree):
                 cand[combo] = None
                 if len(cand) >= 2048:
                     break
@@ -351,18 +474,18 @@ class AnalysisLoader:
             inter, union = self._inter_union(list(combo), r_um)
             if inter == 0:
                 continue
-            ch_counts = self._channel_counts(list(combo), r_um)
-            iou, oc = self._metrics(combo, inter, union, ch_counts)
+            iou, oc = self._metrics(
+                combo, inter, union, self._channel_counts(list(combo), r_um))
             scored.append((iou, oc, inter, combo))
         scored.sort(key=lambda t: t[0], reverse=True)
-
-        out = []
-        for iou, oc, inter, combo in scored[:limit]:
-            out.append(CombinationData(
+        return [
+            CombinationData(
                 channels=[self.registry.name_of(c) for c in combo],
                 total_count=inter, iou=iou, overlap_coeff=oc,
-            ))
-        return out
+                count_unit="bins", radius_um_effective=label,
+            )
+            for iou, oc, inter, combo in scored[:limit]
+        ]
 
     # ──────────────────────────────────────────────
     # UpSet: combinations containing given channels
@@ -376,11 +499,13 @@ class AnalysisLoader:
         limit: int = 50,
         exact_match: bool = False,
     ) -> list[CombinationData]:
-        """Combinations involving the filter channels, sorted by IoU.
+        """Combinations involving the filter channels, best metric first.
 
         - exact_match: just the one combination.
-        - otherwise: every subset (size>=2) of the filter set, plus every
-          pair (filter channel x any other channel).
+        - otherwise: every subset (size>=2) of the filter set, plus every pair
+          (filter channel x any other channel) — the same set the candidate-pool
+          version produced, but selected exhaustively with one row mask instead
+          of pre-scored and truncated.
         """
         if not self.is_loaded or not channel_filter:
             return []
@@ -390,34 +515,79 @@ class AnalysisLoader:
             return []
 
         if exact_match:
-            inter, union = self._inter_union(f_idx, dilation)
-            if inter == 0:
-                return []
-            iou, oc = self._metrics(
-                f_idx, inter, union, self._channel_counts(f_idx, dilation))
-            return [CombinationData(
-                channels=self.registry.sort_names(channel_filter),
-                total_count=inter, iou=iou, overlap_coeff=oc,
-            )]
+            return self._exact_combination(f_idx, channel_filter, dilation)
 
+        if not self.tally.has_combos:
+            return self._filtered_combinations_legacy(f_idx, dilation, limit)
+
+        ri = self.is_detent(dilation)
+        ri = ri if ri is not None else self._nearest_detent(dilation)
+        m0, m1 = self.registry.fp_masks(f_idx)
+
+        out: list[CombinationData] = []
+        for degree in range(2, self.max_combo_degree + 1):
+            rows = self.tally.combos(ri, degree)
+            if rows is None or len(rows) == 0:
+                continue
+            # subsets of the filter set ...
+            keep = (rows.fp0 & ~m0) == np.uint64(0)
+            keep &= (rows.fp1 & ~m1) == np.uint64(0)
+            # ... plus pairs that touch it
+            if degree == 2:
+                keep |= ((rows.fp0 & m0) != np.uint64(0)) | ((rows.fp1 & m1) != np.uint64(0))
+            out.extend(self._ranked_combos(dilation, degree, limit, row_mask=keep))
+
+        out.sort(key=lambda c: c.iou, reverse=True)
+        return out[:limit]
+
+    def _exact_combination(self, indices: Sequence[int], names: Sequence[str],
+                           r_um: float) -> list[CombinationData]:
+        """The one combination named by `indices`, from the table when it covers
+        that degree, otherwise counted from the EDT fields."""
+        ri = self.is_detent(r_um)
+        if self.tally.has_combos and ri is not None and len(indices) <= self.max_combo_degree:
+            rows = self.tally.combos(ri, len(indices))
+            if rows is not None and len(rows):
+                m0, m1 = self.registry.fp_masks(indices)
+                hit = np.flatnonzero((rows.fp0 == m0) & (rows.fp1 == m1))
+                if hit.size:
+                    i = int(hit[0])
+                    return [CombinationData(
+                        channels=self.registry.sort_names(names),
+                        total_count=int(rows.n_inter[i]),
+                        iou=float(rows.iou[i]) if rows.iou is not None else 0.0,
+                        overlap_coeff=(float(rows.overlap_coeff[i])
+                                       if rows.overlap_coeff is not None else 0.0),
+                        count_unit="voxels",
+                        radius_um_effective=self.detent_label_um(ri),
+                    )]
+        # Any degree, any radius — exact from the fields, in bins.
+        inter, union = self._inter_union(list(indices), r_um)
+        if inter == 0:
+            return []
+        iou, oc = self._metrics(
+            indices, inter, union, self._channel_counts(list(indices), r_um))
+        return [CombinationData(
+            channels=self.registry.sort_names(names),
+            total_count=inter, iou=iou, overlap_coeff=oc, count_unit="bins",
+        )]
+
+    def _filtered_combinations_legacy(self, f_idx, dilation, limit
+                                      ) -> list[CombinationData]:
+        """Pre-combos datasets: pre-score candidates, then exact-count (bins)."""
         combos: dict[tuple, None] = {}
-        # subsets of the filter set (size >= 2), small k in practice
-        if len(f_idx) >= 2 and len(f_idx) <= 10:
+        if 2 <= len(f_idx) <= 10:
             for size in range(2, len(f_idx) + 1):
                 for c in iter_combinations(sorted(f_idx), size):
                     combos[c] = None
-        # pairs with every other included channel
         for a in f_idx:
             for b in self.registry.included_indices():
-                if b == a:
-                    continue
-                combos[tuple(sorted((a, b)))] = None
+                if b != a:
+                    combos[tuple(sorted((a, b)))] = None
 
-        # score pairs cheaply via the pair matrix at the nearest detent, keep
-        # a candidate pool, then exact-count
         base_ri = self.is_detent(dilation)
-        base_ri = base_ri if base_ri is not None else nearest_detent_idx(dilation)
-        M = self.tally.pair_matrix(base_ri)
+        base_ri = base_ri if base_ri is not None else self._nearest_detent(dilation)
+        M = self.tally.legacy_pair_matrix(base_ri)
 
         def prescore(combo):
             if len(combo) == 2:
@@ -436,7 +606,7 @@ class AnalysisLoader:
                 combo, inter, union, self._channel_counts(list(combo), dilation))
             results.append(CombinationData(
                 channels=[self.registry.name_of(c) for c in combo],
-                total_count=inter, iou=iou, overlap_coeff=oc,
+                total_count=inter, iou=iou, overlap_coeff=oc, count_unit="bins",
             ))
         results.sort(key=lambda c: c.iou, reverse=True)
         return results[:limit]
@@ -450,31 +620,46 @@ class AnalysisLoader:
         dilation: float,
         hierarchy_level: int = 0,
     ) -> list[tuple[str, float]]:
-        """Per-channel coverage percent, descending.
+        """Per-channel coverage percent, descending — as a fraction of 1.12 µm
+        analysis bins, at every radius.
 
-        At tallied radii: voxel-exact (channel_stats). At arbitrary radii:
-        fraction of 1.12 µm analysis bins (EDT cumulative histograms).
+        One unit at all radii, deliberately. Reporting voxel-exact percentages
+        on a tallied radius and bin percentages between them made the axis
+        change meaning mid-drag, for two numbers that are both exact but differ
+        by up to 256x. The voxel-exact figure is still available at tallied
+        radii through `channel_voxel_coverage`, as an annotation rather than as
+        the series. O(1) per channel from the cached cumulative histograms.
         """
         if not self.is_loaded:
             return []
-        ri = self.is_detent(dilation)
-        results = []
-        if ri is not None:
-            stats = self.tally.channel_stats_sum(ri)
-            total = self.grid.n_voxels
-            for c in self.registry.included_indices():
-                vc, _ = stats.get(c, (0, 0.0))
-                results.append((self.registry.name_of(c), vc / total * 100.0))
-        else:
-            code = self._code(dilation)
-            total = self.grid.n_bins
-            for c in self.registry.included_indices():
-                n = int(self.fields.channel_cumhist(c)[code])
-                results.append((self.registry.name_of(c), n / total * 100.0))
+        code = self._code(dilation)
+        total = self.grid.n_bins
+        results = [
+            (self.registry.name_of(c),
+             int(self.fields.channel_cumhist(c)[code]) / total * 100.0)
+            for c in self.registry.included_indices()
+        ]
         results.sort(key=lambda t: t[1], reverse=True)
         return results
 
+    def channel_voxel_coverage(self, dilation: float) -> dict[str, float]:
+        """Voxel-exact per-channel coverage percent, or {} away from a tallied
+        radius. For annotating the bin-based series, not for replacing it."""
+        if not self.is_loaded:
+            return {}
+        ri = self.is_detent(dilation)
+        if ri is None:
+            return {}
+        stats = self.tally.channel_stats_sum(ri)
+        total = self.grid.n_voxels
+        return {
+            self.registry.name_of(c): stats.get(c, (0, 0.0))[0] / total * 100.0
+            for c in self.registry.included_indices()
+        }
+
     def coverage_is_voxel_exact(self, dilation: float) -> bool:
+        """Deprecated: the coverage series is now always in bins. Reports only
+        whether a voxel-exact annotation is available."""
         return self.is_detent(dilation) is not None
 
     # ──────────────────────────────────────────────
@@ -486,12 +671,23 @@ class AnalysisLoader:
         channels: list[str],
         dilation: float,
         hierarchy_level: int,
+        *,
+        source_level: Optional[int] = None,
     ) -> Optional[HeatmapField]:
         """Per-cell active-bin counts/fractions for a combination.
 
-        Always computed from level-0 EDT (values are exact at every radius;
-        the min-pooled pyramid is only a display superset, never used for
-        numbers). Single channel at r=0 gets voxel-exact fractions from occ.
+        `source_level` picks which EDT pyramid level the mask is built from.
+        Level 0 is exact; None means level 0. Coarser levels are cheap enough to
+        keep a drag responsive (172 ms -> 16 ms for two channels) and, being
+        min-reduced, they never drop a cell that has signal — measured, every
+        occupied cell survives and its active *fraction* only ever rises. They
+        are flagged `exact=False` and every number shown elsewhere still comes
+        from level 0.
+
+        `counts` are in bins **of the source level**, so they are comparable
+        across cell sizes but NOT across source levels; `fractions` are
+        comparable throughout and are what the display should key on.
+        Single channel at r=0 gets voxel-exact fractions from the occupancy array.
         """
         if not self.is_loaded or not channels:
             return None
@@ -502,19 +698,27 @@ class AnalysisLoader:
         level = int(hierarchy_level)
         cell_vox = self.cell_sizes_vox.get(level, 16)
         code = self._code(dilation)
+        src = self._clamp_source_level(source_level)
 
-        key = (tuple(sorted(indices)), code, level)
+        key = (tuple(sorted(indices)), code, level, src)
         cached = self._field_cache.get(key)
         if cached is not None:
             self._field_cache.move_to_end(key)
             return cached
 
-        cell_bins = max(1, cell_vox // self.grid.bin_factors[1])
-        mask = compute.combination_mask(
-            [self.fields.edt_plane(c) for c in indices], code)
-        sums, denoms = compute.cell_reduce(mask, cell_bins)
+        # The column map and its summed-area table depend only on the
+        # combination, radius and source level — not on the cell size. Caching
+        # them makes an LOD change a four-corner difference instead of another
+        # full pass over 46M elements.
+        table, shape = self._column_table(indices, code, src)
+        z, gy, gx = shape
+        # A coarse source level halves y/x, so the cell must shrink to match if
+        # the cells are to cover the same ground.
+        cell_bins = max(1, (cell_vox // self.grid.bin_factors[1]) >> src)
+        sums = compute.cell_sums_from_sat(table, cell_bins)
+        denoms = compute.cell_denoms(z, gy, gx, cell_bins)
 
-        if len(indices) == 1 and code == 0:
+        if len(indices) == 1 and code == 0 and src == 0:
             # voxel-exact shading from occupancy
             occ_sums, occ_denoms = compute.cell_reduce(
                 self.fields.occ_plane(indices[0]).astype(np.int64), cell_bins)
@@ -531,11 +735,46 @@ class AnalysisLoader:
             cells_yx=np.stack([cy, cx], axis=1).astype(np.int32),
             counts=sums[cy, cx],
             fractions=fractions_2d[cy, cx].astype(np.float32),
+            source_level=src,
+            exact=(src == 0),
         )
         self._field_cache[key] = result
-        while len(self._field_cache) > 6:
+        while len(self._field_cache) > 8:
             self._field_cache.popitem(last=False)
         return result
+
+    def _clamp_source_level(self, source_level: Optional[int]) -> int:
+        if not source_level:
+            return 0
+        return max(0, min(int(source_level), self.fields.n_edt_levels - 1))
+
+    def _column_table(self, indices: Sequence[int], code: int, src: int):
+        """Summed-area table of the combination's per-column bin counts."""
+        key = (tuple(sorted(indices)), code, src)
+        hit = self._colcount_cache.get(key)
+        if hit is not None:
+            self._colcount_cache.move_to_end(key)
+            return hit
+        planes = [self.fields.edt_plane(c, src) for c in indices]
+        mask = compute.combination_mask(planes, code)
+        entry = (compute.sat(compute.column_counts(mask)), mask.shape)
+        self._colcount_cache[key] = entry
+        while len(self._colcount_cache) > 6:
+            self._colcount_cache.popitem(last=False)
+        return entry
+
+    def coarse_level_for_interaction(self, hierarchy_level: int) -> int:
+        """EDT level cheap enough to rebuild the field while the user is moving.
+
+        The pyramid halves y/x per level and the LOD cell sizes are powers of
+        two, so level N keeps cells bit-aligned with level 0 — the preview lines
+        up with the exact field that replaces it.
+        """
+        if not self.is_loaded:
+            return 0
+        cell_vox = self.cell_sizes_vox.get(int(hierarchy_level), 16)
+        cell_bins = max(1, cell_vox // self.grid.bin_factors[1])
+        return self._clamp_source_level(max(0, int(cell_bins).bit_length() - 2))
 
     # ──────────────────────────────────────────────
     # Dilation curves (continuous)
@@ -654,69 +893,124 @@ class AnalysisLoader:
         min_channels: int = 2,
         limit: int = 50,
     ) -> dict:
-        """Bar + upset data restricted to a block range.
+        """Bar + upset data restricted to a block range, exact at ANY radius.
 
         Returns {"bar": [(name, pct)], "upset": [{channels, iou, overlap_coeff}]}.
+
+        Computed from region-scoped EDT reads, not from the per-block
+        combination table: that table keeps only the top 200 rows per block, so
+        summing it across a region recovers a median 32% of the true count at
+        degree 2 and ~1% at degree 3 (its own `residual` column is non-zero on
+        90% of rows). Reading the region instead is exact and, because it pulls
+        only the intersecting chunks, costs ~150 ms for 49 channels over a
+        typical viewport. Counts are BINS.
         """
         if not self.is_loaded:
-            return {"bar": [], "upset": []}
-        ri = self.is_detent(dilation)
+            return {"bar": [], "upset": [], "exact": True, "unit": "bins"}
         included = self.registry.included_indices()
+        if not included:
+            return {"bar": [], "upset": [], "exact": True, "unit": "bins"}
 
-        if ri is not None:
-            # bar: voxel-exact from channel_stats; denominator clipped to the
-            # true volume extent (the block grid overhangs the volume edge)
-            vz, vy, vx = self.grid.volume_shape_zyx
-            span_y = max(0, min(by_range[1] * BLOCK_VOX, vy) - by_range[0] * BLOCK_VOX)
-            span_x = max(0, min(bx_range[1] * BLOCK_VOX, vx) - bx_range[0] * BLOCK_VOX)
-            block_voxels = max(1, span_y * span_x * vz)
-            stats = self.tally.channel_stats_sum(ri, by_range, bx_range)
-            bar = [
-                (self.registry.name_of(c), stats.get(c, (0, 0.0))[0] / block_voxels * 100.0)
-                for c in included
-            ]
-            # upset: pair matrix over the block-filtered rows
-            rows = self.tally.block_row_mask(ri, by_range, bx_range)
-            M = self.tally.pair_matrix_rows(ri, rows)
-        else:
-            region = self._viewport_bin_region(by_range, bx_range)
-            code = self._code(dilation)
-            masks = {
-                c: self.fields.edt_plane(c)[:, region[0], region[1]] <= np.uint8(code)
-                for c in included
-            }
-            total = next(iter(masks.values())).size if masks else 1
-            bar = [
-                (self.registry.name_of(c), int(np.count_nonzero(masks[c])) / total * 100.0)
-                for c in included
-            ]
-            fp0, fp1, count = compute.region_tally(masks)
-            M = TallyStore._accumulate_pair_matrix(fp0, fp1, count)
+        ys, xs = self._viewport_bin_region(by_range, bx_range)
+        if ys.stop <= ys.start or xs.stop <= xs.start:
+            return {"bar": [], "upset": [], "exact": True, "unit": "bins"}
 
+        # Cost scales with region x channels. A zoomed-out "local" scope can
+        # approach the whole volume (47M bins x 49 channels ~ 7 s), so step down
+        # the pyramid until the read is bounded. Level 0 is exact; coarser
+        # levels are min-reduced supersets, so the ratios stay monotone but are
+        # no longer exact — reported as `exact` for the caller to surface.
+        level = 0
+        zdim = self.grid.grid_shape_zyx[0]
+        while (level + 1 < self.fields.n_edt_levels
+               and (ys.stop - ys.start) * (xs.stop - xs.start) * zdim
+               > self.MAX_REGION_BINS):
+            level += 1
+            ys = slice(ys.start // 2, max(ys.start // 2 + 1, -(-ys.stop // 2)))
+            xs = slice(xs.start // 2, max(xs.start // 2 + 1, -(-xs.stop // 2)))
+
+        code = self._code(dilation)
+        masks = [self.fields.edt_region(c, ys, xs, level) <= np.uint8(code)
+                 for c in included]
+
+        total = max(1, masks[0].size)
+        M = compute.pair_intersection_matrix(masks)
+        diag = np.diag(M)
+
+        bar = [(self.registry.name_of(c), int(diag[i]) / total * 100.0)
+               for i, c in enumerate(included)]
         bar.sort(key=lambda t: t[1], reverse=True)
 
-        diag = np.diag(M)
-        upset = []
-        if min_channels == 2:
-            pairs = []
-            for ai in range(len(included)):
-                a = included[ai]
-                for b in included[ai + 1:]:
-                    inter = int(M[a, b])
+        k = int(min_channels)
+        if k <= 1:
+            upset = [
+                {"channels": [self.registry.name_of(c)], "iou": 1.0,
+                 "overlap_coeff": 1.0, "count": int(diag[i])}
+                for i, c in sorted(enumerate(included),
+                                   key=lambda t: -diag[t[0]])[:limit]
+            ]
+            return {"bar": bar, "upset": upset,
+                    "exact": level == 0, "unit": "bins"}
+
+        # Pairs come straight off the matrix; higher degrees extend the best
+        # pairs and are exact-counted by AND-ing the region masks already read.
+        pairs = []
+        n = len(included)
+        for i in range(n):
+            if diag[i] == 0:
+                continue
+            for j in range(i + 1, n):
+                inter = int(M[i, j])
+                if inter == 0:
+                    continue
+                union = int(diag[i] + diag[j] - inter)
+                pairs.append((
+                    inter / union if union > 0 else 0.0,
+                    inter / int(min(diag[i], diag[j])),
+                    inter, i, j,
+                ))
+        pairs.sort(reverse=True)
+
+        if k == 2:
+            scored = [(iou, oc, cnt, (i, j)) for iou, oc, cnt, i, j in pairs[:limit]]
+        else:
+            seeds = pairs[: max(limit, 40)]
+            hot = [i for i, _ in sorted(enumerate(diag), key=lambda t: -t[1])[:24]]
+            seen: set[tuple] = set()
+            scored = []
+            for _, _, _, i, j in seeds:
+                for extra in _extend(sorted((i, j)), hot, k):
+                    if extra in seen:
+                        continue
+                    seen.add(extra)
+                    acc = masks[extra[0]]
+                    for m in extra[1:]:
+                        acc = acc & masks[m]
+                    inter = int(np.count_nonzero(acc))
                     if inter == 0:
                         continue
-                    union = int(diag[a] + diag[b] - inter)
-                    iou = inter / union if union > 0 else 0.0
-                    oc = inter / int(min(diag[a], diag[b]))
-                    pairs.append((iou, oc, a, b))
-            pairs.sort(reverse=True)
-            for iou, oc, a, b in pairs[:limit]:
-                upset.append({
-                    "channels": [self.registry.name_of(a), self.registry.name_of(b)],
-                    "iou": iou,
-                    "overlap_coeff": oc,
-                })
-        return {"bar": bar, "upset": upset}
+                    uni = masks[extra[0]]
+                    for m in extra[1:]:
+                        uni = uni | masks[m]
+                    union = int(np.count_nonzero(uni))
+                    mn = int(min(diag[m] for m in extra))
+                    scored.append((
+                        inter / union if union > 0 else 0.0,
+                        inter / mn if mn > 0 else 0.0,
+                        inter, extra,
+                    ))
+                if len(seen) >= 400:
+                    break
+            scored.sort(reverse=True, key=lambda t: t[0])
+            scored = scored[:limit]
+
+        upset = [
+            {"channels": [self.registry.name_of(included[m]) for m in members],
+             "iou": iou, "overlap_coeff": oc, "count": cnt}
+            for iou, oc, cnt, members in scored
+        ]
+        return {"bar": bar, "upset": upset,
+                "exact": level == 0, "unit": "bins"}
 
     def get_viewport_dilation_curves(
         self,
@@ -746,7 +1040,7 @@ class AnalysisLoader:
         if not self.is_loaded:
             return []
         ri = self.is_detent(dilation)
-        ri = ri if ri is not None else nearest_detent_idx(dilation)
+        ri = ri if ri is not None else self._nearest_detent(dilation)
         included = set(self.registry.included_indices())
         rows = []
         for c, vc, si in self.tally.channel_stats_block(block_y, block_x, ri):
@@ -757,7 +1051,7 @@ class AnalysisLoader:
                 "voxel_count": vc,
                 "sum_intensity": si,
                 "mean_intensity": si / vc if vc > 0 else 0.0,
-                "stats_radius_um": DETENT_RADII_UM[ri],
+                "stats_radius_um": self.detent_label_um(ri),
             })
         rows.sort(key=lambda r: r["voxel_count"], reverse=True)
         return rows
