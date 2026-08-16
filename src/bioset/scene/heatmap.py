@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 
@@ -29,11 +30,39 @@ class HeatmapConfig:
     z_offset: float = 0.0
     percentile_cutoff: float = 0.01  # Only show cells above this active_fraction percentile
     outline_line_width: float = 5.0  # Fixed line width for all cells
-    # If >0, draw a matching outline behind the volume (back) and connect the
-    # 4 corners with the same line width/brightness.
-    outline_box_depth: float = 0.0
-    outline_box_back_z: float = 0.0
-    outline_box_front_z: float = 0.0  # if set, world Z of front plane (in front of image)
+
+    # World Z of the two volume faces the grid brackets. Equal values mean the
+    # volume depth is unknown, and a single square is drawn on the cell plane.
+    #
+    # These are the faces themselves, NOT an offset in front of them. Putting
+    # the near square outside the volume made it invisible when zoomed in: all
+    # three layered renderers share one vtkCamera, ClippingRange is camera
+    # state, and only the volume renderer ever calls ResetCameraClippingRange —
+    # so the near plane is always derived from the volume bounds and anything
+    # in front of them gets clipped. Depth order is handled by the render
+    # layers, not by pushing geometry toward the camera.
+    volume_z_lo: float = 0.0
+    volume_z_hi: float = 0.0
+
+    # The near square is never allowed closer to the camera than this fraction
+    # of the camera-to-focal distance. At deep zoom the camera ends up inside
+    # the volume's Z slab, and without this the square lands on the lens.
+    min_near_distance_frac: float = 0.06
+    # Draw the far square only while the two project at similar sizes. Past
+    # this ratio they no longer overlap and read as two unrelated grids.
+    far_square_max_ratio: float = 1.15
+
+
+def _camera_focal_distance(camera) -> float:
+    """Eye-to-focal-point distance.
+
+    Same quantity as `streaming.lod.camera_distance_to_focal`; duplicated here
+    rather than imported because scene/ importing streaming/ closes an existing
+    import cycle (see scene/builder.py).
+    """
+    px, py, pz = camera.GetPosition()
+    fx, fy, fz = camera.GetFocalPoint()
+    return math.sqrt((px - fx) ** 2 + (py - fy) ** 2 + (pz - fz) ** 2)
 
 
 _LUT_SIZE = 256
@@ -84,6 +113,8 @@ class HeatmapRenderer:
 
         self._field: Optional[HeatmapField] = None
         self._current_spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+        # Camera the squares are placed against; shared by all three layers.
+        self._camera = getattr(outline_renderer or renderer, "GetActiveCamera", lambda: None)()
 
 
     # ──────────────────────────────────────────────
@@ -162,26 +193,121 @@ class HeatmapRenderer:
         if self.outline_renderer is None:
             return
         lut = self._make_lut()
-        # Two flat squares bracketing the volume: one drawn in front of it, one
-        # behind. z offsets are baked into the glyph sources relative to the
-        # instance-point plane.
-        if self.config.outline_box_depth and self.config.outline_box_depth > 0:
-            z_back = z_center
-            if self.config.outline_box_front_z:
-                z_front = float(self.config.outline_box_front_z)
-            else:
-                z_front = z_center + self.config.z_height / 2.0
-                z_back = z_front - float(self.config.outline_box_depth)
+        # Both squares are baked flat at the instance plane; where they actually
+        # sit along Z is an actor position set by `update_for_camera`, so the
+        # placement can follow the camera without rebuilding any geometry.
+        square = self._rect_source(cw_x, cw_y, 0.0)
+        self._activate("front", instances, square, lut)
+        if self._has_depth:
+            self._activate("back", instances, square, lut)
+        self.update_for_camera(self._camera)
 
-            self._activate("front", instances,
-                           self._rect_source(cw_x, cw_y, z_front - z_center), lut)
-            self._activate("back", instances,
-                           self._rect_source(cw_x, cw_y, z_back - z_center), lut)
-        else:
-            # No volume depth to bracket (bounds unknown): one square on the
-            # cell plane rather than a box of zero thickness.
-            self._activate("front", instances,
-                           self._rect_source(cw_x, cw_y, 0.0), lut)
+    @property
+    def _has_depth(self) -> bool:
+        """Whether the volume's two faces are known and distinct."""
+        return abs(self.config.volume_z_hi - self.config.volume_z_lo) > 1e-9
+
+    def set_camera(self, camera):
+        """Camera used to place the squares. Shared across all three layers."""
+        self._camera = camera
+
+    def update_for_camera(self, camera=None) -> bool:
+        """Place the squares relative to the camera; returns True if anything moved.
+
+        Two things are decided here:
+
+        * **Which face is near.** The roles are fixed to their renderers
+          (`front` on the layer drawn over the volume, `back` on the one drawn
+          behind), but which volume face each sits on follows the camera — so
+          orbiting underneath keeps the visible square on the face being
+          looked at instead of leaving it pinned to the top.
+        * **Whether the far square is worth drawing.** Two squares 54 units
+          apart project at very different sizes once the camera is close; past
+          `far_square_max_ratio` they stop overlapping and read as two
+          unrelated grids, so only the near one is kept.
+        """
+        if camera is not None:
+            self._camera = camera
+        cam = self._camera
+        if cam is None or not self._active_roles:
+            return False
+
+        z_center = self.config.z_height / 2.0 + self.config.z_offset
+        if not self._has_depth:
+            return self._place("front", z_center, z_center)
+
+        cx, cy, cz = cam.GetPosition()
+        _, _, dz = cam.GetDirectionOfProjection()
+
+        def distance(z_plane):
+            """Distance from the camera to a world-Z plane along the view axis.
+
+            Positive means in front of the camera. None when the view is
+            edge-on and the plane is never crossed.
+            """
+            if abs(dz) < 1e-9:
+                return None
+            return (z_plane - cz) / dz
+
+        lo, hi = float(self.config.volume_z_lo), float(self.config.volume_z_hi)
+        d_lo, d_hi = distance(lo), distance(hi)
+
+        # Only faces IN FRONT of the camera are candidates. Zooming deep puts
+        # the camera inside the volume's own Z slab, so one face ends up behind
+        # it — ranking by signed distance would then pick the face behind the
+        # camera as "near", which is exactly the square that used to vanish.
+        candidates = sorted((d, z) for d, z in ((d_lo, lo), (d_hi, hi))
+                            if d is not None and d > 0.0)
+
+        if not candidates:
+            # Whole volume behind the camera: nothing sensible to place.
+            return self._set_visible_role("front", False) | self._set_visible_role("back", False)
+
+        d_near, near_z = candidates[0]
+        has_far = len(candidates) > 1
+        d_far, far_z = candidates[1] if has_far else (0.0, near_z)
+
+        # Degenerate guard: sitting exactly on a face makes the square project
+        # at an unbounded size. Nudge it off the lens. With the faces chosen
+        # correctly this effectively never fires — the near face is normally
+        # about as far away as the cells it outlines.
+        min_d = max(self.config.min_near_distance_frac
+                    * _camera_focal_distance(cam), 1e-6)
+        if d_near < min_d:
+            near_z = cz + dz * min_d
+            d_near = min_d
+
+        show_far = has_far and (d_far / d_near) <= self.config.far_square_max_ratio
+
+        changed = self._place("front", near_z, z_center)
+        changed |= self._place("back", far_z, z_center)
+        changed |= self._set_visible_role("front", True)
+        changed |= self._set_visible_role("back", show_far)
+        return changed
+
+    def _set_visible_role(self, role: str, visible: bool) -> bool:
+        """Toggle one role's actor. Independent of `set_visible`, which adds and
+        removes actors for the whole heatmap."""
+        entry = self._glyphs.get(role)
+        if entry is None:
+            return False
+        want = 1 if visible else 0
+        if entry["actor"].GetVisibility() == want:
+            return False
+        entry["actor"].SetVisibility(want)
+        return True
+
+    def _place(self, role: str, world_z: float, z_center: float) -> bool:
+        """Move a role's actor so its square sits at `world_z`. Cheap: this only
+        dirties the actor matrix, leaving the glyph instance buffer alone."""
+        entry = self._glyphs.get(role)
+        if entry is None:
+            return False
+        dz = world_z - z_center
+        if abs(entry["actor"].GetPosition()[2] - dz) < 1e-9:
+            return False
+        entry["actor"].SetPosition(0.0, 0.0, dz)
+        return True
 
     def _make_lut(self):
         """256-entry LUT encoding the value→brightness/opacity ramp, memoized.
@@ -301,6 +427,11 @@ class HeatmapRenderer:
 
     def clear(self):
         self._deactivate_all()
+        # Reset placement: the actor entries survive deactivation, so a stale
+        # position (or a hidden far square) would carry into the next field.
+        for entry in self._glyphs.values():
+            entry["actor"].SetPosition(0.0, 0.0, 0.0)
+            entry["actor"].SetVisibility(1)
         self._field = None
 
     @property

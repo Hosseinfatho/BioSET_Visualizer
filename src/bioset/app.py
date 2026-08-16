@@ -95,6 +95,25 @@ def run_app(*, idle_timeout: int | None = None):
     if scene.streamer is not None:
         _scale_bar_tick = [0]  # mutable so inner function can update
 
+        _last_cam_pose = [None]
+
+        def _camera_moved() -> bool:
+            """True when the camera pose has changed since the last check.
+
+            Keeps the per-tick cost to a handful of float comparisons while the
+            view is still. Mirrors the label observer's gate in ui/callbacks.py.
+            """
+            try:
+                cam = scene.renderer.GetActiveCamera()
+                pose = (cam.GetPosition(), cam.GetFocalPoint(),
+                        cam.GetViewUp(), cam.GetViewAngle())
+            except Exception:
+                return False
+            if pose == _last_cam_pose[0]:
+                return False
+            _last_cam_pose[0] = pose
+            return True
+
         async def _check_loaded_data_loop():
             """Periodically check if background loading has finished and apply to VTK; also apply NOV progressive resolution updates and adaptive scale bar."""
             while True:
@@ -116,6 +135,15 @@ def run_app(*, idle_timeout: int | None = None):
                         # Actor creation for streamed mesh tiles — must be here,
                         # the worker only produces polydata.
                         if scene.mesh_streamer.check_and_apply():
+                            updated = True
+                    # Re-place the heatmap grid squares against the camera. Done
+                    # here rather than in a RenderEvent observer because this
+                    # mutates actor state (position + visibility) and must not
+                    # run mid-render; the poll loop also catches programmatic
+                    # camera moves such as a bookmark restore, which the
+                    # interaction observers never see.
+                    if scene.heatmap is not None and _camera_moved():
+                        if scene.heatmap.update_for_camera():
                             updated = True
                     ctrl.check_label_setup()
                     if updated:

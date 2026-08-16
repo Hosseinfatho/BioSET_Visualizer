@@ -974,24 +974,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             from bioset.scene.heatmap import hex_to_rgb
             color = hex_to_rgb(state.heatmap_color)
-            # Box grid: back outline + corner connectors, bracketing the volume.
-            # Uses the analysis volume Z bounds (voxels) converted to world units
-            # via physical_size_z.
+            # The two volume faces the grid brackets, from the analysis volume Z
+            # bounds (voxels) converted to world units via physical_size_z.
+            # These are the faces themselves — the old code offset the near one
+            # 10 units toward the camera, which put it in front of the near
+            # clipping plane (derived from the volume bounds and shared across
+            # all three layers), so it vanished as soon as you zoomed in.
             bounds = getattr(state, "analysis_volume_bounds", {}) or {}
             z0z1 = bounds.get("z", None)
             if isinstance(z0z1, (list, tuple)) and len(z0z1) >= 2:
-                z0_vox = float(z0z1[0])
-                z1_vox = float(z0z1[1])
-                z_depth_vox = max(0.0, z1_vox - z0_vox)
                 sz = float(spacing[2]) if spacing and len(spacing) >= 3 else 1.0
-                heatmap.config.outline_box_depth = z_depth_vox * sz
-                # Front rectangle: in front of the image (closer to camera).
-                # Back stays at the heatmap position.
-                volume_z_max = z1_vox * sz
-                heatmap.config.outline_box_front_z = volume_z_max + 10.0
+                heatmap.config.volume_z_lo = float(z0z1[0]) * sz
+                heatmap.config.volume_z_hi = float(z0z1[1]) * sz
             else:
-                heatmap.config.outline_box_depth = 0.0
-                heatmap.config.outline_box_front_z = 0.0
+                heatmap.config.volume_z_lo = 0.0
+                heatmap.config.volume_z_hi = 0.0
 
             heatmap.update_field(field, spacing=spacing, color=color)
             state.heatmap_tile_count = heatmap.tile_count
