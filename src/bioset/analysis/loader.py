@@ -1035,10 +1035,18 @@ class AnalysisLoader:
         dilation: float,
         min_channels: int = 2,
         limit: int = 50,
+        combo_channels: Optional[Sequence[str]] = None,
     ) -> dict:
         """Bar + upset data restricted to a block range, exact at ANY radius.
 
         Returns {"bar": [(name, pct)], "upset": [{channels, iou, overlap_coeff}]}.
+
+        `combo_channels` restricts which channels may appear in a combination —
+        the UpSet dialog's selection. The bar is deliberately NOT restricted by
+        it: coverage has its own channel filter, and the per-channel counts come
+        free with the pair matrix. Without this the viewport UpSet ignored the
+        dialog entirely and had to be filtered after the fact, which both leaked
+        unticked channels in the unfiltered mode and threw away most of the work.
 
         Computed from region-scoped EDT reads, not from the per-block
         combination table: that table keeps only the top 200 rows per block, so
@@ -1090,14 +1098,22 @@ class AnalysisLoader:
         want_all = k <= 1
         degrees = list(range(2, self.max_combo_degree + 1)) if want_all else [k]
 
+        # Positions (into `included`) a combination may use.
+        if combo_channels:
+            wanted = set(combo_channels)
+            allowed = [i for i, c in enumerate(included)
+                       if self.registry.name_of(c) in wanted]
+        else:
+            allowed = list(range(len(included)))
+        allowed_set = set(allowed)
+
         # Pairs come straight off the matrix; higher degrees extend the best
         # pairs and are exact-counted by AND-ing the region masks already read.
         pairs = []
-        n = len(included)
-        for i in range(n):
+        for ai, i in enumerate(allowed):
             if diag[i] == 0:
                 continue
-            for j in range(i + 1, n):
+            for j in allowed[ai + 1:]:
                 inter = int(M[i, j])
                 if inter == 0:
                     continue
@@ -1115,7 +1131,8 @@ class AnalysisLoader:
                           for iou, oc, cnt, i, j in pairs[:limit])
         for k_deg in [d for d in degrees if d >= 3]:
             seeds = pairs[: max(limit, 40)]
-            hot = [i for i, _ in sorted(enumerate(diag), key=lambda t: -t[1])[:24]]
+            hot = [i for i, _ in sorted(enumerate(diag), key=lambda t: -t[1])
+                   if i in allowed_set][:24]
             seen: set[tuple] = set()
             for _, _, _, i, j in seeds:
                 for extra in _extend(sorted((i, j)), hot, k_deg):

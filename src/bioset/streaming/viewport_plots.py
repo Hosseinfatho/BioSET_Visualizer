@@ -23,6 +23,8 @@ class ViewportPlotRequest:
     dilation: float
     min_channels: int
     timestamp: float
+    # Channels the UpSet dialog allows in a combination; None = no restriction.
+    combo_channels: object = None
     # Per-plot flags: only compute what is needed
     need_bar: bool = True
     need_upset: bool = True
@@ -57,6 +59,7 @@ def _run_viewport_queries(req: ViewportPlotRequest) -> ViewportPlotResult:
             dilation=req.dilation,
             min_channels=req.min_channels,
             limit=200,
+            combo_channels=req.combo_channels,
         )
         if req.need_bar:
             bar_data = metrics["bar"]
@@ -181,6 +184,8 @@ class ViewportPlotComputer:
             channels=list(self._channels),
             dilation=self._dilation,
             min_channels=self._min_channels,
+            combo_channels=(None if self._selected_channels is None
+                            else list(self._selected_channels)),
             timestamp=time.monotonic(),
             need_bar=self._need_bar,
             need_upset=self._need_upset,
@@ -239,26 +244,21 @@ class ViewportPlotComputer:
         state.upset_data_viewport = result.upset_data
         state.dilation_data_viewport = result.dilation_data
 
-        # Filtered viewport data, matching the global scope's two-part rule:
-        #   allowed  -> exclusion. Never show a combination naming a channel
-        #               the user unticked in the dialog.
-        #   touching -> inclusion (OR). Keep combinations involving at least
-        #               one active channel, not only those made entirely of them.
+        # The dialog's exclusion is applied inside get_viewport_metrics now, so
+        # `result.upset_data` already contains only ticked channels. What is left
+        # here is the "Selected" channel mode's inclusion rule: keep combinations
+        # involving at least one channel active in the 3D view.
         allowed = None if self._selected_channels is None else set(self._selected_channels)
         touching = set(self._active_channels)
         if allowed is not None:
             touching &= allowed
 
-        def _keep(names):
-            if allowed is not None and not allowed.issuperset(names):
-                return False
-            return bool(touching.intersection(names))
-
         state.bar_data_viewport_selected = [
-            item for item in result.bar_data if _keep([item[0]])
+            item for item in result.bar_data if item[0] in touching
         ] if touching else []
         state.upset_data_viewport_selected = [
-            item for item in result.upset_data if _keep(item["channels"])
+            item for item in result.upset_data
+            if touching.intersection(item["channels"])
         ] if touching else []
 
         try:
