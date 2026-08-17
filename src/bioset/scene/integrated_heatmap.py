@@ -157,8 +157,8 @@ def bilinear_lookup_lines(uv_expression: str, prefix: str, uniform: str,
 
     smooth_blend gives C1 continuity at cell centers, which looks nicer for
     gain modulation. It also drives the field's derivative to zero at every
-    cell center. The halo outline divides by that derivative, so where it
-    vanishes the outline width goes to infinity. The halo MUST pass False.
+    cell center. Only the gain/sampling lookups use this; the outline that
+    once required smooth_blend=False is contour geometry now.
     """
     p, u = prefix, uniform
     lines = [
@@ -213,7 +213,7 @@ class IntegratedHeatmapManager:
         f"in_ihm_member{i}" for i in range(INTEGRATED_HEATMAP.max_member_maps))
     FLOAT_UNIFORMS = (
         "in_ihm_inv_x", "in_ihm_inv_y",
-        "in_ihm_halo_threshold", "in_ihm_outline_width", "in_ihm_max_step_scale",
+        "in_ihm_max_step_scale",
     )
 
     def __init__(self, cfg: IntegratedHeatmapConfig = INTEGRATED_HEATMAP):
@@ -225,7 +225,6 @@ class IntegratedHeatmapManager:
 
         self._active = False
         self._gain = True
-        self._halo = True
         self._sampling = True
 
         self._inter_packed: Optional[list] = None
@@ -285,9 +284,9 @@ class IntegratedHeatmapManager:
         else:
             self.clear()
 
-    def set_effects(self, gain: bool, halo: bool, sampling: bool):
-        changed = (self._gain, self._halo, self._sampling) != (gain, halo, sampling)
-        self._gain, self._halo, self._sampling = bool(gain), bool(halo), bool(sampling)
+    def set_effects(self, gain: bool, sampling: bool):
+        changed = (self._gain, self._sampling) != (gain, sampling)
+        self._gain, self._sampling = bool(gain), bool(sampling)
         if changed and self._active:
             self.rebuild()
 
@@ -378,7 +377,7 @@ class IntegratedHeatmapManager:
 
     def _signature(self) -> tuple:
         return (
-            self._active, self._gain, self._halo, self._sampling,
+            self._active, self._gain, self._sampling,
             tuple(sorted(self._channel_port.items())),
             self._member_ids, self._dummy_port,
             id(self._multi_volume),
@@ -396,7 +395,7 @@ class IntegratedHeatmapManager:
             uniforms.RemoveUniform(name)
 
         if (self._active and self._channel_port and self._inter_packed is not None
-                and (self._gain or self._halo or self._sampling)):
+                and (self._gain or self._sampling)):
             self._install_replacements(sp)
             self._upload_uniforms(uniforms)
             self._installed_signature = self._signature()
@@ -407,9 +406,8 @@ class IntegratedHeatmapManager:
                 len(self._gain_ports()) if self._gain else 0,
                 2 if self._gain else 0,  # classic hedges (port 0)
                 2 if self._sampling else 0,  # march advances
-                1 if self._halo else 0,  # Base::Exit
             ])
-            print(f"[ihm] installed: gain={self._gain} halo={self._halo} "
+            print(f"[ihm] installed: gain={self._gain} "
                   f"sampling={self._sampling}, members={self._member_ids}, "
                   f"~{n_keys} replacement keys")
         else:
@@ -462,8 +460,6 @@ class IntegratedHeatmapManager:
                 self._member_packed[ch_id])
         uniforms.SetUniformf("in_ihm_inv_x", float(self._inv_x))
         uniforms.SetUniformf("in_ihm_inv_y", float(self._inv_y))
-        uniforms.SetUniformf("in_ihm_halo_threshold", float(cfg.halo_threshold))
-        uniforms.SetUniformf("in_ihm_outline_width", float(cfg.halo_outline_width_px))
         uniforms.SetUniformf("in_ihm_max_step_scale", float(cfg.sampling_max_step_scale))
 
     # ── GLSL generation ────────────────────────────────────
@@ -573,10 +569,12 @@ class IntegratedHeatmapManager:
                 "++g_currentT;", False,
                 "g_currentT += g_stepScale;", False)
 
-        # 6. Halo outline at //VTK::Base::Exit.
-        if self._halo:
-            sp.AddFragmentShaderReplacement(
-                "//VTK::Base::Exit", True, "\n".join(self._halo_block()), False)
+        # The outline used to be injected at //VTK::Base::Exit here. It is
+        # real contour geometry now (scene/heatmap_contours.py): the shader
+        # version thresholded a maximum-intensity projection and divided by
+        # dFdx/dFdy, so it broke into dashes wherever the arg-max sample
+        # changed between neighbouring pixels, vanished on plateaus, and
+        # changed shape as the camera orbited.
 
     @staticmethod
     def _multivolume_compute_color(port: int) -> str:
@@ -612,60 +610,4 @@ class IntegratedHeatmapManager:
             f"float {p}Gain = mix({cfg.single_low_gain:.6f}, "
             f"{cfg.single_high_gain:.6f}, g_ihmInter);",
             f"g_srcColor.rgb = clamp(g_srcColor.rgb * {p}Gain, 0.0, 1.0);",
-        ]
-
-    def _halo_block(self) -> List[str]:
-        cfg = self.cfg
-        n = cfg.halo_exit_samples
-        # Plain bilinear, NO smoothstep: the outline divides by the field's
-        # screen-space derivative, and smoothstep zeroes it at cell centers.
-        lookup = bilinear_lookup_lines(
-            "haloUV", "haloSample", "in_ihm_inter",
-            cfg.grid_w, cfg.grid_h, smooth_blend=False)
-        r, g, b = cfg.halo_outline_color
-        return [
-            "//VTK::Base::Exit",
-            "{",
-            "  // The heatmap's maximum along the ray, on its own fixed-count",
-            "  // walk from ray entry to ray termination. Deliberately NOT",
-            "  // accumulated inside the tissue ray march: there the samples",
-            "  // are gated on tissue opacity and the loop breaks early once",
-            "  // alpha saturates, which dents the field wherever tissue",
-            "  // occludes it and makes the outline trace tissue silhouettes.",
-            "  mat4 haloWorldMat = in_volumeMatrix[0] * in_textureDatasetMatrix[0];",
-            "  float haloValue = 0.0;",
-            f"  for (int haloStep = 0; haloStep <= {n}; ++haloStep)",
-            "  {",
-            "    vec3 haloSamplePos = mix(g_rayOrigin, g_rayTermination,",
-            f"        float(haloStep) / {float(n):.1f});",
-            "    vec2 haloUV = (haloWorldMat * vec4(haloSamplePos, 1.0)).xy",
-            "        * vec2(in_ihm_inv_x, in_ihm_inv_y);",
-            "    if (all(lessThanEqual(haloUV, vec2(1.0))) &&",
-            "        all(greaterThanEqual(haloUV, vec2(0.0))))",
-            "    {",
-            *[f"      {ln}" for ln in lookup],
-            "      haloValue = max(haloValue, haloSampleValue);",
-            "    }",
-            "  }",
-            "",
-            "  // dFdx is undefined inside the tissue ray loop (non-uniform",
-            "  // control flow). The walk above has a uniform trip count, so",
-            "  // here screen-space derivatives are legal. Dividing the",
-            "  // level-set offset by the gradient magnitude turns it into a",
-            "  // signed distance to the boundary measured in PIXELS — a",
-            "  // constant-width outline at any zoom, single pass.",
-            "  vec2 haloGradient = vec2(dFdx(haloValue), dFdy(haloValue));",
-            "  float haloSlope = max(length(haloGradient), 1.0e-7);",
-            "  float haloDistance = (haloValue - in_ihm_halo_threshold) / haloSlope;",
-            "",
-            "  // Nothing but the line. No fill: a filled field behind the",
-            "  // tissue reads as tissue-shaped holes punched into a sticker.",
-            "  float haloEdge = 1.0 - smoothstep(",
-            "      in_ihm_outline_width - 1.0,",
-            "      in_ihm_outline_width + 1.0,",
-            "      abs(haloDistance));",
-            f"  g_fragColor.rgb = mix(g_fragColor.rgb, "
-            f"vec3({r:.5f}, {g:.5f}, {b:.5f}), haloEdge);",
-            "  g_fragColor.a = mix(g_fragColor.a, 1.0, haloEdge);",
-            "}",
         ]

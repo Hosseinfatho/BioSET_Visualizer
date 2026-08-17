@@ -10,8 +10,9 @@ from typing import Literal, Sequence, Optional, Tuple
 class IntegratedHeatmapConfig:
     """Tuning for the shader-injected "Integrated" heatmap mode.
 
-    This dataclass is the ONLY management surface for the three effects
-    (gain / halo outline / importance sampling) — edit and restart. Values
+    This dataclass is the management surface for the two shader effects
+    (gain / importance sampling) — edit and restart. The outline used to be a
+    third; it is contour geometry now (scene/heatmap_contours.py). Values
     marked [literal] are baked into the generated GLSL; [uniform] values are
     uploaded as custom uniforms.
 
@@ -27,10 +28,8 @@ class IntegratedHeatmapConfig:
        differences become visible differences.
 
     2. EFFECT STRENGTH — gain: widen the gap between `*_low`/`base` (cold)
-       and `*_high`/weights (hot). Halo: `halo_threshold` picks WHICH contour
-       is drawn (under "rank" it is a percentile: 0.5 = the median cell), and
-       `halo_outline_width_px` how thick. Sampling: `sampling_max_step_scale`
-       is how coarsely cold regions are marched.
+       and `*_high`/weights (hot). Sampling: `sampling_max_step_scale` is how
+       coarsely cold regions are marched.
 
        Note this app's opacity transfer functions cap around 0.12 (see
        `build_histogram_tf` in scene/volumes.py) — tissue here is far more
@@ -94,14 +93,10 @@ class IntegratedHeatmapConfig:
     combined_interaction_rgb_weight: float = 0.90   # [literal]
     combined_min_alpha_gain: float = 0.20           # [literal]
 
-    # ── Halo outline ──
-    halo_outline_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)  # [literal]
-    # Which contour to trace. Under map_contrast_mode="rank" this is a
-    # percentile of the non-empty cells: 0.5 outlines the hot half.
-    halo_threshold: float = 0.50                    # [uniform]
-    halo_outline_width_px: float = 2.5              # [uniform]
-    # A diagonal ray crosses ~1.5*grid cells; 64 steps samples every cell.
-    halo_exit_samples: int = 64                     # [literal] (loop bound)
+    # The halo-outline settings lived here. The outline is real contour
+    # geometry now — see scene/heatmap_contours.py and `ContourConfig`, whose
+    # levels are percentiles of the visible field and whose resolution follows
+    # the camera instead of being pinned to this grid.
 
     # ── Importance sampling: step = base * mix(max_scale, 1, importance) ──
     sampling_max_step_scale: float = 10.0           # [uniform]

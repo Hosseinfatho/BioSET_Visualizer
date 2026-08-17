@@ -65,6 +65,42 @@ def _camera_focal_distance(camera) -> float:
     return math.sqrt((px - fx) ** 2 + (py - fy) ** 2 + (pz - fz) ** 2)
 
 
+def select_view_planes(camera, z_lo: float, z_hi: float,
+                       min_near_frac: float = 0.06):
+    """Pick which of two world-Z planes faces the camera, and how far each is.
+
+    Returns ``(near_z, far_z, d_near, d_far)`` with distances measured along the
+    view axis, or ``None`` when both planes are behind the camera.
+    ``far_z``/``d_far`` are None when only one plane is in front.
+
+    Only planes IN FRONT of the camera are candidates: zooming deep puts the
+    camera inside the volume's own Z slab, and ranking by signed distance would
+    then pick the plane behind the camera as "near" — the bug that made the
+    front squares disappear. `min_near_frac` holds the near plane off the lens
+    when the camera sits essentially on it, where the projection would otherwise
+    be unbounded.
+    """
+    cx, cy, cz = camera.GetPosition()
+    _, _, dz = camera.GetDirectionOfProjection()
+    if abs(dz) < 1e-9:
+        return None
+
+    candidates = sorted((d, z) for d, z in
+                        (((z_lo - cz) / dz, z_lo), ((z_hi - cz) / dz, z_hi))
+                        if d > 0.0)
+    if not candidates:
+        return None
+
+    d_near, near_z = candidates[0]
+    d_far, far_z = candidates[1] if len(candidates) > 1 else (None, None)
+
+    min_d = max(min_near_frac * _camera_focal_distance(camera), 1e-6)
+    if d_near < min_d:
+        near_z = cz + dz * min_d
+        d_near = min_d
+    return near_z, far_z, d_near, d_far
+
+
 _LUT_SIZE = 256
 
 # Glyph roles: which persistent actor draws what, and on which layer.
@@ -236,47 +272,16 @@ class HeatmapRenderer:
         if not self._has_depth:
             return self._place("front", z_center, z_center)
 
-        cx, cy, cz = cam.GetPosition()
-        _, _, dz = cam.GetDirectionOfProjection()
-
-        def distance(z_plane):
-            """Distance from the camera to a world-Z plane along the view axis.
-
-            Positive means in front of the camera. None when the view is
-            edge-on and the plane is never crossed.
-            """
-            if abs(dz) < 1e-9:
-                return None
-            return (z_plane - cz) / dz
-
-        lo, hi = float(self.config.volume_z_lo), float(self.config.volume_z_hi)
-        d_lo, d_hi = distance(lo), distance(hi)
-
-        # Only faces IN FRONT of the camera are candidates. Zooming deep puts
-        # the camera inside the volume's own Z slab, so one face ends up behind
-        # it — ranking by signed distance would then pick the face behind the
-        # camera as "near", which is exactly the square that used to vanish.
-        candidates = sorted((d, z) for d, z in ((d_lo, lo), (d_hi, hi))
-                            if d is not None and d > 0.0)
-
-        if not candidates:
+        planes = select_view_planes(
+            cam, float(self.config.volume_z_lo), float(self.config.volume_z_hi),
+            self.config.min_near_distance_frac)
+        if planes is None:
             # Whole volume behind the camera: nothing sensible to place.
             return self._set_visible_role("front", False) | self._set_visible_role("back", False)
-
-        d_near, near_z = candidates[0]
-        has_far = len(candidates) > 1
-        d_far, far_z = candidates[1] if has_far else (0.0, near_z)
-
-        # Degenerate guard: sitting exactly on a face makes the square project
-        # at an unbounded size. Nudge it off the lens. With the faces chosen
-        # correctly this effectively never fires — the near face is normally
-        # about as far away as the cells it outlines.
-        min_d = max(self.config.min_near_distance_frac
-                    * _camera_focal_distance(cam), 1e-6)
-        if d_near < min_d:
-            near_z = cz + dz * min_d
-            d_near = min_d
-
+        near_z, far_z, d_near, d_far = planes
+        has_far = far_z is not None
+        if not has_far:
+            far_z = near_z
         show_far = has_far and (d_far / d_near) <= self.config.far_square_max_ratio
 
         changed = self._place("front", near_z, z_center)

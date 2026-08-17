@@ -38,6 +38,7 @@ from ..streaming.mesh_streamer import MeshStreamer
 from ..streaming.viewport_plots import ViewportPlotComputer
 from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
+from .heatmap_contours import ContourRenderer
 from .meshes import MeshManager
 
 # Axis length (smaller = smaller arrows) and camera distance (larger = more margin, no clipping when rotating).
@@ -175,6 +176,7 @@ class VtkScene:
     nov_render_window: Optional[vtkRenderWindow] = None
     mesh_manager: Optional[MeshManager] = None
     mesh_streamer: Optional[MeshStreamer] = None
+    contours: Optional[ContourRenderer] = None
     integrated_heatmap: Optional[object] = None  # IntegratedHeatmapManager
 
 
@@ -405,8 +407,15 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     mesh_streamer = MeshStreamer(manager=mesh_manager, renderer=renderer)
     _mesh_streamer_ref[0] = mesh_streamer
 
+    # Iso-contours for the integrated mode, on the same layer-2 renderer the
+    # grid squares use. Driven by the LOD worker so they inherit zoom-dependent
+    # resolution and viewport cropping.
+    contours = ContourRenderer(heatmap_outline_renderer)
+
     heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules) if streamer is not None else None
     _heatmap_lod_ref[0] = heatmap_lod
+    if heatmap_lod is not None:
+        heatmap_lod.set_contour_renderer(contours)
 
     viewport_plots: Optional[ViewportPlotComputer] = ViewportPlotComputer() if streamer is not None else None
     _viewport_plots_ref[0] = viewport_plots
@@ -432,5 +441,6 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         nov_render_window=nov_render_window,
         mesh_manager=mesh_manager,
         mesh_streamer=mesh_streamer,
+        contours=contours,
         integrated_heatmap=integrated_heatmap,
     )

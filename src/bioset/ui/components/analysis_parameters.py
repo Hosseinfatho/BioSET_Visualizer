@@ -161,7 +161,7 @@ def analysis_parameters_section(state, ctrl):
                                 vuetify.VBtn("Auto", value="auto", small=True, classes="text-capitalize", outlined=True)
 
                         # Integrated-mode effect toggles (gain / importance
-                        # sampling / halo outline), each on by default. Tuning
+                        # sampling / contour outline), each on by default. Tuning
                         # lives in config.IntegratedHeatmapConfig.
                         with html.Div(
                                 classes="d-flex align-center justify-center mb-2",

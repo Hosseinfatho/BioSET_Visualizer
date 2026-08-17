@@ -56,6 +56,7 @@ class HeatmapLOD:
         self._debounce_lock = threading.Lock()
         self._pending: Optional[HeatmapRequest] = None
         self._current_level: int = 3
+        self._contours = None          # ContourRenderer, integrated mode
 
         self._loader = None
         self._channel_order: List[str] = []
@@ -67,6 +68,8 @@ class HeatmapLOD:
         # whether that field was actually cropped.
         self._last_roi_vox = None
         self._last_cropped = False
+        # Latest true viewport rect (no margin), kept for the contour path.
+        self._viewport_roi = None
 
         # Distance rules from config: [(distance_threshold, level), ...]
         self._distance_rules = distance_rules or (
@@ -141,6 +144,11 @@ class HeatmapLOD:
         """Called from the EndInteractionEvent handler (main thread).
         Schedules a background heatmap recompute when the level should change,
         or when a cropped fine-level field no longer covers the viewport."""
+        # Remember the viewport unconditionally — the contour path reads it to
+        # re-cut its iso-line, and that must keep working when auto mode is
+        # off or the level has not changed, which is most of the time.
+        if roi_vox is not None:
+            self._viewport_roi = roi_vox
         if not self._auto_mode or self._suspended:
             return
         if self._loader is None or not self._channels:
@@ -270,6 +278,24 @@ class HeatmapLOD:
             getattr(state, "physical_size_y", None) or 1.0,
             getattr(state, "physical_size_z", None) or 1.0,
         )
+        # Route by mode. Both heatmap modes are driven by this one worker so
+        # that the integrated mode's contours inherit camera-distance LOD and
+        # viewport cropping — it used to suspend this worker entirely, which is
+        # why its map never resolved as you zoomed.
+        if getattr(state, "heatmap_mode", "grid") == "integrated":
+            if self._contours is None:
+                return False
+            heatmap_renderer.clear()
+            drawn = self._contours.update_field(
+                result.field, spacing=spacing, roi_vox=self._viewport_roi)
+            state.heatmap_tile_count = self._contours.line_count
+            print(f"[heatmap_lod] Applied level {result.level}: "
+                  f"{self._contours.line_count} contour polylines "
+                  f"at iso {self._contours.iso_value:.3f}")
+            return bool(drawn) or True
+
+        if self._contours is not None:
+            self._contours.clear()
         from bioset.scene.heatmap import hex_to_rgb
         color = hex_to_rgb(getattr(state, "heatmap_color", "#FFFFFF"))
         heatmap_renderer.update_field(result.field, spacing=spacing, color=color)
@@ -278,6 +304,16 @@ class HeatmapLOD:
               f"{heatmap_renderer.tile_count} cells")
         return True
 
+    def set_contour_renderer(self, contours):
+        """Renderer used when `state.heatmap_mode == "integrated"`."""
+        self._contours = contours
+
     @property
     def current_level(self) -> int:
         return self._current_level
+
+    @property
+    def viewport_roi(self):
+        """Latest true viewport rect in voxels, or None. Read by the contour
+        path, which scopes its iso-value to whatever is on screen."""
+        return self._viewport_roi

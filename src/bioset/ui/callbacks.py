@@ -50,6 +50,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "heatmap": None,
         "mesh_manager": None,
         "mesh_streamer": None,
+        "contours": None,
         "heatmap_lod": None,
         "viewport_plots": None,
         "renderer": None,
@@ -100,6 +101,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         _refs["mesh_manager"] = mesh_manager
         print(f"[callbacks] Mesh manager set: {mesh_manager}"
               f" (available={mesh_manager.is_available if mesh_manager else False})")
+
+    def set_contours(contours):
+        """Set the iso-contour renderer used by the integrated heatmap mode."""
+        _refs["contours"] = contours
+        print(f"[callbacks] Contour renderer set: {contours}")
 
     def set_mesh_streamer(mesh_streamer):
         """Set the viewport-driven mesh tile streamer."""
@@ -815,6 +821,40 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.heatmap_combination = []
         update_heatmap()
 
+    def _camera_view_for_contours(streamer, heatmap_lod):
+        """(hierarchy level, viewport ROI) implied by where the camera is NOW.
+
+        The contour's iso-value is scoped to the viewport and its resolution to
+        the level, so both have to describe the live camera. Reads the same
+        helpers the LOD worker does (`choose_heatmap_level` on the camera
+        distance, `compute_visible_xy_roi_vox` for the rect) so the synchronous
+        entry and the worker cannot disagree.
+        """
+        level = state.current_hierarchy_level
+        roi_vox = heatmap_lod.viewport_roi if heatmap_lod else None
+        if streamer is None:
+            return level, roi_vox
+        try:
+            from bioset.streaming.lod import (
+                camera_distance_to_focal, choose_heatmap_level,
+                compute_visible_xy_roi_vox)
+            camera = streamer.renderer.GetActiveCamera()
+            if heatmap_lod is not None and heatmap_lod._auto_mode:
+                level = choose_heatmap_level(
+                    camera_distance_to_focal(camera),
+                    heatmap_lod._distance_rules)
+            sp = streamer._spacing_for_component(0)
+            _, ydim, xdim = streamer._dims_for_component(0)
+            roi = compute_visible_xy_roi_vox(
+                streamer.renderer, bounds_world=streamer._volume_bounds_world(0),
+                sx=sp.sx, sy=sp.sy, x_dim=xdim, y_dim=ydim, margin_vox=0,
+            )
+            if roi is not None:
+                roi_vox = (roi.x0, roi.x1, roi.y0, roi.y1)
+        except Exception as e:
+            print(f"[callbacks] Camera view for contours unavailable: {e}")
+        return level, roi_vox
+
     def _update_integrated_heatmap(mgr, loader, heatmap, heatmap_lod, streamer):
         """Drive the shader-injected Integrated Heatmap mode.
 
@@ -824,14 +864,28 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """
         heatmap.clear()
         state.heatmap_tile_count = 0
-        if heatmap_lod:
-            heatmap_lod.suspend(True)
+        # The LOD worker is NOT suspended any more. It now drives the contour
+        # geometry too, which is what gives the integrated mode zoom-dependent
+        # resolution — suspending it was why its map stayed a fixed 16x16 grid
+        # over the whole volume however far you zoomed in.
+        contours = _refs.get("contours")
+        if contours is not None:
+            sz = float(getattr(state, "physical_size_z", None) or 1.0)
+            zb = (getattr(state, "analysis_volume_bounds", {}) or {}).get("z")
+            if isinstance(zb, (list, tuple)) and len(zb) >= 2:
+                contours.set_volume_z(float(zb[0]) * sz, float(zb[1]) * sz)
+            contours.set_visible(bool(state.ihm_outline_enabled))
 
         combo = state.heatmap_combination or []
         if not state.heatmap_visible or not combo or streamer is None:
             print("[callbacks] Integrated heatmap idle "
                   f"(visible={state.heatmap_visible}, combo={combo})")
             mgr.set_active(False)
+            # Also drop the contours. Turning a channel off empties the
+            # combination and used to leave the old curves on screen, because
+            # only the shader half of the mode was being deactivated here.
+            if contours is not None:
+                contours.clear()
         else:
             try:
                 bounds = streamer._volume_bounds_world(0)
@@ -840,13 +894,46 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 active_ids = list(state.active_channels or [])
                 inter16, members = mgr.compute_maps(
                     loader, combo, state.current_dilation, name_to_id, active_ids)
+                # `halo` is gone: the outline is contour geometry now, not a
+                # fragment-shader effect. `ihm_outline_enabled` toggles the
+                # contour actors' visibility instead.
                 mgr.set_effects(
                     gain=bool(state.ihm_gain_enabled),
-                    halo=bool(state.ihm_outline_enabled),
                     sampling=bool(state.ihm_sampling_enabled),
                 )
                 mgr.set_maps(inter16, members)
                 mgr.set_active(True)
+
+                # Draw the contours NOW, from the level the LOD worker last
+                # settled on. Without this the mode came up empty: contours
+                # only arrived via HeatmapLOD, which fires on a level CHANGE,
+                # so nothing appeared until the user happened to zoom far
+                # enough to cross a threshold.
+                if contours is not None:
+                    # Level and viewport come from the CAMERA, not from state.
+                    # state.current_hierarchy_level and heatmap_lod.viewport_roi
+                    # both lag it — the LOD worker only writes them when the
+                    # level changes — and a stale coarse level paired with a
+                    # tight viewport left the contour with a 3-cell window,
+                    # which drew nothing. That is why the line used to appear
+                    # only after zooming.
+                    level, roi = _camera_view_for_contours(streamer, heatmap_lod)
+                    field = loader.get_heatmap_field(
+                        channels=combo,
+                        dilation=state.current_dilation,
+                        hierarchy_level=level,
+                    )
+                    spacing = (
+                        getattr(state, "physical_size_x", None) or 1.0,
+                        getattr(state, "physical_size_y", None) or 1.0,
+                        getattr(state, "physical_size_z", None) or 1.0,
+                    )
+                    contours.update_field(field, spacing=spacing, roi_vox=roi)
+                    state.heatmap_tile_count = contours.line_count
+                    print(f"[callbacks] Contours: {contours.line_count} polylines "
+                          f"at level {level}, iso {contours.iso_value:.3f} "
+                          f"(p{contours.iso_percentile:.0f}, "
+                          f"sigma {contours.sigma_um:.1f} um)")
                 print(f"[callbacks] Integrated heatmap: combo={combo}, "
                       f"members={list(members)}, radius={state.current_dilation}")
             except Exception as e:
@@ -906,6 +993,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
         # the heatmap again.
         if mgr is not None:
             mgr.set_active(False)
+        contours = _refs.get("contours")
+        if contours is not None:
+            contours.clear()
         if heatmap_lod:
             heatmap_lod.suspend(False)
 
@@ -2317,6 +2407,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.deselect_tile = deselect_tile
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.set_mesh_streamer = set_mesh_streamer
+    ctrl.set_contours = set_contours
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode

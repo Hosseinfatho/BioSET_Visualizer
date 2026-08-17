@@ -142,9 +142,25 @@ def run_app(*, idle_timeout: int | None = None):
                     # run mid-render; the poll loop also catches programmatic
                     # camera moves such as a bookmark restore, which the
                     # interaction observers never see.
-                    if scene.heatmap is not None and _camera_moved():
-                        if scene.heatmap.update_for_camera():
+                    if _camera_moved():
+                        if scene.heatmap is not None and scene.heatmap.update_for_camera():
                             updated = True
+                        # Contours sit on a volume face too, same as the squares.
+                        if scene.contours is not None:
+                            if scene.contours.update_for_camera():
+                                updated = True
+                            # The contour's iso-value is scoped to the visible
+                            # viewport, so panning changes it even when the LOD
+                            # level does not — and the LOD worker only fires on
+                            # a level change. Re-cut here instead: it reads a
+                            # cached smoothed field, costing 1-3 ms, and this
+                            # poll already catches programmatic camera moves
+                            # that the interaction observers never see.
+                            roi = (scene.heatmap_lod.viewport_roi
+                                   if scene.heatmap_lod is not None else None)
+                            if scene.contours.needs_viewport_update(roi):
+                                scene.contours.update_for_viewport(roi)
+                                updated = True
                     ctrl.check_label_setup()
                     if updated:
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
@@ -228,6 +244,8 @@ def run_app(*, idle_timeout: int | None = None):
         ctrl.set_mesh_manager(scene.mesh_manager)
     if scene.mesh_streamer is not None:
         ctrl.set_mesh_streamer(scene.mesh_streamer)
+    if scene.contours is not None:
+        ctrl.set_contours(scene.contours)
     if scene.heatmap_lod is not None:
         ctrl.set_heatmap_lod(scene.heatmap_lod)
     ctrl.set_renderer(scene.renderer)
