@@ -123,8 +123,13 @@ def analysis_parameters_section(state, ctrl):
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
                     with vuetify.VListItemContent():
-                        # Eye toggle + Grid/Integrated + Manual/Auto in one row
-                        with html.Div(classes="d-flex align-center justify-center mb-2", style="gap: 8px;"):
+                        # Eye + the three heatmap varieties. Manual/Auto used to
+                        # share this row, but a third variety pushed it past the
+                        # drawer's width and it was cut off; it has its own row
+                        # below now. `flex-wrap` keeps that from recurring if
+                        # the drawer is narrowed or a label grows.
+                        with html.Div(classes="d-flex align-center justify-center flex-wrap mb-2",
+                                      style="gap: 8px;"):
                             # Eye visibility toggle (square icon button)
                             with vuetify.VBtn(
                                     icon=True,
@@ -139,56 +144,57 @@ def analysis_parameters_section(state, ctrl):
                                     style=("heatmap_visible ? 'color:white' : 'color:#555'",),
                                 )
 
-                            # Grid / Integrated (shader) toggle. The solid-cube
-                            # "filled" mode was removed.
+                            # Three heatmap varieties, each its own thing:
+                            #   Grid        glyph squares over the volume
+                            #   Contour     iso-contour geometry
+                            #   Integrated  shader effects on the volume itself
                             with vuetify.VBtnToggle(
                                     v_model=("heatmap_mode", "grid"),
                                     mandatory=True,
                                     dense=True,
                                     style="background: transparent;",
                             ):
-                                vuetify.VBtn("Grid", value="grid", small=True, classes="text-capitalize", outlined=True)
-                                vuetify.VBtn("Integrated", value="integrated", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Grid", value="grid", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Contour", value="contour", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Integrated", value="integrated", small=True,
+                                             classes="text-capitalize", outlined=True)
 
-                            # Manual / Auto toggle
+                        # Manual / Auto level selection, on its own row. It
+                        # governs the granularity buttons further down, so it
+                        # reads as a pair with them.
+                        with html.Div(classes="d-flex justify-center flex-wrap mb-2"):
                             with vuetify.VBtnToggle(
                                     v_model=("heatmap_auto_level", "auto"),
                                     mandatory=True,
                                     dense=True,
                                     style="background: transparent;",
                             ):
-                                vuetify.VBtn("Manual", value="manual", small=True, classes="text-capitalize", outlined=True)
-                                vuetify.VBtn("Auto", value="auto", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Manual", value="manual", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Auto", value="auto", small=True,
+                                             classes="text-capitalize", outlined=True)
 
-                        # Integrated-mode effect toggles (gain / importance
-                        # sampling / contour outline), each on by default. Tuning
-                        # lives in config.IntegratedHeatmapConfig.
+                        # The two shader effects, which belong to the Integrated
+                        # mode alone — the contours are their own variety now.
+                        # `multiple` rather than `mandatory`: they are
+                        # independent and either may be off. Tuning lives in
+                        # config.IntegratedHeatmapConfig.
                         with html.Div(
-                                classes="d-flex align-center justify-center mb-2",
-                                style="gap: 12px;",
+                                classes="d-flex justify-center mb-2",
                                 v_if="heatmap_mode === 'integrated'",
                         ):
-                            vuetify.VSwitch(
-                                v_model=("ihm_gain_enabled", True),
-                                label="Gain",
-                                dense=True,
-                                hide_details=True,
-                                classes="mt-0 pt-0",
-                            )
-                            vuetify.VSwitch(
-                                v_model=("ihm_sampling_enabled", True),
-                                label="Sampling",
-                                dense=True,
-                                hide_details=True,
-                                classes="mt-0 pt-0",
-                            )
-                            vuetify.VSwitch(
-                                v_model=("ihm_outline_enabled", True),
-                                label="Outline",
-                                dense=True,
-                                hide_details=True,
-                                classes="mt-0 pt-0",
-                            )
+                            with vuetify.VBtnToggle(
+                                    v_model=("ihm_effects",),
+                                    multiple=True,
+                                    dense=True,
+                                    style="background: transparent;",
+                            ):
+                                vuetify.VBtn("Gain", value="gain", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Sampling", value="sampling", small=True,
+                                             classes="text-capitalize", outlined=True)
 
                         # Combination dropdown
                         with html.Div(classes="d-flex justify-center mb-3"):
@@ -248,7 +254,7 @@ def analysis_parameters_section(state, ctrl):
                                             )
 
                         # Granularity toggle
-                        with html.Div(classes="d-flex justify-center mb-1"):
+                        with html.Div(classes="d-flex justify-center flex-wrap mb-1"):
                             with vuetify.VBtnToggle(
                                     v_model=("current_hierarchy_level",),
                                     mandatory=True,

@@ -855,93 +855,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print(f"[callbacks] Camera view for contours unavailable: {e}")
         return level, roi_vox
 
-    def _update_integrated_heatmap(mgr, loader, heatmap, heatmap_lod, streamer):
-        """Drive the shader-injected Integrated Heatmap mode.
-
-        The glyph heatmap is cleared (effects modulate the volume rendering
-        itself) and the LOD worker is suspended. NOTE: state.heatmap_color is
-        intentionally ignored here — the outline color is a config constant.
-        """
-        heatmap.clear()
-        state.heatmap_tile_count = 0
-        # The LOD worker is NOT suspended any more. It now drives the contour
-        # geometry too, which is what gives the integrated mode zoom-dependent
-        # resolution — suspending it was why its map stayed a fixed 16x16 grid
-        # over the whole volume however far you zoomed in.
-        contours = _refs.get("contours")
-        if contours is not None:
-            sz = float(getattr(state, "physical_size_z", None) or 1.0)
-            zb = (getattr(state, "analysis_volume_bounds", {}) or {}).get("z")
-            if isinstance(zb, (list, tuple)) and len(zb) >= 2:
-                contours.set_volume_z(float(zb[0]) * sz, float(zb[1]) * sz)
-            contours.set_visible(bool(state.ihm_outline_enabled))
-
-        combo = state.heatmap_combination or []
-        if not state.heatmap_visible or not combo or streamer is None:
-            print("[callbacks] Integrated heatmap idle "
-                  f"(visible={state.heatmap_visible}, combo={combo})")
-            mgr.set_active(False)
-            # Also drop the contours. Turning a channel off empties the
-            # combination and used to leave the old curves on screen, because
-            # only the shader half of the mode was being deactivated here.
-            if contours is not None:
-                contours.clear()
-        else:
-            try:
-                bounds = streamer._volume_bounds_world(0)
-                mgr.set_world_extent(bounds[1], bounds[3])
-                name_to_id = {ch["name"]: ch["id"] for ch in (state.channels or [])}
-                active_ids = list(state.active_channels or [])
-                inter16, members = mgr.compute_maps(
-                    loader, combo, state.current_dilation, name_to_id, active_ids)
-                # `halo` is gone: the outline is contour geometry now, not a
-                # fragment-shader effect. `ihm_outline_enabled` toggles the
-                # contour actors' visibility instead.
-                mgr.set_effects(
-                    gain=bool(state.ihm_gain_enabled),
-                    sampling=bool(state.ihm_sampling_enabled),
-                )
-                mgr.set_maps(inter16, members)
-                mgr.set_active(True)
-
-                # Draw the contours NOW, from the level the LOD worker last
-                # settled on. Without this the mode came up empty: contours
-                # only arrived via HeatmapLOD, which fires on a level CHANGE,
-                # so nothing appeared until the user happened to zoom far
-                # enough to cross a threshold.
-                if contours is not None:
-                    # Level and viewport come from the CAMERA, not from state.
-                    # state.current_hierarchy_level and heatmap_lod.viewport_roi
-                    # both lag it — the LOD worker only writes them when the
-                    # level changes — and a stale coarse level paired with a
-                    # tight viewport left the contour with a 3-cell window,
-                    # which drew nothing. That is why the line used to appear
-                    # only after zooming.
-                    level, roi = _camera_view_for_contours(streamer, heatmap_lod)
-                    field = loader.get_heatmap_field(
-                        channels=combo,
-                        dilation=state.current_dilation,
-                        hierarchy_level=level,
-                    )
-                    spacing = (
-                        getattr(state, "physical_size_x", None) or 1.0,
-                        getattr(state, "physical_size_y", None) or 1.0,
-                        getattr(state, "physical_size_z", None) or 1.0,
-                    )
-                    contours.update_field(field, spacing=spacing, roi_vox=roi)
-                    state.heatmap_tile_count = contours.line_count
-                    print(f"[callbacks] Contours: {contours.line_count} polylines "
-                          f"at level {level}, iso {contours.iso_value:.3f} "
-                          f"(p{contours.iso_percentile:.0f}, "
-                          f"sigma {contours.sigma_um:.1f} um)")
-                print(f"[callbacks] Integrated heatmap: combo={combo}, "
-                      f"members={list(members)}, radius={state.current_dilation}")
-            except Exception as e:
-                print(f"[callbacks] Integrated heatmap update failed: {e}")
-                import traceback
-                traceback.print_exc()
-                mgr.set_active(False)
-
+    def _finish_heatmap_update(streamer):
+        """Shared tail for the non-glyph modes: settle the volume and push."""
         if streamer is not None:
             try:
                 streamer._render_still()
@@ -949,6 +864,93 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 pass
         if _refs["view"]:
             _refs["view"].update()
+
+    def _update_contour_heatmap(loader, heatmap, heatmap_lod, streamer):
+        """Drive the Contour heatmap mode.
+
+        Its own mode now, independent of the shader effects: the glyph squares
+        are cleared and iso-contour geometry takes their place. Nothing here
+        touches the volume rendering.
+        """
+        heatmap.clear()
+        state.heatmap_tile_count = 0
+        contours = _refs.get("contours")
+        if contours is None:
+            return
+        sz = float(getattr(state, "physical_size_z", None) or 1.0)
+        zb = (getattr(state, "analysis_volume_bounds", {}) or {}).get("z")
+        if isinstance(zb, (list, tuple)) and len(zb) >= 2:
+            contours.set_volume_z(float(zb[0]) * sz, float(zb[1]) * sz)
+        contours.set_visible(True)
+
+        combo = state.heatmap_combination or []
+        if not state.heatmap_visible or not combo or streamer is None:
+            print(f"[callbacks] Contour heatmap idle "
+                  f"(visible={state.heatmap_visible}, combo={combo})")
+            contours.clear()
+            return
+        try:
+            # Draw NOW rather than waiting for the LOD worker, which only fires
+            # on a level CHANGE — otherwise the mode comes up empty until the
+            # user happens to zoom across a threshold. Level and viewport come
+            # from the CAMERA: state.current_hierarchy_level lags it, and a
+            # stale coarse level with a tight viewport leaves too few cells to
+            # contour.
+            level, roi = _camera_view_for_contours(streamer, heatmap_lod)
+            field = loader.get_heatmap_field(
+                channels=combo,
+                dilation=state.current_dilation,
+                hierarchy_level=level,
+            )
+            spacing = (
+                getattr(state, "physical_size_x", None) or 1.0,
+                getattr(state, "physical_size_y", None) or 1.0,
+                getattr(state, "physical_size_z", None) or 1.0,
+            )
+            contours.update_field(field, spacing=spacing, roi_vox=roi)
+            state.heatmap_tile_count = contours.line_count
+            print(f"[callbacks] Contours: {contours.line_count} polylines "
+                  f"at level {level}, iso {contours.iso_value:.3f}")
+        except Exception as e:
+            print(f"[callbacks] Contour heatmap update failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _update_integrated_heatmap(mgr, loader, heatmap, streamer):
+        """Drive the shader-injected Integrated Heatmap mode.
+
+        Gain and importance sampling only — the contours are their own mode
+        now. The glyph heatmap is cleared because the effects modulate the
+        volume rendering itself rather than adding geometry.
+        """
+        heatmap.clear()
+        state.heatmap_tile_count = 0
+        combo = state.heatmap_combination or []
+        if not state.heatmap_visible or not combo or streamer is None:
+            print("[callbacks] Integrated heatmap idle "
+                  f"(visible={state.heatmap_visible}, combo={combo})")
+            mgr.set_active(False)
+            return
+        try:
+            bounds = streamer._volume_bounds_world(0)
+            mgr.set_world_extent(bounds[1], bounds[3])
+            name_to_id = {ch["name"]: ch["id"] for ch in (state.channels or [])}
+            active_ids = list(state.active_channels or [])
+            inter16, members = mgr.compute_maps(
+                loader, combo, state.current_dilation, name_to_id, active_ids)
+            mgr.set_effects(
+                gain=bool(state.ihm_gain_enabled),
+                sampling=bool(state.ihm_sampling_enabled),
+            )
+            mgr.set_maps(inter16, members)
+            mgr.set_active(True)
+            print(f"[callbacks] Integrated heatmap: combo={combo}, "
+                  f"members={list(members)}, radius={state.current_dilation}")
+        except Exception as e:
+            print(f"[callbacks] Integrated heatmap update failed: {e}")
+            import traceback
+            traceback.print_exc()
+            mgr.set_active(False)
 
     def update_heatmap():
         """Update heatmap visualization based on current state.
@@ -986,14 +988,28 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
         # ── Integrated (shader) mode: effects replace the glyph heatmap ──
         mgr = _refs.get("integrated_heatmap")
-        if state.heatmap_mode == "integrated" and mgr is not None:
-            _update_integrated_heatmap(mgr, loader, heatmap, heatmap_lod, streamer)
+        contours = _refs.get("contours")
+        mode = state.heatmap_mode
+
+        if mode == "integrated" and mgr is not None:
+            # Shader effects only; contours belong to their own mode.
+            if contours is not None:
+                contours.clear()
+            _update_integrated_heatmap(mgr, loader, heatmap, streamer)
+            _finish_heatmap_update(streamer)
             return
-        # Leaving (or not in) integrated mode: shader effects off, glyphs own
-        # the heatmap again.
+
+        if mode == "contour":
+            # Contour geometry only; the shader stays out of it.
+            if mgr is not None:
+                mgr.set_active(False)
+            _update_contour_heatmap(loader, heatmap, heatmap_lod, streamer)
+            _finish_heatmap_update(streamer)
+            return
+
+        # Grid: glyph squares own the heatmap, everything else off.
         if mgr is not None:
             mgr.set_active(False)
-        contours = _refs.get("contours")
         if contours is not None:
             contours.clear()
         if heatmap_lod:

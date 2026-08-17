@@ -39,14 +39,12 @@ run on every pan.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
-from dataclasses import dataclass, field as _field
-from typing import Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
-from vtkmodules.vtkCommonCore import vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkImageData, vtkPolyData
 from vtkmodules.vtkFiltersCore import (
     vtkCleanPolyData,
@@ -283,18 +281,10 @@ class ContourRenderer:
 
     # ── configuration ──────────────────────────────────────
 
-    def set_camera(self, camera):
-        self._camera = camera
-
     def set_volume_z(self, z_lo: float, z_hi: float):
         """World-Z of the two volume faces the contours are drawn against."""
         self._volume_z = (float(z_lo), float(z_hi))
 
-    @property
-    def is_active(self) -> bool:
-        return self._active
-
-    @property
     def line_count(self) -> int:
         return self._n_lines
 
@@ -661,21 +651,6 @@ class ContourRenderer:
     def iso_value(self) -> float:
         """The iso-value currently drawn (diagnostics and tests)."""
         return self._last_value
-
-    @property
-    def iso_percentile(self) -> float:
-        """The percentile the ramp settled on, after the cell-count cap."""
-        return self._last_pct
-
-    @property
-    def sigma_um(self) -> float:
-        """Smoothing scale the cached blur was built at."""
-        return self._sigma_um
-
-    @property
-    def has_field(self) -> bool:
-        """True when a field is cached and a pan can re-cut it."""
-        return self._raw is not None
 
     def needs_viewport_update(self, roi_vox) -> bool:
         """Has the view moved enough to be worth re-cutting the line?

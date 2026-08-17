@@ -200,11 +200,17 @@ def init_state(state):
     state.setdefault("heatmap_auto_level", "auto")  # "auto" or "manual" LOD level selection
     # Heatmap mode. The solid-cube "filled" mode was removed; the grid and the
     # shader-based integrated heatmap are the two that remain.
-    state.setdefault("heatmap_mode", "grid")  # "grid" | "integrated"
-    # Integrated (shader) heatmap effect toggles — all on by default.
-    state.setdefault("ihm_gain_enabled", True)
-    state.setdefault("ihm_sampling_enabled", True)
-    state.setdefault("ihm_outline_enabled", True)
+    state.setdefault("heatmap_mode", "grid")  # "grid" | "contour" | "integrated"
+    # Effects belonging to the INTEGRATED mode alone. `ihm_effects` is what the
+    # UI binds to — a multi-select button group matching the mode row above —
+    # and the two booleans are derived from it (see on_ihm_effects_change).
+    #
+    # Both off by default: they modulate the volume rendering itself, which is
+    # the more intrusive thing to do, so they are opt-in. The contours are no
+    # longer listed here; they are their own heatmap mode.
+    state.setdefault("ihm_effects", [])
+    state.setdefault("ihm_gain_enabled", False)
+    state.setdefault("ihm_sampling_enabled", False)
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     # Channels whose mesh surfaces the user has opted into. Empty by default:
     # the manifest holds thousands of tiles, so surfaces are never implicit.
@@ -473,7 +479,15 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
 
-    @state.change("ihm_gain_enabled", "ihm_sampling_enabled", "ihm_outline_enabled")
+    @state.change("ihm_effects")
+    def on_ihm_effects_change(ihm_effects, **kwargs):
+        """Expand the button group's selection into the flags the shader
+        manager reads. One source of truth: the UI writes only this list."""
+        picked = set(ihm_effects or [])
+        state.ihm_gain_enabled = "gain" in picked
+        state.ihm_sampling_enabled = "sampling" in picked
+
+    @state.change("ihm_gain_enabled", "ihm_sampling_enabled")
     def on_integrated_effects_change(**kwargs):
         # Structural change (shader rebuild) — routed through update_heatmap's
         # integrated branch; no-op in glyph modes.

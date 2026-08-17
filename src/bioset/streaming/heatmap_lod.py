@@ -278,11 +278,24 @@ class HeatmapLOD:
             getattr(state, "physical_size_y", None) or 1.0,
             getattr(state, "physical_size_z", None) or 1.0,
         )
-        # Route by mode. Both heatmap modes are driven by this one worker so
-        # that the integrated mode's contours inherit camera-distance LOD and
-        # viewport cropping — it used to suspend this worker entirely, which is
+        # Route by mode. All three modes are driven by this one worker so that
+        # the contours inherit camera-distance LOD and viewport cropping for
+        # free — the shader mode used to suspend this worker entirely, which is
         # why its map never resolved as you zoomed.
-        if getattr(state, "heatmap_mode", "grid") == "integrated":
+        #
+        #   grid       glyph squares
+        #   contour    iso-contour geometry
+        #   integrated shader effects on the volume; no heatmap geometry
+        mode = getattr(state, "heatmap_mode", "grid")
+        if mode == "integrated":
+            # The shader modulates the volume itself; there is no field
+            # geometry to place, and the maps are driven from the callbacks.
+            heatmap_renderer.clear()
+            if self._contours is not None:
+                self._contours.clear()
+            return False
+
+        if mode == "contour":
             if self._contours is None:
                 return False
             heatmap_renderer.clear()
