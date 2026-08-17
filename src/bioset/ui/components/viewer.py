@@ -74,7 +74,8 @@ def viewer(ctrl, render_window):
                     v_show=("nov_show_rect", False),
                     class_="nov-rect-overlay",
                     style=_overlay_style,
-                    v_on={"mousemove": _mousemove, "mouseup": _mouseup},
+                    mousemove=_mousemove,
+                    mouseup=_mouseup,
             ):
                 _lens_left = "(nov_dragging ? (nov_drag_start_rect_x + nov_drag_delta_x) : nov_rect_x) * 100"
                 _lens_bottom = "(nov_dragging ? (nov_drag_start_rect_y + nov_drag_delta_y) : nov_rect_y) * 100"

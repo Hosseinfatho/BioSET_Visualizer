@@ -3,7 +3,7 @@
   "title": "Melanoma like",
   "category": "Tumor",
   "created": "2026-03-14T17:14:39Z",
-  "updated": "2026-07-31T00:06:34Z",
+  "updated": "2026-08-17T03:47:10Z",
   "notes": "increasing interaction between MITF ans SOX10",
   "camera": {
     "position": [
@@ -145,5 +145,5 @@
   "description": "increasing interaction between MITF ans SOX10",
   "chat_history_enabled": true,
   "chat_history": [],
-  "chat_history_updated": "2026-07-31T00:06:34Z"
+  "chat_history_updated": "2026-08-17T03:47:10Z"
 }

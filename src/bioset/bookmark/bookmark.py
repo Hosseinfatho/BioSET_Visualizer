@@ -508,6 +508,9 @@ def register_bookmark_callbacks(ctrl, state, _refs):
                     prop = streamer.volumes[ch_id].GetProperty()
                     prop.SetColor(color_tf)
                     prop.SetScalarOpacity(opacity_tf)
+                    prop.SetScalarOpacityUnitDistance(streamer._opacity_unit_distance())
+        if getattr(streamer, "apply_all_main_tfs_to_nov", None):
+            streamer.apply_all_main_tfs_to_nov()
 
     def bookmark_refresh_names():
         """Load snapshot names for current dataset into dropdown."""

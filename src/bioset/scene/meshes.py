@@ -50,19 +50,28 @@ class MeshManager:
         mesh_dir: Path | str,
         renderer: vtkRenderer,
         base_spacing: Tuple[float, float, float] = (0.14, 0.14, 0.28),
+        nov_renderer: Optional[vtkRenderer] = None,
     ):
         self.mesh_dir = Path(mesh_dir)
         self.renderer = renderer
+        self.nov_renderer = nov_renderer
         self.base_sx, self.base_sy, self.base_sz = base_spacing
 
         self._manifest: Optional[dict] = None
         self._tiles: List[MeshTileInfo] = []
 
         self._actors: Dict[int, List[Tuple[str, vtkActor]]] = {}
+        self._nov_actors: Dict[int, List[Tuple[str, vtkActor]]] = {}
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {}
         self._world_polydatas: Dict[int, object] = {}  # channel_idx -> vtkPolyData
 
         self._load_manifest()
+
+    def set_nov_renderer(self, nov_renderer: Optional[vtkRenderer]) -> None:
+        """Attach / replace the Optimal View renderer used for mirrored mesh actors."""
+        if self.nov_renderer is not None and nov_renderer is not self.nov_renderer:
+            self.clear_nov_meshes()
+        self.nov_renderer = nov_renderer
 
     def _load_manifest(self):
         manifest_path = self.mesh_dir / "manifest.json"
@@ -225,9 +234,83 @@ class MeshManager:
         self._channel_colors[channel_idx] = color_rgb
         self._world_polydatas[channel_idx] = world_pd  # cache for label placement
 
+        # If Optimal View already has a mirrored mesh for this channel, refresh it.
+        if self.nov_renderer is not None and channel_idx in self._nov_actors:
+            for old_key, old_actor in self._nov_actors.pop(channel_idx, []):
+                try:
+                    self.nov_renderer.RemoveActor(old_actor)
+                except Exception:
+                    pass
+            self._add_nov_actor(channel_idx, tile_key, world_pd, actor)
+
         print(f"[meshes] Added mesh {tile_key}: "
               f"offset=({tile_info.world_offset_x}, {tile_info.world_offset_y}) "
               f"depth={tile_info.tile_depth}")
+
+    def _add_nov_actor(
+        self,
+        channel_idx: int,
+        tile_key: str,
+        world_pd,
+        source_actor: vtkActor,
+    ) -> None:
+        """Create a NOV-popup actor mirroring a main-scene mesh actor."""
+        if self.nov_renderer is None:
+            return
+        opacity = source_actor.GetProperty().GetOpacity()
+        color = source_actor.GetProperty().GetColor()
+        nov_actor = self._make_actor(world_pd, tuple(color), opacity)
+        nov_actor.SetVisibility(source_actor.GetVisibility())
+        self.nov_renderer.AddActor(nov_actor)
+        if channel_idx not in self._nov_actors:
+            self._nov_actors[channel_idx] = []
+        self._nov_actors[channel_idx].append((tile_key, nov_actor))
+
+    def sync_nov_meshes(self, visible_channel_ids: Optional[List[int]] = None) -> None:
+        """Mirror all active main-scene meshes into the NOV popup with the same colors."""
+        if self.nov_renderer is None:
+            return
+        self.clear_nov_meshes()
+        visible = set(visible_channel_ids) if visible_channel_ids is not None else None
+        for channel_idx, entries in list(self._actors.items()):
+            if visible is not None and channel_idx not in visible:
+                continue
+            world_pd = self._world_polydatas.get(channel_idx)
+            for tile_key, actor in entries:
+                pd = world_pd
+                if pd is None:
+                    mapper = actor.GetMapper()
+                    pd = mapper.GetInput() if mapper is not None else None
+                if pd is None:
+                    continue
+                self._add_nov_actor(channel_idx, tile_key, pd, actor)
+        print(f"[meshes] Synced {sum(len(v) for v in self._nov_actors.values())} mesh actor(s) to NOV")
+
+    def clear_nov_meshes(self) -> None:
+        """Remove all mirrored mesh actors from the NOV popup renderer."""
+        if not self._nov_actors:
+            return
+        for _channel_idx, entries in list(self._nov_actors.items()):
+            for tile_key, actor in entries:
+                if self.nov_renderer is not None:
+                    try:
+                        self.nov_renderer.RemoveActor(actor)
+                    except Exception:
+                        pass
+                print(f"[meshes] Removed NOV mesh {tile_key}")
+        self._nov_actors.clear()
+
+    def set_nov_mesh_visibility(self, selected_channel_ids: List[int]) -> None:
+        """Show/hide NOV mesh actors to match Optimal View channel selection."""
+        sel = set(selected_channel_ids) if selected_channel_ids else set()
+        # If NOV actors were never built (e.g. popup just opened), sync first.
+        if self.nov_renderer is not None and self._actors and not self._nov_actors:
+            self.sync_nov_meshes(selected_channel_ids)
+            return
+        for channel_idx, entries in self._nov_actors.items():
+            vis = 1 if channel_idx in sel else 0
+            for _, actor in entries:
+                actor.SetVisibility(vis)
 
     def deactivate_channel_mesh(self, channel_idx: int):
         """Remove all mesh actors for a channel from the scene."""
@@ -237,15 +320,26 @@ class MeshManager:
             self.renderer.RemoveActor(actor)
             print(f"[meshes] Removed mesh {tile_key}")
         del self._actors[channel_idx]
+        if channel_idx in self._nov_actors:
+            for tile_key, actor in self._nov_actors[channel_idx]:
+                if self.nov_renderer is not None:
+                    try:
+                        self.nov_renderer.RemoveActor(actor)
+                    except Exception:
+                        pass
+                print(f"[meshes] Removed NOV mesh {tile_key}")
+            del self._nov_actors[channel_idx]
         self._channel_colors.pop(channel_idx, None)
         self._world_polydatas.pop(channel_idx, None)
 
     def update_channel_color(self, channel_idx: int, color_rgb: Tuple[float, float, float]):
         """Update the color of all mesh actors for a channel."""
-        if channel_idx not in self._actors:
+        if channel_idx not in self._actors and channel_idx not in self._nov_actors:
             return
         self._channel_colors[channel_idx] = color_rgb
-        for _, actor in self._actors[channel_idx]:
+        for _, actor in self._actors.get(channel_idx, []):
+            actor.GetProperty().SetColor(*color_rgb)
+        for _, actor in self._nov_actors.get(channel_idx, []):
             actor.GetProperty().SetColor(*color_rgb)
 
     def update_spacing(self, sx: float, sy: float, sz: float):
@@ -259,7 +353,9 @@ class MeshManager:
         """Remove all mesh actors from the scene."""
         for channel_idx in list(self._actors.keys()):
             self.deactivate_channel_mesh(channel_idx)
+        self.clear_nov_meshes()
         self._actors.clear()
+        self._nov_actors.clear()
         self._channel_colors.clear()
         self._world_polydatas.clear()
 

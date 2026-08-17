@@ -114,7 +114,8 @@ def main():
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
                         view.update()
                     if scene.streamer.process_nov_progressive_queue():
-                        view.update()
+                        # NOV JPEG is already pushed from streamer.nov_render_callback.
+                        pass
                     # Once the user is idle, re-render the volume at full quality
                     if scene.streamer.tick_idle():
                         view.update()
@@ -124,7 +125,6 @@ def main():
                         if getattr(server.state, "nov_panel_visible", False) and hasattr(ctrl, "update_nov_scale_bar"):
                             try:
                                 ctrl.update_nov_scale_bar()
-                                view.update()
                             except Exception:
                                 pass
                 except Exception as e:

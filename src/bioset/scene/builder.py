@@ -385,6 +385,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
             mesh_dir=cfg.mesh_dir,
             renderer=renderer,
             base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
+            nov_renderer=nov_renderer,
         )
 
     heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules) if streamer is not None else None

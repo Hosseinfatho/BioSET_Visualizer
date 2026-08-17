@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import threading
 import time
 from typing import Callable, List, Optional, Tuple
 
@@ -471,31 +470,79 @@ def register_nov_callbacks(ctrl, state, _refs):
                 _refs["nov_view"].update()
         return result
 
-    def _point_nov_camera_at_lens_center():
-        """Set NOV popup camera to look at current lens center, keeping view direction and distance."""
+    def _nov_lens_aabb():
+        """World AABB of the current NOV lens, or None if unset."""
+        center = getattr(state, "nov_lens_center", None)
+        L = float(getattr(state, "nov_lens_length", 0.0) or 0.0)
+        W = float(getattr(state, "nov_lens_width", 0.0) or 0.0)
+        D = float(getattr(state, "nov_lens_depth", 0.0) or 0.0)
+        if not center or len(center) < 3 or L <= 0 or W <= 0 or D <= 0:
+            return None
+        cx, cy, cz = float(center[0]), float(center[1]), float(center[2])
+        return (cx - L * 0.5, cx + L * 0.5, cy - W * 0.5, cy + W * 0.5, cz - D * 0.5, cz + D * 0.5)
+
+    def _frame_nov_camera_on_lens(*, use_main_orientation: bool = False):
+        """Frame the popup on the volume that is actually in the NOV renderer."""
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "nov_renderer", None):
             return
-        center = getattr(state, "nov_lens_center", None)
-        if not center or len(center) < 3:
-            return
-        ren = streamer.nov_renderer
-        cam = ren.GetActiveCamera()
-        fp = list(cam.GetFocalPoint())
-        pos = list(cam.GetPosition())
-        dx = pos[0] - fp[0]
-        dy = pos[1] - fp[1]
-        dz = pos[2] - fp[2]
-        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if dist < 1e-12:
-            return
-        cam.SetFocalPoint(center[0], center[1], center[2])
-        cam.SetPosition(
-            center[0] + dx,
-            center[1] + dy,
-            center[2] + dz,
-        )
-        ren.ResetCameraClippingRange()
+        try:
+            ren = streamer.nov_renderer
+            cam = ren.GetActiveCamera()
+            if use_main_orientation and getattr(streamer, "renderer", None):
+                main = streamer.renderer.GetActiveCamera()
+                cam.SetViewUp(*main.GetViewUp())
+                vn = main.GetViewPlaneNormal()
+                fp = list(cam.GetFocalPoint())
+                cam.SetPosition(fp[0] + vn[0], fp[1] + vn[1], fp[2] + vn[2])
+            bounds = None
+            mv = getattr(streamer, "_nov_multi_volume", None)
+            if mv is not None:
+                try:
+                    b = mv.GetBounds()
+                    if b is not None and b[1] >= b[0]:
+                        span = (b[1] - b[0]) + (b[3] - b[2]) + (b[5] - b[4])
+                        if span > 1e-6:
+                            bounds = (float(b[0]), float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5]))
+                except Exception:
+                    bounds = None
+            if bounds is None and getattr(streamer, "nov_data_bounds", None):
+                try:
+                    bounds = streamer.nov_data_bounds()
+                except Exception:
+                    bounds = None
+            if bounds is None:
+                bounds = _nov_lens_aabb()
+            try:
+                if bounds is not None:
+                    ren.ResetCamera(*bounds)
+                else:
+                    ren.ResetCamera()
+            except TypeError:
+                ren.ResetCamera()
+            try:
+                cam.Dolly(1.15)
+            except Exception:
+                pass
+            try:
+                if bounds is not None:
+                    ren.ResetCameraClippingRange(*bounds)
+                else:
+                    ren.ResetCameraClippingRange()
+            except TypeError:
+                ren.ResetCameraClippingRange()
+        except Exception as e:
+            print(f"[nov] frame camera error: {e}")
+
+    def _point_nov_camera_at_lens_center():
+        """Frame the current lens in the popup, keeping the current view direction."""
+        _frame_nov_camera_on_lens(use_main_orientation=False)
+
+    def _schedule_nov_reframe(*, use_main_orientation: bool = False):
+        """Re-fit after the popup widget has been laid out (main VTK thread)."""
+        _refs["_nov_resize_use_main"] = bool(use_main_orientation)
+        _refs["_nov_resize_recenter"] = True
+        _refs["_nov_resize_after"] = time.time() + 0.35
 
     def _apply_rect_to_3d():
         """Convert current 2D rect (state) to 3D lens and set_nov_lens_clip."""
@@ -565,6 +612,7 @@ def register_nov_callbacks(ctrl, state, _refs):
             streamer.clear_nov_lens_clip()
             if getattr(streamer, "clear_nov_view", None):
                 streamer.clear_nov_view()
+        _clear_nov_meshes()
         if _refs.get("view"):
             _refs["view"].update()
 
@@ -582,34 +630,11 @@ def register_nov_callbacks(ctrl, state, _refs):
         pos = c.get("position")
         if fp and len(fp) >= 3:
             cam.SetFocalPoint(fp[0], fp[1], fp[2])
-        if pos and len(pos) >= 3 and fp and len(fp) >= 3:
-            # Same direction as candidate, but distance = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * lens diameter
-            L = getattr(state, "nov_lens_length", 0.0)
-            W = getattr(state, "nov_lens_width", 0.0)
-            D = getattr(state, "nov_lens_depth", 0.0)
-            if L > 0 and W > 0 and D > 0:
-                diam = 2.0 * nov_lens_circum_radius(L, W, D)
-                popup_dist = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * diam
-                dx = pos[0] - fp[0]
-                dy = pos[1] - fp[1]
-                dz = pos[2] - fp[2]
-                n = math.sqrt(dx * dx + dy * dy + dz * dz)
-                if n >= 1e-12:
-                    scale = popup_dist / n
-                    cam.SetPosition(
-                        fp[0] + dx * scale,
-                        fp[1] + dy * scale,
-                        fp[2] + dz * scale,
-                    )
-                else:
-                    cam.SetPosition(pos[0], pos[1], pos[2])
-            else:
-                cam.SetPosition(pos[0], pos[1], pos[2])
-        elif pos and len(pos) >= 3:
+        if pos and len(pos) >= 3:
             cam.SetPosition(pos[0], pos[1], pos[2])
         if c.get("viewUp") and len(c.get("viewUp", [])) >= 3:
             cam.SetViewUp(c["viewUp"][:3])
-        ren.ResetCameraClippingRange()
+        _frame_nov_camera_on_lens(use_main_orientation=False)
         if getattr(streamer, "nov_render_window", None):
             streamer.nov_render_window.Render()
         if _refs.get("nov_view"):
@@ -634,24 +659,21 @@ def register_nov_callbacks(ctrl, state, _refs):
         if not pos or len(pos) < 3:
             return (None, fp, view_up)
         pos = list(pos[:3])
-        L = getattr(state, "nov_lens_length", 0.0)
-        W = getattr(state, "nov_lens_width", 0.0)
-        D = getattr(state, "nov_lens_depth", 0.0)
-        if L > 0 and W > 0 and D > 0:
-            diam = 2.0 * nov_lens_circum_radius(L, W, D)
-            popup_dist = POPUP_CAMERA_DISTANCE_DIAMETER_MULT * diam
-            dx = pos[0] - fp[0]
-            dy = pos[1] - fp[1]
-            dz = pos[2] - fp[2]
-            n = math.sqrt(dx * dx + dy * dy + dz * dz)
-            if n >= 1e-12:
-                scale = popup_dist / n
-                pos = [
-                    fp[0] + dx * scale,
-                    fp[1] + dy * scale,
-                    fp[2] + dz * scale,
-                ]
-        return (pos, fp, view_up)
+        streamer = _refs.get("streamer")
+        ren = getattr(streamer, "nov_renderer", None) if streamer else None
+        if ren is None:
+            return (pos, fp, view_up)
+        cam = ren.GetActiveCamera()
+        saved = (list(cam.GetPosition()), list(cam.GetFocalPoint()), list(cam.GetViewUp()))
+        cam.SetFocalPoint(fp[0], fp[1], fp[2])
+        cam.SetPosition(pos[0], pos[1], pos[2])
+        cam.SetViewUp(view_up[0], view_up[1], view_up[2])
+        _frame_nov_camera_on_lens(use_main_orientation=False)
+        framed = _get_current_nov_camera()
+        cam.SetPosition(*saved[0])
+        cam.SetFocalPoint(*saved[1])
+        cam.SetViewUp(*saved[2])
+        return framed
 
     def _get_current_nov_camera():
         """Return (position, focal_point, view_up) from current NOV renderer camera."""
@@ -680,7 +702,13 @@ def register_nov_callbacks(ctrl, state, _refs):
         cam.SetPosition(pos[0], pos[1], pos[2])
         if view_up and len(view_up) >= 3:
             cam.SetViewUp(view_up[0], view_up[1], view_up[2])
-        ren.ResetCameraClippingRange()
+        if getattr(streamer, "_clip_nov_camera_to_data", None):
+            try:
+                streamer._clip_nov_camera_to_data()
+            except Exception:
+                ren.ResetCameraClippingRange()
+        else:
+            ren.ResetCameraClippingRange()
         if getattr(streamer, "nov_render_window", None):
             streamer.nov_render_window.Render()
         if _refs.get("nov_view"):
@@ -738,8 +766,32 @@ def register_nov_callbacks(ctrl, state, _refs):
             vup = [vup[0] / n, vup[1] / n, vup[2] / n]
         return pos, fp, vup
 
+    def _run_delayed_nov_resize():
+        """Re-center NOV camera after the popup has been laid out. Must run on the VTK/main thread."""
+        if _refs.get("_nov_resize_recenter"):
+            _frame_nov_camera_on_lens(use_main_orientation=bool(_refs.get("_nov_resize_use_main")))
+        _refs["_nov_resize_recenter"] = False
+        _refs["_nov_resize_use_main"] = False
+        streamer = _refs.get("streamer")
+        if streamer and getattr(streamer, "nov_render_window", None):
+            try:
+                streamer.nov_render_window.Render()
+            except Exception:
+                pass
+        nov_view = _refs.get("nov_view")
+        if nov_view and hasattr(nov_view, "update"):
+            try:
+                nov_view.update()
+            except Exception:
+                pass
+
     def _nov_animation_tick():
         """Called from app async loop every ~40ms. Advances one step of NOV camera transition and pushes frame to client."""
+        resize_after = _refs.get("_nov_resize_after") or 0
+        if resize_after > 0 and time.time() >= resize_after and not _refs.get("_nov_anim"):
+            _refs["_nov_resize_after"] = 0
+            _run_delayed_nov_resize()
+
         # Auto-play: when scheduled time reached and no animation running, advance to next view
         nov_auto_next_after = _refs.get("_nov_auto_next_after") or 0
         if nov_auto_next_after > 0 and time.time() >= nov_auto_next_after and not _refs.get("_nov_anim"):
@@ -879,10 +931,34 @@ def register_nov_callbacks(ctrl, state, _refs):
             except Exception:
                 pass
 
+    _nov_pushing = {"on": False}
+
+    def _push_nov_view():
+        """Send the NOV render-window JPEG to the popup widget (main view.update is a different window)."""
+        if _nov_pushing["on"]:
+            return
+        nov_view = _refs.get("nov_view")
+        if nov_view and hasattr(nov_view, "update"):
+            _nov_pushing["on"] = True
+            try:
+                nov_view.update()
+            except Exception:
+                pass
+            finally:
+                _nov_pushing["on"] = False
+
+    def _on_nov_rendered():
+        try:
+            update_nov_scale_bar()
+        except Exception:
+            pass
+        _push_nov_view()
+
     _s = _refs.get("streamer")
-    if _s is not None and getattr(_s, "nov_render_callback", None) is None:
-        _s.nov_render_callback = update_nov_scale_bar
+    if _s is not None:
+        _s.nov_render_callback = _on_nov_rendered
     ctrl.update_nov_scale_bar = update_nov_scale_bar
+    ctrl.nov_push_view = _push_nov_view
 
     # Update scale bar during interaction (zoom/pan) by listening to NOV render events.
     # This makes it responsive like the main scene scale bar.
@@ -971,6 +1047,21 @@ def register_nov_callbacks(ctrl, state, _refs):
         ry = max(0.0, min(1.0 - side, cy - side / 2.0))
         return (rx, ry, side, side)
 
+    def _sync_nov_meshes_from_main(selected=None):
+        """Mirror main-scene particle/mesh actors into the Optimal View popup."""
+        mesh_mgr = _refs.get("mesh_manager")
+        if not mesh_mgr or not getattr(mesh_mgr, "sync_nov_meshes", None):
+            return
+        sel = selected
+        if sel is None:
+            sel = list(getattr(state, "nov_selected_channels", []) or [])
+        mesh_mgr.sync_nov_meshes(sel)
+
+    def _clear_nov_meshes():
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr and getattr(mesh_mgr, "clear_nov_meshes", None):
+            mesh_mgr.clear_nov_meshes()
+
     def _update_nov_channel_list_from_active():
         """Read current activated channels from state and update NOV popup list and selection (after Reset, before Set)."""
         from bioset.ui.state import get_channel_color
@@ -989,6 +1080,9 @@ def register_nov_callbacks(ctrl, state, _refs):
         streamer = _refs.get("streamer")
         if streamer and getattr(streamer, "set_nov_channel_visibility", None):
             streamer.set_nov_channel_visibility(state.nov_selected_channels)
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr and getattr(mesh_mgr, "set_nov_mesh_visibility", None):
+            mesh_mgr.set_nov_mesh_visibility(state.nov_selected_channels)
 
     def run_nov_for_lens(center: List[float], length: float, width: float, depth: float, compute_entropy: bool = True):
         """Show NOV panel + lens + clip + active channels. If compute_entropy is False, only show popup (no optimal view calc).
@@ -1026,8 +1120,17 @@ def register_nov_callbacks(ctrl, state, _refs):
             state.nov_selected_channels = list(active_set) if active_set else []
             if getattr(streamer, "sync_nov_volumes", None):
                 streamer.sync_nov_volumes()
+            if getattr(streamer, "apply_all_main_tfs_to_nov", None):
+                streamer.apply_all_main_tfs_to_nov()
             if getattr(streamer, "set_nov_channel_visibility", None):
                 streamer.set_nov_channel_visibility(state.nov_selected_channels)
+            _sync_nov_meshes_from_main(state.nov_selected_channels)
+            _frame_nov_camera_on_lens(use_main_orientation=True)
+            _schedule_nov_reframe(use_main_orientation=True)
+            if getattr(streamer, "nov_render_window", None):
+                streamer.nov_render_window.Render()
+            if _refs.get("nov_view") and hasattr(_refs["nov_view"], "update"):
+                _refs["nov_view"].update()
             if _refs.get("view"):
                 _refs["view"].update()
             return
@@ -1307,9 +1410,13 @@ def register_nov_callbacks(ctrl, state, _refs):
             streamer.set_nov_lens_clip((center[0], center[1], center[2]), L, W, D)
         if getattr(streamer, "sync_nov_volumes", None):
             streamer.sync_nov_volumes()
-        # Center NOV camera on lens (align with TF_inv_2 so data appears in middle of popup)
-        if candidates:
-            _point_nov_camera_at_lens_center()
+        if getattr(streamer, "apply_all_main_tfs_to_nov", None):
+            streamer.apply_all_main_tfs_to_nov()
+        selected = list(getattr(state, "nov_selected_channels", []) or [])
+        if getattr(streamer, "set_nov_channel_visibility", None) and selected:
+            streamer.set_nov_channel_visibility(selected)
+        _sync_nov_meshes_from_main(selected)
+        _frame_nov_camera_on_lens(use_main_orientation=not bool(candidates))
         if getattr(streamer, "nov_render_window", None):
             streamer.nov_render_window.Render()
         state.nov_popup_open = True
@@ -1318,20 +1425,7 @@ def register_nov_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
-        def _delayed_nov_resize():
-            # Re-center camera after popup has been laid out/resized so content stays in middle
-            if candidates:
-                _point_nov_camera_at_lens_center()
-            streamer = _refs.get("streamer")
-            if streamer and getattr(streamer, "nov_render_window", None):
-                streamer.nov_render_window.Render()
-            if _refs.get("nov_view"):
-                try:
-                    _refs["nov_view"].update()
-                except Exception:
-                    pass
-
-        threading.Timer(0.35, _delayed_nov_resize).start()
+        _schedule_nov_reframe(use_main_orientation=not bool(candidates))
 
     def nov_reset():
         """Reset inside popup only: clear best-view results so user can move lens and press Set again. Keep popup and lens open."""
@@ -1345,12 +1439,15 @@ def register_nov_callbacks(ctrl, state, _refs):
         state.nov_sphere_svg = ""
         state.nov_sphere_xy = []
         # Point NOV popup camera at lens center so view is reset; lens content stays
-        _point_nov_camera_at_lens_center()
+        _frame_nov_camera_on_lens(use_main_orientation=True)
         # Refresh popup channel list from current activated channels so list and visibility stay in sync
         _update_nov_channel_list_from_active()
         streamer = _refs.get("streamer")
         if streamer and getattr(streamer, "sync_nov_volumes", None):
             streamer.sync_nov_volumes()
+        if streamer and getattr(streamer, "apply_all_main_tfs_to_nov", None):
+            streamer.apply_all_main_tfs_to_nov()
+        _sync_nov_meshes_from_main(list(getattr(state, "nov_selected_channels", []) or []))
         if _refs.get("nov_view"):
             _refs["nov_view"].update()
         if _refs.get("view"):
@@ -1366,11 +1463,20 @@ def register_nov_callbacks(ctrl, state, _refs):
         cid = channel_id if channel_id is not None else getattr(state, "nov_clicked_channel_id", None)
         if cid is None:
             return
-        sel = list(getattr(state, "nov_selected_channels", []) or [])
+        try:
+            cid = int(cid)
+        except (TypeError, ValueError):
+            return
+        sel = []
+        for x in list(getattr(state, "nov_selected_channels", []) or []):
+            try:
+                sel.append(int(x))
+            except (TypeError, ValueError):
+                continue
         if cid in sel:
             sel = [x for x in sel if x != cid]
         else:
-            sel = list(sel) + [cid]
+            sel = sel + [cid]
         state.nov_selected_channels = sel
         if _refs.get("view"):
             _refs["view"].update()
@@ -1380,10 +1486,20 @@ def register_nov_callbacks(ctrl, state, _refs):
         streamer = _refs.get("streamer")
         if not streamer or not getattr(streamer, "set_nov_channel_visibility", None):
             return
-        selected = list(getattr(state, "nov_selected_channels", []) or [])
+        selected = []
+        for x in list(getattr(state, "nov_selected_channels", []) or []):
+            try:
+                selected.append(int(x))
+            except (TypeError, ValueError):
+                continue
         streamer.set_nov_channel_visibility(selected)
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr and getattr(mesh_mgr, "set_nov_mesh_visibility", None):
+            mesh_mgr.set_nov_mesh_visibility(selected)
         if _refs.get("view"):
             _refs["view"].update()
+        if _refs.get("nov_view") and hasattr(_refs["nov_view"], "update"):
+            _refs["nov_view"].update()
 
     def nov_play_pause():
         """Toggle auto-play: when on, advance to next view after each view is shown (smooth transition then pause on view, then next); stops at last view."""

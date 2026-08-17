@@ -362,9 +362,12 @@ def register_state_change_handlers(state, ctrl):
 
     @state.change("channels")
     def on_channels_change(channels, **kwargs):
-        """When channel list or per-channel range changes, update NOV scores if panel is open."""
-        if hasattr(ctrl, 'nov_recompute_scores_if_visible'):
-            ctrl.nov_recompute_scores_if_visible()
+        """Range/color are applied in the slider/color callbacks.
+
+        Do not recompute NOV entropy here: that blocks the main intensity sliders
+        while the popup is open.
+        """
+        return
 
     @state.change("nov_selected_channels")
     def on_nov_selected_channels_change(nov_selected_channels, **kwargs):
@@ -623,6 +626,11 @@ def register_state_change_handlers(state, ctrl):
                 ctrl.ov_bookmark_refresh_categories()
             if hasattr(ctrl, "ov_bookmark_refresh_names"):
                 ctrl.ov_bookmark_refresh_names()
+            if hasattr(ctrl, "nov_push_view"):
+                try:
+                    ctrl.nov_push_view()
+                except Exception:
+                    pass
         else:
             if getattr(state, "ov_bookmark_flags_visible", False) and hasattr(ctrl, "ov_bookmark_hide_flags"):
                 ctrl.ov_bookmark_hide_flags()

@@ -214,6 +214,19 @@ class VolumeStreamer:
         self.nov_render_callback = None  # optional: called after each NOV window render (e.g. update scale bar)
         self.nov_volumes: Dict[int, vtkVolume] = {}
         self.nov_mappers: Dict[int, vtkGPUVolumeRayCastMapper] = {}
+        # NOV popup uses the same vtkMultiVolume blending as the main scene
+        # (per-sample composite) instead of stacking independent vtkVolumes.
+        self._nov_dummy_volume, self._nov_dummy_image = self._make_dummy_volume()
+        self._nov_multi_mapper = self._new_multi_mapper()
+        self._nov_multi_volume = self._new_multi_volume()
+        self._nov_multi_volume.SetMapper(self._nov_multi_mapper)
+        # Keep at least one dummy port so VtkRemoteView never renders an empty mapper.
+        self._nov_multi_volume.SetVolume(self._nov_dummy_volume, 0)
+        self._nov_multi_mapper.SetInputDataObject(0, self._nov_dummy_image)
+        self._nov_channel_port: Dict[int, int] = {}
+        self._nov_current_input: Dict[int, "vtkImageData"] = {}
+        # None = all NOV volumes visible; otherwise only channels in this set are ports.
+        self._nov_visible_channels: Optional[set[int]] = None
         # Progressive NOV: queue of (component, {ch_id: (np_arr, roi)}) loaded in background, applied on main thread
         self._nov_progressive_queue: queue.Queue = queue.Queue()
 
@@ -506,12 +519,13 @@ class VolumeStreamer:
         self._fine_images.pop(channel_id, None)
         self._rebuild_multivolume()
 
-        if channel_id in self.nov_volumes and self.nov_renderer:
-            self.nov_renderer.RemoveVolume(self.nov_volumes[channel_id])
-        if channel_id in self.nov_volumes:
-            del self.nov_volumes[channel_id]
-        if channel_id in self.nov_mappers:
-            del self.nov_mappers[channel_id]
+        self.nov_volumes.pop(channel_id, None)
+        self.nov_mappers.pop(channel_id, None)
+        self._nov_current_input.pop(channel_id, None)
+        if self._nov_visible_channels is not None:
+            self._nov_visible_channels.discard(channel_id)
+        if self.nov_renderer is not None:
+            self._rebuild_nov_multivolume()
 
         if channel_id in self.state:
             del self.state[channel_id]
@@ -581,6 +595,7 @@ class VolumeStreamer:
         prop = vol.GetProperty()
         prop.SetColor(color_tf)
         prop.SetScalarOpacity(opacity_tf)
+        prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
         # Membership is handled by the shared multi-volume (no per-channel AddVolume).
 
         self.state[channel_id] = ChannelState(component=component, roi=roi)
@@ -708,6 +723,12 @@ class VolumeStreamer:
         """Set the optional NOV popup renderer/window. When set, clipped volumes are pushed here."""
         self.nov_renderer = renderer
         self.nov_render_window = render_window
+        if renderer is not None:
+            try:
+                if not renderer.HasViewProp(self._nov_multi_volume):
+                    renderer.AddVolume(self._nov_multi_volume)
+            except Exception:
+                renderer.AddVolume(self._nov_multi_volume)
 
     def set_nov_lens_clip(self, center: Tuple[float, float, float], length: float, width: float, depth: float) -> None:
         """Clip NOV popup view to inside lens. Main view stays full. Call sync_nov_volumes() after to update popup."""
@@ -730,11 +751,12 @@ class VolumeStreamer:
                 self._nov_progressive_queue.get_nowait()
         except queue.Empty:
             pass
-        for ch, vol in list(self.nov_volumes.items()):
-            if self.nov_renderer.HasViewProp(vol):
-                self.nov_renderer.RemoveVolume(vol)
         self.nov_volumes.clear()
         self.nov_mappers.clear()
+        self._nov_current_input.clear()
+        self._nov_channel_port.clear()
+        self._nov_visible_channels = None
+        self._rebuild_nov_multivolume()
         if self.nov_render_window:
             self.nov_render_window.Render()
         if self.render_callback is not None:
@@ -768,7 +790,11 @@ class VolumeStreamer:
         if not self.nov_renderer or not self._nov_lens_clip or not self._active_channels:
             return
         try:
-            for ch in list(self._active_channels):
+            # Stable order matching main-scene multi-volume membership.
+            channels = [c for c in self.volumes.keys() if c in self._active_channels]
+            if not channels:
+                channels = sorted(self._active_channels)
+            for ch in channels:
                 roi_nov = self._nov_lens_roi_at_component(component)
                 if roi_nov is None:
                     continue
@@ -782,23 +808,20 @@ class VolumeStreamer:
                 origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
                 try:
                     img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
-                except ValueError:
+                except ValueError as e:
+                    print(f"[nov] channel {ch} vtk image failed: {e}")
                     continue
                 try:
-                    vol, mapper = self._get_or_create_nov_volume(ch)
-                    mapper.SetInputData(img)
-                    mapper.Modified()
-                    if ch in self._channel_tfs:
-                        color_tf, opacity_tf = self._channel_tfs[ch]
-                        prop = vol.GetProperty()
-                        prop.SetColor(color_tf)
-                        prop.SetScalarOpacity(opacity_tf)
-                        prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
-                    if not self.nov_renderer.HasViewProp(vol):
-                        self.nov_renderer.AddVolume(vol)
-                except Exception:
+                    self._get_or_create_nov_volume(ch)
+                    self._set_nov_channel_input(ch, img)
+                    self._copy_main_tf_to_nov(ch)
+                except Exception as e:
+                    print(f"[nov] channel {ch} attach failed: {e}")
                     continue
-            self.nov_renderer.ResetCameraClippingRange()
+            self._sync_nov_mapper_from_main()
+            self._clip_nov_camera_to_data()
+            n_ready = sum(1 for img in self._nov_current_input.values() if img is not None)
+            print(f"[nov] synced {n_ready} channel(s) bounds={self.nov_data_bounds()}")
             if self.nov_render_window:
                 self.nov_render_window.Render()
             if self.render_callback is not None:
@@ -813,25 +836,195 @@ class VolumeStreamer:
             print(f"[nov] sync_nov_volumes_at_component error: {e}")
             traceback.print_exc()
 
+    @staticmethod
+    def _volume_color_tf(prop):
+        try:
+            tf = prop.GetRGBTransferFunction(0)
+            if tf is not None:
+                return tf
+        except TypeError:
+            pass
+        return prop.GetRGBTransferFunction()
+
+    @staticmethod
+    def _volume_opacity_tf(prop):
+        try:
+            tf = prop.GetScalarOpacity(0)
+            if tf is not None:
+                return tf
+        except TypeError:
+            pass
+        return prop.GetScalarOpacity()
+
+    @staticmethod
+    def _volume_unit_distance(prop) -> float:
+        try:
+            d = float(prop.GetScalarOpacityUnitDistance(0))
+            if d > 0:
+                return d
+        except TypeError:
+            pass
+        try:
+            d = float(prop.GetScalarOpacityUnitDistance())
+            if d > 0:
+                return d
+        except Exception:
+            pass
+        return 0.0
+
+    def _nov_min_spacing(self) -> float:
+        mins: List[float] = []
+        for img in self._nov_current_input.values():
+            if img is None:
+                continue
+            try:
+                s = img.GetSpacing()
+                mins.append(min(abs(float(s[0])), abs(float(s[1])), abs(float(s[2]))))
+            except Exception:
+                continue
+        if mins:
+            return max(min(mins), 1e-6)
+        return self._opacity_unit_distance()
+
+    def _nov_voxel_sample_distance(self) -> float:
+        """One sample per NOV voxel so the crop is not undersampled relative to main."""
+        return self._nov_min_spacing()
+
+    def _clip_nov_camera_to_data(self) -> None:
+        """Near/far from the crop only — full-scene ResetCameraClippingRange clips the popup sparse."""
+        if self.nov_renderer is None:
+            return
+        b = self.nov_data_bounds()
+        cam = self.nov_renderer.GetActiveCamera()
+        if b is None:
+            return
+        try:
+            self.nov_renderer.ResetCameraClippingRange(*b)
+            return
+        except TypeError:
+            pass
+        cx = 0.5 * (b[0] + b[1])
+        cy = 0.5 * (b[2] + b[3])
+        cz = 0.5 * (b[4] + b[5])
+        pos = cam.GetPosition()
+        dist = math.sqrt((pos[0] - cx) ** 2 + (pos[1] - cy) ** 2 + (pos[2] - cz) ** 2)
+        diag = math.sqrt((b[1] - b[0]) ** 2 + (b[3] - b[2]) ** 2 + (b[5] - b[4]) ** 2)
+        near = max(dist - diag, dist * 0.05, 0.01)
+        far = dist + diag + 1.0
+        if far <= near:
+            far = near + 1.0
+        cam.SetClippingRange(near, far)
+
+    def _sync_nov_mapper_from_main(self) -> None:
+        """Same blend mode as main; sample every NOV voxel (no AutoAdjust).
+
+        AutoAdjust is tuned on the full-volume mapper and undersamples the crop,
+        so a channel that is dense in the main view looks sparse in the popup.
+        """
+        src = getattr(self, "_multi_mapper", None)
+        dst = getattr(self, "_nov_multi_mapper", None)
+        if src is None or dst is None:
+            return
+        try:
+            dst.SetBlendMode(src.GetBlendMode())
+        except Exception:
+            pass
+        try:
+            dst.SetImageSampleDistance(1.0)
+            dst.SetMinimumImageSampleDistance(1.0)
+            dst.SetMaximumImageSampleDistance(1.0)
+        except Exception:
+            pass
+        sd = self._nov_voxel_sample_distance()
+        try:
+            dst.SetAutoAdjustSampleDistances(False)
+            if hasattr(dst, "SetLockSampleDistanceToInputSpacing"):
+                dst.SetLockSampleDistanceToInputSpacing(True)
+            dst.SetSampleDistance(sd)
+        except Exception:
+            try:
+                dst.SetAutoAdjustSampleDistances(False)
+                dst.SetSampleDistance(sd)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _as_channel_ids(ids) -> List[int]:
+        out: List[int] = []
+        for x in ids or []:
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _nov_target_component(self) -> int:
+        """Same LOD as the main view so color/visibility match what the user sees."""
+        if self._last_component is not None:
+            return int(self._last_component)
+        for st in self.state.values():
+            return int(st.component)
+        return int(self.cfg.max_component)
+
+    def _copy_main_tf_to_nov(self, channel_id: int) -> None:
+        """Deep-copy the live main-scene TF so the popup uses the same range/color/opacity."""
+        if channel_id not in self.nov_volumes:
+            return
+        nov_prop = self.nov_volumes[channel_id].GetProperty()
+        color_tf = opacity_tf = None
+        if channel_id in self.volumes:
+            main_prop = self.volumes[channel_id].GetProperty()
+            color_tf = self._volume_color_tf(main_prop)
+            opacity_tf = self._volume_opacity_tf(main_prop)
+        cached = self._channel_tfs.get(channel_id)
+        if cached and (
+            color_tf is None or opacity_tf is None
+            or (hasattr(color_tf, "GetSize") and color_tf.GetSize() < 2)
+        ):
+            color_tf, opacity_tf = cached
+        if color_tf is None or opacity_tf is None:
+            return
+        color_copy = vtkColorTransferFunction()
+        opacity_copy = vtkPiecewiseFunction()
+        try:
+            color_copy.DeepCopy(color_tf)
+            opacity_copy.DeepCopy(opacity_tf)
+        except Exception:
+            return
+        try:
+            nov_prop.SetColor(color_copy)
+            nov_prop.SetScalarOpacity(opacity_copy)
+        except Exception:
+            try:
+                nov_prop.SetColor(0, color_copy)
+                nov_prop.SetScalarOpacity(0, opacity_copy)
+            except Exception:
+                return
+        unit_dist = self._opacity_unit_distance()
+        if channel_id in self.volumes:
+            main_prop = self.volumes[channel_id].GetProperty()
+            ud = self._volume_unit_distance(main_prop)
+            if ud > 0:
+                unit_dist = ud
+            nov_prop.SetInterpolationType(main_prop.GetInterpolationType())
+        nov_prop.SetScalarOpacityUnitDistance(unit_dist)
+        nov_prop.ShadeOff()
+        try:
+            nov_prop.SetIndependentComponents(True)
+        except Exception:
+            pass
+        nov_prop.Modified()
+
     def apply_main_channel_to_nov(self, channel_id: int) -> None:
         """Apply main-scene channel color and transfer function (filter) to the NOV popup volume for this channel."""
         if self.nov_renderer is None:
             return
-        if channel_id not in self.nov_volumes or channel_id not in self._channel_tfs:
+        if channel_id not in self.nov_volumes:
             return
         try:
-            vol = self.nov_volumes[channel_id]
-            color_tf, opacity_tf = self._channel_tfs[channel_id]
-            prop = vol.GetProperty()
-            prop.SetColor(color_tf)
-            prop.SetScalarOpacity(opacity_tf)
-            if channel_id in self.nov_mappers and self.nov_mappers[channel_id].GetInput():
-                spacing = self.nov_mappers[channel_id].GetInput().GetSpacing()
-                prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
+            self._copy_main_tf_to_nov(channel_id)
             if self.nov_render_window:
                 self.nov_render_window.Render()
-            if self.render_callback:
-                self.render_callback()
             if self.nov_render_callback is not None:
                 try:
                     self.nov_render_callback()
@@ -842,13 +1035,30 @@ class VolumeStreamer:
             print(f"[nov] apply_main_channel_to_nov error: {e}")
             traceback.print_exc()
 
+    def apply_all_main_tfs_to_nov(self) -> None:
+        """Re-apply every main-scene TF onto current NOV volumes."""
+        for ch in list(self.nov_volumes.keys()):
+            self._copy_main_tf_to_nov(ch)
+        if self.nov_render_window:
+            self.nov_render_window.Render()
+        if self.nov_render_callback is not None:
+            try:
+                self.nov_render_callback()
+            except Exception:
+                pass
+
     def set_nov_channel_visibility(self, selected_channel_ids: List[int]) -> None:
-        """Show only NOV volumes whose channel id is in selected_channel_ids; hide others. Does not remove volumes."""
+        """Show only NOV volumes whose channel id is in selected_channel_ids; hide others.
+
+        With vtkMultiVolume, visibility is membership in the shared ports (not
+        SetVisibility on per-channel actors), so we rebuild the multi-volume.
+        """
         if not self.nov_renderer:
             return
-        sel = set(selected_channel_ids) if selected_channel_ids else set()
-        for ch, vol in self.nov_volumes.items():
-            vol.SetVisibility(1 if ch in sel else 0)
+        ids = self._as_channel_ids(selected_channel_ids)
+        # Empty list is often Vue checkbox init — treat as "show all", not a blank popup.
+        self._nov_visible_channels = set(ids) if ids else None
+        self._rebuild_nov_multivolume()
         if self.nov_render_window:
             self.nov_render_window.Render()
         if self.render_callback is not None:
@@ -864,20 +1074,23 @@ class VolumeStreamer:
         if not self.nov_renderer or not self._nov_lens_clip or not self._active_channels:
             return
         try:
-            start_comp = self.cfg.max_component
+            start_comp = self._nov_target_component()
             self.sync_nov_volumes_at_component(start_comp)
-            VolumeStreamer._executor.submit(self._run_nov_progressive_load)
+            self.apply_all_main_tfs_to_nov()
+            VolumeStreamer._executor.submit(self._run_nov_progressive_load, start_comp)
         except Exception as e:
             import traceback
             print(f"[nov] sync_nov_volumes error: {e}")
             traceback.print_exc()
 
-    def _run_nov_progressive_load(self) -> None:
-        """Background thread: load NOV box at each component from coarse to fine and put in queue for main thread."""
+    def _run_nov_progressive_load(self, start_comp: Optional[int] = None) -> None:
+        """Background thread: refine NOV from the current main LOD toward finer levels."""
         if not self._nov_lens_clip or not self._active_channels:
             return
+        if start_comp is None:
+            start_comp = self._nov_target_component()
         try:
-            for comp in range(self.cfg.max_component, self.cfg.min_component - 1, -1):
+            for comp in range(int(start_comp) - 1, self.cfg.min_component - 1, -1):
                 roi_nov = self._nov_lens_roi_at_component(comp)
                 if roi_nov is None:
                     continue
@@ -911,20 +1124,13 @@ class VolumeStreamer:
                     spacing = self._spacing_for_component(comp)
                     origin_xyz = (roi_nov.x0 * spacing.sx, roi_nov.y0 * spacing.sy, 0.0)
                     img = self._create_vtk_image(np_arr, spacing, origin_xyz, for_nov_view=True)
-                    vol, mapper = self._get_or_create_nov_volume(ch)
-                    mapper.SetInputData(img)
-                    mapper.Modified()
-                    if ch in self._channel_tfs:
-                        color_tf, opacity_tf = self._channel_tfs[ch]
-                        prop = vol.GetProperty()
-                        prop.SetColor(color_tf)
-                        prop.SetScalarOpacity(opacity_tf)
-                        prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
-                    if not self.nov_renderer.HasViewProp(vol):
-                        self.nov_renderer.AddVolume(vol)
+                    self._get_or_create_nov_volume(ch)
+                    self._set_nov_channel_input(ch, img)
+                    self._copy_main_tf_to_nov(ch)
                 except Exception:
                     continue
-            self.nov_renderer.ResetCameraClippingRange()
+            self._sync_nov_mapper_from_main()
+            self._clip_nov_camera_to_data()
             if self.nov_render_window:
                 self.nov_render_window.Render()
             if self.nov_render_callback is not None:
@@ -1264,7 +1470,9 @@ class VolumeStreamer:
             prop = vol.GetProperty()
             prop.SetColor(color_tf)
             prop.SetScalarOpacity(opacity_tf)
-        
+            prop.SetScalarOpacityUnitDistance(self._opacity_unit_distance())
+
+        self.apply_main_channel_to_nov(channel_id)
         self._render()
 
     # vtkMultiVolume caps at ~10 input ports; refuse extra channels gracefully.
@@ -1582,32 +1790,138 @@ class VolumeStreamer:
         return True
 
     def _get_or_create_nov_volume(self, ch: int) -> Tuple[vtkVolume, vtkGPUVolumeRayCastMapper]:
-        """Get or create volume/mapper for the NOV popup renderer."""
+        """Get or create the NOV channel's vtkVolume and register it on the shared
+        NOV vtkMultiVolume mapper (same blending model as the main scene)."""
         if self.nov_renderer is None:
             raise RuntimeError("NOV renderer not set")
         if ch in self.nov_volumes:
-            return self.nov_volumes[ch], self.nov_mappers[ch]
-        mapper = vtkGPUVolumeRayCastMapper()
-        mapper.SetAutoAdjustSampleDistances(True)
+            return self.nov_volumes[ch], self._nov_multi_mapper
+
         prop = vtkVolumeProperty()
         if self.cfg.linear_interpolation:
             prop.SetInterpolationTypeToLinear()
         else:
             prop.SetInterpolationTypeToNearest()
-        if self.cfg.shade:
-            prop.ShadeOn()
-            prop.SetAmbient(0.5)
-            prop.SetDiffuse(0.8)
-            prop.SetSpecular(0.1)
-            prop.SetSpecularPower(8.0)
-        else:
-            prop.ShadeOff()
+        # vtkMultiVolume does not support per-volume gradient shading; force off.
+        prop.ShadeOff()
+
         vol = vtkVolume()
-        vol.SetMapper(mapper)
         vol.SetProperty(prop)
+
         self.nov_volumes[ch] = vol
-        self.nov_mappers[ch] = mapper
-        return vol, mapper
+        self.nov_mappers[ch] = self._nov_multi_mapper
+        return vol, self._nov_multi_mapper
+
+    def _rebuild_nov_multivolume(self) -> None:
+        """Rebuild the NOV shared multi-volume from scratch on membership / visibility change."""
+        if self.nov_renderer is None:
+            return
+        try:
+            try:
+                self.nov_renderer.RemoveVolume(self._nov_multi_volume)
+            except Exception:
+                pass
+            self._nov_multi_mapper = self._new_multi_mapper()
+            self._nov_multi_volume = self._new_multi_volume()
+            self._nov_multi_volume.SetMapper(self._nov_multi_mapper)
+            self.nov_renderer.AddVolume(self._nov_multi_volume)
+            self._nov_channel_port.clear()
+            visible = self._nov_visible_channels
+            if visible is not None:
+                visible = {int(c) for c in visible}
+            # Keep the same channel order as the main multi-volume so blend matches.
+            ordered = [c for c in self.volumes.keys() if c in self.nov_volumes]
+            for c in self.nov_volumes.keys():
+                if c not in ordered:
+                    ordered.append(c)
+            ready = [
+                c for c in ordered
+                if self._nov_current_input.get(c) is not None
+                and (visible is None or int(c) in visible)
+            ]
+            if len(ready) > self.MAX_BLEND_CHANNELS:
+                print(f"[nov] blend cap {self.MAX_BLEND_CHANNELS}; "
+                      f"{len(ready) - self.MAX_BLEND_CHANNELS} channel(s) not rendered")
+                ready = ready[:self.MAX_BLEND_CHANNELS]
+            for port, ch in enumerate(ready):
+                self._nov_multi_volume.SetVolume(self.nov_volumes[ch], port)
+                self._nov_multi_mapper.SetInputDataObject(port, self._nov_current_input[ch])
+                self._nov_channel_port[ch] = port
+                self.nov_mappers[ch] = self._nov_multi_mapper
+            if len(ready) <= 1:
+                dport = len(ready)
+                self._place_nov_dummy_at_data_center()
+                self._nov_multi_volume.SetVolume(self._nov_dummy_volume, dport)
+                self._nov_multi_mapper.SetInputDataObject(dport, self._nov_dummy_image)
+            self._sync_nov_mapper_from_main()
+            for ch in ready:
+                self._copy_main_tf_to_nov(ch)
+        except Exception as e:
+            print(f"[nov] _rebuild_nov_multivolume error: {e}")
+
+    def nov_data_bounds(self) -> Optional[Tuple[float, float, float, float, float, float]]:
+        """AABB of NOV textures in world space (image origin is the crop origin)."""
+        acc = None
+        for img in self._nov_current_input.values():
+            if img is None:
+                continue
+            try:
+                b = img.GetBounds()
+            except Exception:
+                continue
+            if b is None or b[1] < b[0]:
+                continue
+            if acc is None:
+                acc = [float(b[0]), float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])]
+            else:
+                acc[0] = min(acc[0], float(b[0]))
+                acc[1] = max(acc[1], float(b[1]))
+                acc[2] = min(acc[2], float(b[2]))
+                acc[3] = max(acc[3], float(b[3]))
+                acc[4] = min(acc[4], float(b[4]))
+                acc[5] = max(acc[5], float(b[5]))
+        return tuple(acc) if acc else None
+
+    def _place_nov_dummy_at_data_center(self) -> None:
+        """Keep the dummy inside the crop so it cannot stretch vtkMultiVolume bounds to world origin."""
+        b = self.nov_data_bounds()
+        if b is not None:
+            ox = 0.5 * (b[0] + b[1])
+            oy = 0.5 * (b[2] + b[3])
+            oz = 0.5 * (b[4] + b[5])
+        elif self._nov_lens_clip is not None:
+            (ox, oy, oz), _, _, _ = self._nov_lens_clip
+        else:
+            ox = oy = oz = 0.0
+        self._nov_dummy_image.SetOrigin(float(ox), float(oy), float(oz))
+        sx = sy = sz = 0.14
+        for img in self._nov_current_input.values():
+            if img is None:
+                continue
+            try:
+                sp = img.GetSpacing()
+                sx, sy, sz = float(sp[0]), float(sp[1]), float(sp[2])
+                break
+            except Exception:
+                continue
+        self._nov_dummy_image.SetSpacing(sx, sy, sz)
+        self._nov_dummy_image.Modified()
+
+    def _set_nov_channel_input(self, ch: int, img: "vtkImageData") -> None:
+        """Point a NOV channel's port at a new texture (per-resolution hot path)."""
+        self._nov_current_input[ch] = img
+        if ch in self.nov_volumes:
+            self.nov_volumes[ch].SetPosition(0.0, 0.0, 0.0)
+        self._nov_current_input[ch] = img
+        port = self._nov_channel_port.get(ch)
+        if port is None:
+            visible = self._nov_visible_channels
+            if ch in self.nov_volumes and (visible is None or int(ch) in visible):
+                self._rebuild_nov_multivolume()
+            self._place_nov_dummy_at_data_center()
+            return
+        self._nov_multi_mapper.SetInputDataObject(port, img)
+        self._place_nov_dummy_at_data_center()
 
     # OpenGL 3D texture limit (avoid "Invalid texture dimensions" / MAX_3D_TEXTURE_SIZE 2048)
     MAX_TEXTURE_DIM = 2048
@@ -1657,22 +1971,38 @@ class VolumeStreamer:
                 )
             print(f"[stream] Downsampled volume to ({z},{y},{x}) for texture cap {cap}")
 
-        # Apply NOV lens clip only for NOV popup view (main view always shows full volume)
+        # Crop NOV popup data to the lens box (don't keep a large zero-padded volume).
+        # Zero-padding left the vtkImageData bounds much bigger than the visible crop,
+        # so the camera framed empty space and the selection sat in a corner.
         clip = getattr(self, "_nov_lens_clip", None)
         if for_nov_view and clip is not None:
-            (cx, cy, cz), length, width, depth = clip
-            hL, hW, hD = length / 2.0, width / 2.0, depth / 2.0
+            (cx, cy, _cz), length, width, _depth = clip
+            hL, hW = length / 2.0, width / 2.0
             ox, oy, oz = origin_xyz[0], origin_xyz[1], origin_xyz[2]
             sx, sy, sz = spacing.sx, spacing.sy, spacing.sz
-            np_vol_zyx = np_vol_zyx.copy()
-            wz = oz + np.arange(z, dtype=np.float64) * sz
-            wy = oy + np.arange(y, dtype=np.float64) * sy
-            wx = ox + np.arange(x, dtype=np.float64) * sx
-            in_x = (wx >= cx - hL) & (wx <= cx + hL)
-            in_y = (wy >= cy - hW) & (wy <= cy + hW)
-            in_z = (wz >= cz - hD) & (wz <= cz + hD)
-            inside = in_z.reshape(-1, 1, 1) & in_y.reshape(1, -1, 1) & in_x.reshape(1, 1, -1)
-            np_vol_zyx[~inside] = 0
+
+            def _axis_slice(origin: float, step: float, n: int, lo: float, hi: float) -> Tuple[int, int]:
+                i0 = int(math.floor((lo - origin) / step)) if step > 1e-12 else 0
+                i1 = int(math.ceil((hi - origin) / step)) + 1 if step > 1e-12 else n
+                i0 = max(0, i0)
+                i1 = min(n, max(i0 + 1, i1))
+                return i0, i1
+
+            ix0, ix1 = _axis_slice(ox, sx, x, cx - hL, cx + hL)
+            iy0, iy1 = _axis_slice(oy, sy, y, cy - hW, cy + hW)
+            # Keep full Z: cropping depth made the popup optically thinner than
+            # the main scene, so the same TF looked sparse / "rare".
+            iz0, iz1 = 0, z
+            cropped = np_vol_zyx[iz0:iz1, iy0:iy1, ix0:ix1]
+            if cropped.size == 0 or any(s <= 0 for s in cropped.shape):
+                print(
+                    f"[nov] crop empty (ix={ix0}:{ix1}, iy={iy0}:{iy1}, iz={iz0}:{iz1}); "
+                    f"keeping uncropped {np_vol_zyx.shape}"
+                )
+            else:
+                np_vol_zyx = np.ascontiguousarray(cropped)
+                z, y, x = np_vol_zyx.shape
+                origin_xyz = (ox + ix0 * sx, oy + iy0 * sy, oz + iz0 * sz)
 
         with timer.stage("numpy_to_vtk"):
             vtk_arr = numpy_to_vtk(np_vol_zyx.ravel(order="C"), deep=True)

@@ -61,6 +61,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Streamer set: {streamer}")
         _attach_main_scale_bar_observer(streamer)
         update_main_scale_bar()
+        if hasattr(ctrl, "nov_push_view") and getattr(streamer, "nov_render_callback", None) is None:
+            def _on_nov_rendered():
+                if hasattr(ctrl, "update_nov_scale_bar"):
+                    try:
+                        ctrl.update_nov_scale_bar()
+                    except Exception:
+                        pass
+                ctrl.nov_push_view()
+            streamer.nov_render_callback = _on_nov_rendered
 
     def set_heatmap(heatmap):
         """Set the heatmap renderer reference."""
@@ -1484,8 +1493,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
             streamer.update_channel_intensity_range(channel_id, tuple(range_value))
-            if hasattr(streamer, "apply_main_channel_to_nov"):
-                streamer.apply_main_channel_to_nov(channel_id)
         if _refs["view"]:
             _refs["view"].update()
         nov_view = _refs.get("nov_view")

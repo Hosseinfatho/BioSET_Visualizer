@@ -11,14 +11,14 @@ _POS_DEFAULT_MIN = "left: 50%; transform: translateX(-50%); top: 0; "
 _STYLE_BASE_FULL = (
     "position: fixed; "
     "min-width: 630px; max-width: 1620px; min-height: 450px; max-height: 945px; "
-    "z-index: 300; border-radius: 8px 8px 0 0; overflow: hidden; resize: both; "
+    "z-index: 5; border-radius: 8px 8px 0 0; overflow: hidden; resize: both; "
     "box-shadow: 0 4px 20px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); "
     "display: flex; flex-direction: column; "
 )
 _STYLE_BASE_MIN = (
     "position: fixed; "
     "width: 900px; height: auto; min-height: 36px; max-height: 36px; "
-    "z-index: 300; border-radius: 0 0 8px 8px; overflow: hidden; "
+    "z-index: 5; border-radius: 0 0 8px 8px; overflow: hidden; "
     "box-shadow: 0 2px 12px rgba(0,0,0,0.2); background: transparent; border: 1px solid rgba(255,255,255,0.2); border-top: none; "
     "display: flex; flex-direction: column;"
 )
@@ -168,7 +168,9 @@ def nov_popup_panel(state, ctrl, nov_render_window=None):
                 if nov_render_window is not None:
                     nov_view = vtk.VtkRemoteView(
                         nov_render_window,
+                        ref="novView",
                         interactive_ratio=1.0,
+                        still_ratio=1.0,
                         style="width: 100%; height: 100%; min-width: 100%; min-height: 100%; display: block;",
                     )
                     if hasattr(ctrl, "set_nov_view"):
