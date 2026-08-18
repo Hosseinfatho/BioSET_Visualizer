@@ -525,14 +525,23 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
               f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
 
-        update_heatmap()
-        update_heatmap_combinations()
-        update_upset_data()
-        update_bar_data()
-        update_dilation_data()
+        for step in (
+            update_heatmap,
+            update_heatmap_combinations,
+            update_upset_data,
+            update_bar_data,
+            update_dilation_data,
+        ):
+            try:
+                step()
+            except Exception as e:
+                print(f"[callbacks] {step.__name__} after analysis load failed: {e}")
 
         if _refs["view"]:
-            _refs["view"].update()
+            try:
+                _refs["view"].update()
+            except Exception:
+                pass
 
     def load_analysis_from_path(file_path: str):
         """Load a .bioset analysis file from a local path (server/default deploy)."""
@@ -547,23 +556,33 @@ def register_callbacks(ctrl, state, view, streamer=None):
         candidates = []
         if file_path:
             candidates.append(Path(file_path))
-        else:
-            env_path = (os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "").strip()
-            if env_path:
-                candidates.append(Path(env_path))
-            candidates.extend([
-                Path("/app/preprocessed/melanoma_in_situ.bioset"),
-                Path("preprocessed/melanoma_in_situ.bioset"),
-            ])
+        env_path = (os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "").strip()
+        if env_path:
+            candidates.append(Path(env_path))
+        folders = [
+            Path("/app/preprocessed"),
+            Path("preprocessed"),
+            Path("/data/hossein/Bioset/preprocessed"),
+        ]
+        for folder in folders:
+            candidates.append(folder / "melanoma_in_situ.bioset")
+            if folder.is_dir():
+                candidates.extend(sorted(folder.glob("*.bioset")))
 
+        print(
+            f"[callbacks] Looking for default analysis "
+            f"(cwd={Path.cwd()}, BIOSET_DEFAULT_ANALYSIS={env_path or '<unset>'})"
+        )
         seen = set()
         path = None
         for cand in candidates:
-            key = str(cand.resolve()) if cand.exists() else str(cand)
+            key = str(cand)
             if key in seen:
                 continue
             seen.add(key)
-            if cand.is_file():
+            exists = cand.is_file()
+            print(f"[callbacks]   candidate {cand} exists={exists}")
+            if exists:
                 path = cand
                 break
         if path is None:
@@ -573,9 +592,11 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Preloading analysis from path: {path}")
         try:
             from bioset.analysis import AnalysisLoader
+            from bioset.analysis.loader import decompress_bioset_to_cache
 
+            db_path = decompress_bioset_to_cache(path)
             loader = AnalysisLoader()
-            metadata = loader.load(str(path))
+            metadata = loader.load_sqlite(str(db_path), owns_file=False)
             return loader, metadata, path.name
         except Exception as e:
             print(f"[callbacks] Error preloading analysis from path: {e}")
@@ -598,8 +619,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print(f"[callbacks] Error applying analysis: {e}")
             import traceback
             traceback.print_exc()
-            state.analysis_loaded = False
-            return False
+            return bool(state.analysis_loaded)
 
     def maybe_load_default_analysis():
         """If BIOSET_DEFAULT_ANALYSIS (or known preprocessed path) exists, load it."""

@@ -156,14 +156,19 @@ def run_app(*, idle_timeout: int | None = None):
 
             async def _load_default_analysis():
                 # Let the browser connect first; gzip of the default .bioset is heavy.
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
                 if not hasattr(ctrl, "preload_default_analysis"):
                     return
-                packed = await asyncio.to_thread(ctrl.preload_default_analysis)
-                if not packed:
-                    return
-                ctrl.apply_preloaded_analysis(*packed)
                 try:
+                    server.state.analysis_loading = True
+                    server.state.flush()
+                except Exception:
+                    pass
+                packed = await asyncio.to_thread(ctrl.preload_default_analysis)
+                if packed:
+                    ctrl.apply_preloaded_analysis(*packed)
+                try:
+                    server.state.analysis_loading = False
                     server.state.flush()
                 except Exception:
                     pass

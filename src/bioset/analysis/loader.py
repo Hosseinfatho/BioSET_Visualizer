@@ -2,12 +2,138 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
+import shutil
 import sqlite3
 import tempfile
+import time
 from dataclasses import dataclass, field
 from itertools import combinations as iter_combinations
 from pathlib import Path
 from typing import Optional
+
+_GZIP_MAGIC = b"\x1f\x8b"
+_SQLITE_MAGIC = b"SQLite format 3"
+_DECOMPRESS_CHUNK = 8 * 1024 * 1024
+
+
+def _is_sqlite_file(path: Path) -> bool:
+    try:
+        if not path.is_file() or path.stat().st_size < 100:
+            return False
+        with open(path, "rb") as handle:
+            return handle.read(16).startswith(_SQLITE_MAGIC)
+    except OSError:
+        return False
+
+
+def _is_gzip_file(path: Path) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == _GZIP_MAGIC
+    except OSError:
+        return False
+
+
+def default_analysis_cache_path(bioset_path: Path | None = None) -> Path:
+    env = (os.environ.get("BIOSET_ANALYSIS_DB_CACHE") or "").strip()
+    if env:
+        return Path(env)
+    if bioset_path is not None:
+        sidecar = Path(bioset_path).with_suffix(".db")
+        parent = sidecar.parent
+        if parent.is_dir() and os.access(parent, os.W_OK):
+            return sidecar
+    return Path(tempfile.gettempdir()) / "bioset_default_analysis.db"
+
+
+def decompress_bioset_to_cache(
+    bioset_path: str | Path,
+    cache_path: str | Path | None = None,
+) -> Path:
+    """Gunzip a .bioset once and reuse the SQLite file across processes.
+
+    Streaming copy avoids holding the whole uncompressed DB in RAM.
+    """
+    src = Path(bioset_path)
+    cache = Path(cache_path) if cache_path else default_analysis_cache_path(src)
+    sidecar = src.with_suffix(".db")
+
+    if _is_sqlite_file(cache):
+        print(f"[analysis] Using cached SQLite {cache} ({cache.stat().st_size} bytes)")
+        return cache
+    if _is_sqlite_file(sidecar):
+        print(f"[analysis] Using sidecar SQLite {sidecar}")
+        return sidecar
+    if _is_sqlite_file(src):
+        print(f"[analysis] File is already SQLite: {src}")
+        return src
+    if not src.is_file():
+        raise FileNotFoundError(src)
+    if not _is_gzip_file(src):
+        raise ValueError(f"Not a gzip .bioset or SQLite file: {src}")
+
+    lock_path = cache.with_name(cache.name + ".lock")
+    tmp_path = cache.with_name(cache.name + ".tmp")
+    deadline = time.time() + 3600
+    acquired = False
+    while time.time() < deadline:
+        if _is_sqlite_file(cache):
+            print(f"[analysis] Using cached SQLite {cache} ({cache.stat().st_size} bytes)")
+            return cache
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            acquired = True
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+                if age > 7200:
+                    print("[analysis] Removing stale decompress lock")
+                    lock_path.unlink()
+                    continue
+            except OSError:
+                pass
+            print("[analysis] Waiting for another process to decompress analysis...")
+            time.sleep(2)
+
+    if not acquired:
+        raise TimeoutError(f"Timed out waiting for analysis cache {cache}")
+
+    try:
+        if _is_sqlite_file(cache):
+            return cache
+        print(f"[analysis] Decompressing {src} -> {cache} (shared by all sessions)")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if tmp_path.exists():
+            tmp_path.unlink()
+        copied = 0
+        with gzip.open(src, "rb") as f_in, open(tmp_path, "wb") as f_out:
+            while True:
+                chunk = f_in.read(_DECOMPRESS_CHUNK)
+                if not chunk:
+                    break
+                f_out.write(chunk)
+                copied += len(chunk)
+                if copied == len(chunk) or copied % (256 * 1024 * 1024) < len(chunk):
+                    print(f"[analysis] decompressed {copied / (1024 ** 3):.2f} GB...", flush=True)
+        tmp_path.replace(cache)
+        print(f"[analysis] Cache ready: {cache} ({cache.stat().st_size} bytes)")
+        return cache
+    except Exception:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+    finally:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
 
 
 @dataclass
@@ -73,6 +199,7 @@ class AnalysisLoader:
         self._temp_dir: Optional[str] = None
         self.metadata: Optional[AnalysisMetadata] = None
         self._loaded = False
+        self._owns_db_file = False
         self._total_tiles_cache: dict[int, int] = {}  # level -> total tile count
         self._channel_totals_voxels_cache: dict[
             tuple[str, float, int], int] = {}  # (channel, dilation, level) -> total voxels
@@ -88,7 +215,11 @@ class AnalysisLoader:
     
     def _open_and_load_metadata(self):
         """Open the decompressed DB and load metadata."""
-        self._conn = sqlite3.connect(self._db_path)
+        if self._owns_db_file:
+            self._conn = sqlite3.connect(str(self._db_path))
+        else:
+            uri = self._db_path.resolve().as_uri() + "?mode=ro"
+            self._conn = sqlite3.connect(uri, uri=True)
         self._conn.row_factory = sqlite3.Row
         
         cursor = self._conn.execute("SELECT key, value FROM metadata")
@@ -123,15 +254,31 @@ class AnalysisLoader:
         """
         self.close()
         
+        src = Path(file_path)
+        if _is_sqlite_file(src):
+            self._owns_db_file = False
+            self._db_path = src
+            print(f"[analysis] Opening SQLite {src}...")
+            return self._open_and_load_metadata()
+
         self._temp_dir = tempfile.mkdtemp(prefix="bioset_analysis_")
         self._db_path = Path(self._temp_dir) / "analysis.db"
+        self._owns_db_file = True
         
         print(f"[analysis] Loading {file_path}...")
         
-        with gzip.open(file_path, 'rb') as f_in:
-            with open(self._db_path, 'wb') as f_out:
-                f_out.write(f_in.read())
+        with gzip.open(file_path, "rb") as f_in, open(self._db_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out, length=_DECOMPRESS_CHUNK)
         
+        return self._open_and_load_metadata()
+
+    def load_sqlite(self, db_path: str, *, owns_file: bool = False) -> AnalysisMetadata:
+        """Open an already-decompressed SQLite analysis file."""
+        self.close()
+        self._owns_db_file = owns_file
+        self._temp_dir = None
+        self._db_path = Path(db_path)
+        print(f"[analysis] Opening SQLite {self._db_path}...")
         return self._open_and_load_metadata()
     
     def load_from_bytes(self, data: bytes) -> AnalysisMetadata:
@@ -155,9 +302,9 @@ class AnalysisLoader:
         
         print(f"[analysis] Loading from uploaded bytes ({len(data)} bytes)...")
         
-        with gzip.open(compressed_path, 'rb') as f_in:
-            with open(self._db_path, 'wb') as f_out:
-                f_out.write(f_in.read())
+        self._owns_db_file = True
+        with gzip.open(compressed_path, "rb") as f_in, open(self._db_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out, length=_DECOMPRESS_CHUNK)
         
         return self._open_and_load_metadata()
     
@@ -1141,12 +1288,17 @@ class AnalysisLoader:
             self._conn.close()
             self._conn = None
         
-        if self._db_path and self._db_path.exists():
+        if self._owns_db_file and self._db_path and self._db_path.exists():
             try:
                 self._db_path.unlink()
             except Exception:
                 pass
+            if self._temp_dir:
+                shutil.rmtree(self._temp_dir, ignore_errors=True)
         
+        self._owns_db_file = False
+        self._db_path = None
+        self._temp_dir = None
         self._loaded = False
         self.metadata = None
         self._total_tiles_cache.clear()
