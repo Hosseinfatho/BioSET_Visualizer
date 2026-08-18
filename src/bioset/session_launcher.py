@@ -25,7 +25,7 @@ import aiohttp
 from aiohttp import web
 
 COOKIE = "bioset_sid"
-WORKER_IDLE_TIMEOUT_S = 5
+WORKER_IDLE_TIMEOUT_S = 60
 WORKER_START_TIMEOUT_S = 90
 DEFAULT_MAX_SESSIONS = 8
 HOP_BY_HOP = {
@@ -67,6 +67,18 @@ def _is_document(request: web.Request) -> bool:
     if request.method != "GET" or _is_websocket(request):
         return False
     return request.path in ("/", "/index.html")
+
+
+def _is_navigation(request: web.Request) -> bool:
+    """True for a real tab open / refresh, not a background HTML refetch."""
+    if not _is_document(request):
+        return False
+    mode = request.headers.get("Sec-Fetch-Mode", "")
+    dest = request.headers.get("Sec-Fetch-Dest", "")
+    if mode or dest:
+        return mode == "navigate" and dest == "document"
+    # urllib / old clients: treat document GETs as navigation.
+    return True
 
 
 def _filter_request_headers(headers) -> dict[str, str]:
@@ -111,16 +123,9 @@ class WorkerSession:
         if not self.alive():
             return
         try:
-            self.proc.terminate()
+            self.proc.kill()
         except OSError:
-            return
-        try:
-            self.proc.wait(timeout=4)
-        except subprocess.TimeoutExpired:
-            try:
-                self.proc.kill()
-            except OSError:
-                pass
+            pass
 
 
 class SessionHub:
@@ -322,17 +327,22 @@ def create_app(hub: SessionHub) -> web.Application:
         cookie_sid = request.cookies.get(COOKIE)
         existing = hub.get(cookie_sid)
 
-        if _is_document(request):
-            # / often 302s to /index.html; both belong to the same new visit.
-            # After HTML has been served, the next document load is a refresh.
+        if request.path.rstrip("/") == "/ws" and not _is_websocket(request):
+            return web.Response(status=426, text="Upgrade Required")
+
+        if _is_navigation(request):
             if existing is not None and not existing.html_ready:
                 target = existing
             else:
                 if existing is not None:
                     hub.drop(cookie_sid)
                 target = await hub.spawn()
+        elif existing is not None:
+            target = existing
+        elif _is_document(request):
+            target = await hub.spawn()
         else:
-            target = existing if existing is not None else await hub.spawn()
+            raise web.HTTPNotFound(text="No BioSET session. Reload the page.")
 
         if _is_websocket(request):
             return await _proxy_websocket(request, target)
