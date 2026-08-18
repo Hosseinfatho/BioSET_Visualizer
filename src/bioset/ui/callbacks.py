@@ -896,11 +896,16 @@ def register_callbacks(ctrl, state, view, streamer=None):
             # from the CAMERA: state.current_hierarchy_level lags it, and a
             # stale coarse level with a tight viewport leaves too few cells to
             # contour.
-            level, roi = _camera_view_for_contours(streamer, heatmap_lod)
+            # Level 0 ALWAYS. The contours must come from one field at every
+            # zoom or separate boundaries merge when the LOD level switches —
+            # different aggregations are different functions, and nesting says
+            # nothing across that boundary. The camera still supplies the
+            # viewport, which is what selects the iso and crops the geometry.
+            _, roi = _camera_view_for_contours(streamer, heatmap_lod)
             field = loader.get_heatmap_field(
                 channels=combo,
                 dilation=state.current_dilation,
-                hierarchy_level=level,
+                hierarchy_level=0,
             )
             spacing = (
                 getattr(state, "physical_size_x", None) or 1.0,
@@ -909,8 +914,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             )
             contours.update_field(field, spacing=spacing, roi_vox=roi)
             state.heatmap_tile_count = contours.line_count
-            print(f"[callbacks] Contours: {contours.line_count} polylines "
-                  f"at level {level}, iso {contours.iso_value:.3f}")
+            print(f"[callbacks] Contours from level 0: {contours.line_count} "
+                  f"polylines at iso {contours.iso_value:.3f}")
         except Exception as e:
             print(f"[callbacks] Contour heatmap update failed: {e}")
             import traceback

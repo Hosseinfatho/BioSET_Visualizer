@@ -31,9 +31,25 @@ class HeatmapRequest:
 @dataclass
 class HeatmapResult:
     level: int
-    field: object                 # analysis.HeatmapField or None
+    field: object                 # analysis.HeatmapField or None (may be cropped)
     roi_vox: object = None        # viewport ROI the field was cropped for
     cropped: bool = False
+    # UNCROPPED level-0 field, for the contour renderer only.
+    #
+    # The contours must come from ONE field at every zoom. Drawing them from
+    # whichever level the worker settled on made separate closed boundaries
+    # MERGE at the level switch: levels 2 and 1 are different mean-aggregations
+    # (36 um vs 9 um cells), so a gap between two blobs that survives one can
+    # be averaged away in the other. Tracking blob identity across a zoom
+    # sweep, merges occurred only at the 380->270 um step — exactly where the
+    # level changes — and pinning the field to level 0 removed them entirely
+    # (Hoechst 1 -> 0, MART1 1 -> 0).
+    #
+    # Uncropped, because level 0 is in CROP_LEVELS: a cropped field is zero
+    # outside the old viewport, and panning off it leaves the screen blank.
+    # Computed here on the worker thread — the first one costs ~158 ms and
+    # must not land on the main thread.
+    base_field: object = None
 
 
 class HeatmapLOD:
@@ -228,6 +244,11 @@ class HeatmapLOD:
             sub = crop_field_to_roi(field, req.roi_vox, self.CROP_MARGIN_FRAC)
             cropped = sub is not field
             field = sub
+        # One field for the contours, always the finest and never cropped.
+        base_field = field if (req.level == 0 and not cropped) else None
+        if base_field is None:
+            base_field = req.loader.get_heatmap_field(
+                channels=req.channels, dilation=req.dilation, hierarchy_level=0)
         if self._is_superseded(req):
             return
         n = field.counts.size if field is not None else 0
@@ -235,7 +256,8 @@ class HeatmapLOD:
         print(f"[heatmap_lod] Level {req.level} ({kind}): {n} cells"
               f"{' (viewport-cropped)' if cropped else ''}")
         self._queue.put(HeatmapResult(
-            level=req.level, field=field, roi_vox=req.roi_vox, cropped=cropped))
+            level=req.level, field=field, roi_vox=req.roi_vox, cropped=cropped,
+            base_field=base_field))
 
     def _is_superseded(self, req: HeatmapRequest) -> bool:
         """True once a newer request has arrived — drop the in-flight one
@@ -299,11 +321,14 @@ class HeatmapLOD:
             if self._contours is None:
                 return False
             heatmap_renderer.clear()
+            # `base_field`, never `result.field`: one field at every zoom, so
+            # the curves cannot merge at a level switch. No loader call here
+            # either — this is the main thread.
             drawn = self._contours.update_field(
-                result.field, spacing=spacing, roi_vox=self._viewport_roi)
+                result.base_field, spacing=spacing, roi_vox=self._viewport_roi)
             state.heatmap_tile_count = self._contours.line_count
-            print(f"[heatmap_lod] Applied level {result.level}: "
-                  f"{self._contours.line_count} contour polylines "
+            print(f"[heatmap_lod] Contours from level 0: "
+                  f"{self._contours.line_count} polylines "
                   f"at iso {self._contours.iso_value:.3f}")
             return bool(drawn) or True
 
