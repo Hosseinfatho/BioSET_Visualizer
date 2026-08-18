@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from trame.app import get_server
 
 load_dotenv()
 
@@ -24,6 +23,12 @@ _parser.add_argument(
     default=None,
     help="Enable streaming profiling. Optionally pass a log file path; "
          "otherwise a timestamped file is written under ./profiling/.",
+)
+_parser.add_argument(
+    "--single",
+    action="store_true",
+    default=False,
+    help="Run one shared VTK process (no per-browser isolation).",
 )
 _args, _ = _parser.parse_known_args()
 
@@ -42,16 +47,16 @@ if sys.version_info >= (3, 10):
 # Path to assets directory
 ASSETS_DIR = Path(__file__).parent / "ui" / "assets"
 
-from .config import default_config
-from .scene import build_scene
-from .ui import build_ui
-# Safe to import now that .scene / .streaming packages are fully initialized
-# (importing it earlier trips a pre-existing scene<->streaming import cycle).
-from .streaming.profiling import enable_profiling
 
-import contextlib
+def run_app(*, idle_timeout: int | None = None):
+    """Run a single VTK/Trame BioSET process."""
+    from trame.app import get_server
 
-def main():
+    from .config import default_config
+    from .scene import build_scene
+    from .streaming.profiling import enable_profiling
+    from .ui import build_ui
+
     # Profiling is off unless --profile was passed; enable it before any
     # streaming work so the very first loads are captured.
     if _args.profile is not None:
@@ -88,8 +93,6 @@ def main():
         ctrl.set_interactor(scene.interactor)
 
     if scene.streamer is not None:
-        import asyncio
-
         _scale_bar_tick = [0]  # mutable so inner function can update
 
         async def _check_loaded_data_loop():
@@ -170,9 +173,23 @@ def main():
     ctrl.set_renderer(scene.renderer)
     ctrl.setup_label_interaction_observer(scene.interactor)
 
-    server.start()
+    start_kwargs = {}
+    if idle_timeout is not None:
+        start_kwargs["timeout"] = idle_timeout
+    server.start(**start_kwargs)
+
+
+def main():
+    worker = os.environ.get("BIOSET_WORKER") == "1"
+    if worker:
+        run_app()
+        return
+    if _args.single:
+        run_app(idle_timeout=0)
+        return
+    from .session_launcher import run_launcher
+    run_launcher()
 
 
 if __name__ == "__main__":
-    with contextlib.redirect_stdout(None):
-        main()
+    main()
