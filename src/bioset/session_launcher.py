@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import uuid
 import webbrowser
 from dataclasses import dataclass, field
@@ -324,32 +325,41 @@ def create_app(hub: SessionHub) -> web.Application:
     app = web.Application(client_max_size=50_000_000)
 
     async def handle(request: web.Request):
-        cookie_sid = request.cookies.get(COOKIE)
-        existing = hub.get(cookie_sid)
+        try:
+            cookie_sid = request.cookies.get(COOKIE)
+            existing = hub.get(cookie_sid)
 
-        if request.path.rstrip("/") == "/ws" and not _is_websocket(request):
-            return web.Response(status=426, text="Upgrade Required")
+            if request.path.rstrip("/") == "/ws" and not _is_websocket(request):
+                return web.Response(status=426, text="Upgrade Required")
 
-        if _is_navigation(request):
-            if existing is not None and not existing.html_ready:
+            if _is_navigation(request):
+                if existing is not None and not existing.html_ready:
+                    target = existing
+                else:
+                    if existing is not None:
+                        hub.drop(cookie_sid)
+                    target = await hub.spawn()
+            elif existing is not None:
                 target = existing
-            else:
-                if existing is not None:
-                    hub.drop(cookie_sid)
+            elif _is_document(request):
                 target = await hub.spawn()
-        elif existing is not None:
-            target = existing
-        elif _is_document(request):
-            target = await hub.spawn()
-        else:
-            raise web.HTTPNotFound(text="No BioSET session. Reload the page.")
+            else:
+                raise web.HTTPNotFound(text="No BioSET session. Reload the page.")
 
-        if _is_websocket(request):
-            return await _proxy_websocket(request, target)
-        response = await _proxy_http(request, target, request.app["http"])
-        if _is_document(request) and getattr(response, "status", 0) == 200:
-            target.html_ready = True
-        return response
+            if _is_websocket(request):
+                return await _proxy_websocket(request, target)
+            response = await _proxy_http(request, target, request.app["http"])
+            if _is_document(request) and getattr(response, "status", 0) == 200:
+                target.html_ready = True
+            return response
+        except web.HTTPException:
+            raise
+        except (aiohttp.ClientError, ConnectionError, OSError) as exc:
+            _log(f"[bioset] proxy error {request.method} {request.path}: {exc}")
+            raise web.HTTPBadGateway(text="BioSET session is not ready. Reload the page.")
+        except Exception:
+            _log(f"[bioset] handler crash {request.method} {request.path}:\n{traceback.format_exc()}")
+            raise web.HTTPBadGateway(text="BioSET session error. Reload the page.")
 
     async def on_startup(_app):
         _app["http"] = aiohttp.ClientSession(

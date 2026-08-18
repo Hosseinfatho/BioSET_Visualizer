@@ -155,14 +155,20 @@ def run_app(*, idle_timeout: int | None = None):
             asyncio.create_task(_nov_animation_loop())
 
             async def _load_default_analysis():
-                if hasattr(ctrl, "maybe_load_default_analysis"):
-                    await asyncio.to_thread(ctrl.maybe_load_default_analysis)
-                    try:
-                        server.state.flush()
-                    except Exception:
-                        pass
-                    if view is not None:
-                        view.update()
+                # Let the browser connect first; gzip of the default .bioset is heavy.
+                await asyncio.sleep(1.0)
+                if not hasattr(ctrl, "preload_default_analysis"):
+                    return
+                packed = await asyncio.to_thread(ctrl.preload_default_analysis)
+                if not packed:
+                    return
+                ctrl.apply_preloaded_analysis(*packed)
+                try:
+                    server.state.flush()
+                except Exception:
+                    pass
+                if view is not None:
+                    view.update()
 
             asyncio.create_task(_load_default_analysis())
 

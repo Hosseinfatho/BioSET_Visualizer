@@ -536,57 +536,77 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
     def load_analysis_from_path(file_path: str):
         """Load a .bioset analysis file from a local path (server/default deploy)."""
-        if state.analysis_loading:
+        packed = preload_default_analysis(file_path)
+        if not packed:
             return False
+        apply_preloaded_analysis(*packed)
+        return True
 
-        path = Path(file_path)
-        if not path.is_file():
-            print(f"[callbacks] Default analysis not found: {path}")
-            return False
+    def preload_default_analysis(file_path: str | None = None):
+        """Gunzip/sqlite only (safe off the VTK thread). Returns (loader, metadata, name) or None."""
+        candidates = []
+        if file_path:
+            candidates.append(Path(file_path))
+        else:
+            env_path = (os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "").strip()
+            if env_path:
+                candidates.append(Path(env_path))
+            candidates.extend([
+                Path("/app/preprocessed/melanoma_in_situ.bioset"),
+                Path("preprocessed/melanoma_in_situ.bioset"),
+            ])
 
-        state.analysis_loading = True
-        print(f"[callbacks] Loading analysis from path: {path}")
+        seen = set()
+        path = None
+        for cand in candidates:
+            key = str(cand.resolve()) if cand.exists() else str(cand)
+            if key in seen:
+                continue
+            seen.add(key)
+            if cand.is_file():
+                path = cand
+                break
+        if path is None:
+            print("[callbacks] No default analysis file found in preprocessed/")
+            return None
+
+        print(f"[callbacks] Preloading analysis from path: {path}")
         try:
             from bioset.analysis import AnalysisLoader
 
-            if _refs["analysis_loader"] is None:
-                _refs["analysis_loader"] = AnalysisLoader()
-
-            loader = _refs["analysis_loader"]
+            loader = AnalysisLoader()
             metadata = loader.load(str(path))
-            _apply_analysis_metadata(loader, metadata, path.name)
+            return loader, metadata, path.name
+        except Exception as e:
+            print(f"[callbacks] Error preloading analysis from path: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def apply_preloaded_analysis(loader, metadata, file_name: str):
+        """Apply a preloaded analysis on the VTK/Trame thread."""
+        if _refs["analysis_loader"] is not None:
+            try:
+                _refs["analysis_loader"].close()
+            except Exception:
+                pass
+        _refs["analysis_loader"] = loader
+        try:
+            _apply_analysis_metadata(loader, metadata, file_name)
             return True
         except Exception as e:
-            print(f"[callbacks] Error loading analysis from path: {e}")
+            print(f"[callbacks] Error applying analysis: {e}")
             import traceback
             traceback.print_exc()
             state.analysis_loaded = False
             return False
-        finally:
-            state.analysis_loading = False
 
     def maybe_load_default_analysis():
         """If BIOSET_DEFAULT_ANALYSIS (or known preprocessed path) exists, load it."""
-        candidates = []
-        env_path = (os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "").strip()
-        if env_path:
-            candidates.append(Path(env_path))
-        candidates.extend([
-            Path("/app/preprocessed/melanoma_in_situ.bioset"),
-            Path("preprocessed/melanoma_in_situ.bioset"),
-        ])
-
-        seen = set()
-        for path in candidates:
-            key = str(path.resolve()) if path.exists() else str(path)
-            if key in seen:
-                continue
-            seen.add(key)
-            if path.is_file():
-                return load_analysis_from_path(str(path))
-
-        print("[callbacks] No default analysis file found in preprocessed/")
-        return False
+        packed = preload_default_analysis()
+        if not packed:
+            return False
+        return apply_preloaded_analysis(*packed)
 
     def load_analysis_file(file_info):
         """
@@ -2658,6 +2678,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.clear_data = clear_data
     ctrl.load_analysis_file = load_analysis_file
     ctrl.load_analysis_from_path = load_analysis_from_path
+    ctrl.preload_default_analysis = preload_default_analysis
+    ctrl.apply_preloaded_analysis = apply_preloaded_analysis
     ctrl.maybe_load_default_analysis = maybe_load_default_analysis
     ctrl.update_heatmap = update_heatmap
     ctrl.update_heatmap_combinations = update_heatmap_combinations
