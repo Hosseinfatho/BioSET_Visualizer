@@ -479,6 +479,115 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.heatmap_tile_count = 0
         print("[callbacks] Analysis cleared")
 
+    def _apply_analysis_metadata(loader, metadata, file_name: str):
+        """Push loaded analysis metadata into state and related subsystems."""
+        z_depth = 1
+        bounds = metadata.volume_bounds
+        if bounds and "z" in bounds:
+            z_depth = max(1, bounds["z"][1] - bounds["z"][0])
+
+        heatmap_lod = _refs.get("heatmap_lod")
+        if heatmap_lod and loader.db_path:
+            heatmap_lod.set_analysis(
+                db_path=loader.db_path,
+                channel_order=list(metadata.channels),
+                z_depth=z_depth,
+            )
+
+        vp = _refs.get("viewport_plots")
+        if vp and loader.db_path:
+            vp.set_analysis(
+                db_path=loader.db_path,
+                channel_order=list(metadata.channels),
+                z_depth=z_depth,
+            )
+
+        state.analysis_file_name = file_name
+        state.analysis_channels = metadata.channels
+        state.analysis_dilation_amounts = metadata.dilation_amounts
+        state.analysis_hierarchy_levels = [lvl["level"] for lvl in metadata.hierarchy_levels]
+        state.analysis_volume_bounds = metadata.volume_bounds
+
+        if metadata.dilation_amounts:
+            mid = len(metadata.dilation_amounts) // 2
+            state.current_dilation = metadata.dilation_amounts[mid]
+
+        if metadata.hierarchy_levels:
+            state.current_hierarchy_level = metadata.hierarchy_levels[-1]["level"]
+
+        state.upset_selected_channels = [ch for ch in state.analysis_channels]
+        state.bar_selected_channels = [ch for ch in state.analysis_channels]
+        state.dilation_selected_channels = [ch for ch in state.analysis_channels]
+
+        state.analysis_loaded = True
+        state.right_drawer_open = True
+
+        print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
+              f"dilations={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
+
+        update_heatmap()
+        update_heatmap_combinations()
+        update_upset_data()
+        update_bar_data()
+        update_dilation_data()
+
+        if _refs["view"]:
+            _refs["view"].update()
+
+    def load_analysis_from_path(file_path: str):
+        """Load a .bioset analysis file from a local path (server/default deploy)."""
+        if state.analysis_loading:
+            return False
+
+        path = Path(file_path)
+        if not path.is_file():
+            print(f"[callbacks] Default analysis not found: {path}")
+            return False
+
+        state.analysis_loading = True
+        print(f"[callbacks] Loading analysis from path: {path}")
+        try:
+            from bioset.analysis import AnalysisLoader
+
+            if _refs["analysis_loader"] is None:
+                _refs["analysis_loader"] = AnalysisLoader()
+
+            loader = _refs["analysis_loader"]
+            metadata = loader.load(str(path))
+            _apply_analysis_metadata(loader, metadata, path.name)
+            return True
+        except Exception as e:
+            print(f"[callbacks] Error loading analysis from path: {e}")
+            import traceback
+            traceback.print_exc()
+            state.analysis_loaded = False
+            return False
+        finally:
+            state.analysis_loading = False
+
+    def maybe_load_default_analysis():
+        """If BIOSET_DEFAULT_ANALYSIS (or known preprocessed path) exists, load it."""
+        candidates = []
+        env_path = (os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "").strip()
+        if env_path:
+            candidates.append(Path(env_path))
+        candidates.extend([
+            Path("/app/preprocessed/melanoma_in_situ.bioset"),
+            Path("preprocessed/melanoma_in_situ.bioset"),
+        ])
+
+        seen = set()
+        for path in candidates:
+            key = str(path.resolve()) if path.exists() else str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            if path.is_file():
+                return load_analysis_from_path(str(path))
+
+        print("[callbacks] No default analysis file found in preprocessed/")
+        return False
+
     def load_analysis_file(file_info):
         """
         Load analysis results from uploaded .bioset file.
@@ -2548,6 +2657,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.load_data = load_data
     ctrl.clear_data = clear_data
     ctrl.load_analysis_file = load_analysis_file
+    ctrl.load_analysis_from_path = load_analysis_from_path
+    ctrl.maybe_load_default_analysis = maybe_load_default_analysis
     ctrl.update_heatmap = update_heatmap
     ctrl.update_heatmap_combinations = update_heatmap_combinations
     ctrl.print_dilation_curve = print_dilation_curve

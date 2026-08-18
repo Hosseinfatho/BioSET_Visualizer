@@ -154,6 +154,18 @@ def run_app(*, idle_timeout: int | None = None):
             asyncio.create_task(_check_loaded_data_loop())
             asyncio.create_task(_nov_animation_loop())
 
+            async def _load_default_analysis():
+                if hasattr(ctrl, "maybe_load_default_analysis"):
+                    await asyncio.to_thread(ctrl.maybe_load_default_analysis)
+                    try:
+                        server.state.flush()
+                    except Exception:
+                        pass
+                    if view is not None:
+                        view.update()
+
+            asyncio.create_task(_load_default_analysis())
+
     if scene.streamer is not None:
         scene.streamer.set_render_callback(view.update)
     if scene.heatmap is not None:
