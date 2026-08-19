@@ -205,12 +205,12 @@ def init_state(state):
     # UI binds to — a multi-select button group matching the mode row above —
     # and the two booleans are derived from it (see on_ihm_effects_change).
     #
-    # Both off by default: they modulate the volume rendering itself, which is
-    # the more intrusive thing to do, so they are opt-in. The contours are no
-    # longer listed here; they are their own heatmap mode.
-    state.setdefault("ihm_effects", [])
-    state.setdefault("ihm_gain_enabled", False)
-    state.setdefault("ihm_sampling_enabled", False)
+    # Both ON by default: they ARE the integrated mode. Selecting it with both
+    # off renders an unmodulated volume, which reads as the mode doing nothing.
+    # The contours are no longer listed here; they are their own heatmap mode.
+    state.setdefault("ihm_effects", ["gain", "sampling"])
+    state.setdefault("ihm_gain_enabled", True)
+    state.setdefault("ihm_sampling_enabled", True)
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     # Channels whose mesh surfaces the user has opted into. Empty by default:
     # the manifest holds thousands of tiles, so surfaces are never implicit.
