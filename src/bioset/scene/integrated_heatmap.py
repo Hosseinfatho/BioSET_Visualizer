@@ -88,8 +88,73 @@ def textures_needed(n_members: int) -> int:
     return len(slot_layout(n_members))
 
 
+def blur_map(m: np.ndarray, sigma_cells: float) -> np.ndarray:
+    """Gaussian-blur a map, mixing occupied cells only.
+
+    The extra smoothing above what the texture filter gives (config
+    `map_smoothing > 1`). A plain blur would bleed signal into empty cells and
+    soften the tissue border, so the weights are normalized by a blur of the
+    occupancy mask — occupied cells average with occupied neighbours — and the
+    empty cells are restored to exactly 0 afterwards. That keeps the invariant
+    the whole map pipeline rests on: 0 means "absent", never "weak".
+
+    Runs per level change, not per frame.
+    """
+    if sigma_cells <= 0.0 or m.size == 0:
+        return m
+    from scipy import ndimage as ndi
+    occupied = m > 0
+    if not occupied.any():
+        return m
+    weight = ndi.gaussian_filter(np.where(occupied, m, 0.0).astype(np.float32),
+                                 sigma_cells, mode="nearest")
+    norm = ndi.gaussian_filter(occupied.astype(np.float32),
+                               sigma_cells, mode="nearest")
+    smoothed = np.where(norm > 1e-6, weight / np.maximum(norm, 1e-6), m)
+    return np.where(occupied, smoothed, 0.0).astype(np.float32)
+
+
+def occupancy_gamma(occupancy: float,
+                    cfg: IntegratedHeatmapConfig = INTEGRATED_HEATMAP) -> float:
+    """Gamma that makes a map of this occupancy read as dark as a fine one.
+
+    Coarse levels lose their picture to aggregation, not to contrast. Measured
+    on mis_v3, the share of cells with any signal climbs 45% (Fine) -> 73%
+    (Overview) while rank equalization holds the median at 0.575 either way, so
+    the empty-vs-occupied distinction that carries the fine view flattens into
+    a uniform mid-tone: only 48% of the Overview map reads dark against 68% of
+    the Fine one.
+
+    So target that 68% at every level and solve for the gamma that gets there.
+    Rank equalization leaves the value uniform on [0,1] before the floor is
+    applied, which makes it a closed form rather than a search:
+
+        need  = share of NONZERO cells that must fall below the dark threshold
+        gamma = log(threshold in equalized units) / log(need)
+
+    Level 0 lands on 1.0 by construction, so fine detail is untouched. Derived
+    from occupancy rather than a per-level table so it still holds for other
+    datasets, combinations and radii, whose occupancy curves differ.
+    """
+    occ = float(np.clip(occupancy, 1e-6, 1.0))
+    floor = float(cfg.map_nonzero_floor)
+    # Where the dark threshold sits once the floor is removed.
+    thresh = (float(cfg.map_dark_threshold) - floor) / max(1.0 - floor, 1e-6)
+    if not 0.0 < thresh < 1.0:
+        return 1.0
+    need = (float(cfg.map_target_dark_fraction) - (1.0 - occ)) / occ
+    if need <= 0.0:
+        # Already dark enough from empty cells alone — nothing to do.
+        return 1.0
+    if need >= 1.0:
+        return float(cfg.map_gamma_max)
+    return float(np.clip(np.log(thresh) / np.log(need),
+                         1.0, cfg.map_gamma_max))
+
+
 def apply_map_contrast(frac: np.ndarray,
-                       cfg: IntegratedHeatmapConfig = INTEGRATED_HEATMAP
+                       cfg: IntegratedHeatmapConfig = INTEGRATED_HEATMAP,
+                       gamma: Optional[float] = None
                        ) -> np.ndarray:
     """Spread a raw fraction map across [0,1] so subtle differences show.
 
@@ -130,8 +195,9 @@ def apply_map_contrast(frac: np.ndarray,
         m = vals.max()
         scaled = vals / m if m > 0 else np.zeros_like(vals)
 
-    if cfg.map_gamma != 1.0:
-        scaled = scaled ** cfg.map_gamma
+    g = cfg.map_gamma if gamma is None else float(gamma)
+    if g != 1.0:
+        scaled = scaled ** g
 
     floor = float(cfg.map_nonzero_floor)
     out[nz] = (floor + (1.0 - floor) * scaled).astype(np.float32)
@@ -179,7 +245,9 @@ class IhmMapTextures:
     MAX_TEXTURES = 3          # interaction + up to 11 member slots
     UNIFORMS = ("in_ihm_maps0", "in_ihm_maps1", "in_ihm_maps2")
 
-    def __init__(self):
+    def __init__(self, interpolate: bool = True):
+        # False renders cells as hard squares (config `map_smoothing = 0`).
+        self.interpolate = bool(interpolate)
         self._render_window = None
         self._textures: List[object] = []
         self._keep: List[tuple] = []      # numpy/vtk refs must outlive a render
@@ -214,7 +282,13 @@ class IhmMapTextures:
             tex = vtkOpenGLTexture()
             tex.SetColorModeToDirectScalars()
             tex.SetQualityTo32Bit()
-            tex.InterpolateOff()
+            # Linear filtering, so the map does not read as hard-edged blocks.
+            # The reference smooths in the shader with a 4-tap bilinear; one
+            # filtered fetch is the same result for a quarter of the taps.
+            # RGBA32F filtering is not promised by every GL profile, so it was
+            # measured (scratchpad/probe_filter.py): a two-cell step sampled at
+            # its midpoint reads 0.489, i.e. hardware linear ran.
+            tex.SetInterpolate(1 if self.interpolate else 0)
             tex.MipmapOff()
             tex.SetWrap(vtkTexture.ClampToEdge)
             try:
@@ -336,7 +410,7 @@ class IntegratedHeatmapManager:
         self._gain = True
         self._sampling = True
 
-        self._textures = IhmMapTextures()
+        self._textures = IhmMapTextures(interpolate=cfg.uv_smoothing > 0.0)
         self._have_maps = False
         self._n_textures = 1
         self._observer_mapper = None
@@ -496,20 +570,26 @@ class IntegratedHeatmapManager:
                   f"{skipped} member channel(s) fall back to the interaction map")
         return inter, members_by_id
 
-    @staticmethod
-    def _field_to_map(field) -> Optional[np.ndarray]:
+    def _field_to_map(self, field) -> Optional[np.ndarray]:
         """Dense contrast-stretched (ny, nx) map from a HeatmapField.
 
         `downsample_field_to_grid` used to reduce the field onto the fixed
         shader grid with analytic denominators. At the field's own resolution
         that reduction is the identity — `field.fractions` is already the
         per-cell fraction — so this is a scatter plus the same contrast stretch.
+
+        The stretch is gamma-corrected for how occupied THIS map is, which is
+        what keeps the coarse levels from washing out (see `occupancy_gamma`).
         """
         if field is None or field.counts.size == 0:
             return None
         dense = np.zeros((field.ny, field.nx), dtype=np.float32)
         dense[field.cells_yx[:, 0], field.cells_yx[:, 1]] = field.fractions
-        return np.ascontiguousarray(apply_map_contrast(dense), dtype=np.float32)
+        occupancy = float(np.count_nonzero(dense)) / max(dense.size, 1)
+        gamma = occupancy_gamma(occupancy, self.cfg)
+        out = apply_map_contrast(dense, self.cfg, gamma=gamma)
+        out = blur_map(out, self.cfg.map_blur_cells)
+        return np.ascontiguousarray(out, dtype=np.float32)
 
     def set_maps(self, inter: Optional[np.ndarray],
                  members_by_id: Dict[int, np.ndarray]):
@@ -658,23 +738,41 @@ class IntegratedHeatmapManager:
         return ports
 
     def _sampler_lookup(self, n_members: int) -> List[str]:
-        """One texelFetch per texture, filling g_ihmInter and g_ihmM{slot}.
+        """One filtered fetch per texture, filling g_ihmInter and g_ihmM{slot}.
 
-        Replaces a hand-unrolled bilinear lookup that cost ~20 generated lines
-        PER MAP — it existed only because the maps were dynamically indexed
-        mat4 uniforms. Integer fetch, no filtering, as in the reference.
+        Smoothed, not blocky: an unfiltered fetch made every cell boundary a
+        hard edge, worst at the coarse levels where one cell spans ~1024
+        voxels. The texture filters in hardware (see `ensure`), and the UV is
+        warped by a smoothstep first so the blend is C1 at cell centres rather
+        than merely continuous — the same curve the reference applies to its
+        4-tap bilinear, at one tap instead of four.
+
+        Cost: the warp is 6 ALU ops per ray step, shared by every map in every
+        texture; only the fetches scale with the texture count.
         """
         shape = self._textures.shape or (1, 1)
         gh, gw = shape
-        lines = [
-            f"ivec2 g_ihmCell = ivec2(floor(g_ihmUV * vec2({float(gw):.1f}, "
-            f"{float(gh):.1f})));",
-            f"g_ihmCell = clamp(g_ihmCell, ivec2(0), ivec2({gw - 1}, {gh - 1}));",
-        ]
+        size = f"vec2({float(gw):.1f}, {float(gh):.1f})"
+        w = self.cfg.uv_smoothing
+        if w <= 0.0:
+            # map_smoothing = 0: no warp, and `ensure` leaves the texture on
+            # nearest filtering, so cells render as hard squares.
+            lines = ["vec2 g_ihmSm = g_ihmUV;"]
+        else:
+            # Texel centres sit at (i+0.5)/N, so shift by half a texel to get
+            # cell-relative coordinates, warp the fractional part, shift back.
+            warp = "g_ihmF * g_ihmF * (3.0 - 2.0 * g_ihmF)"
+            if w < 1.0:
+                warp = f"mix(g_ihmF, {warp}, {w:.6f})"
+            lines = [
+                f"vec2 g_ihmP = g_ihmUV * {size} - 0.5;",
+                "vec2 g_ihmF = fract(g_ihmP);",
+                f"vec2 g_ihmSm = (floor(g_ihmP) + {warp} + 0.5) / {size};",
+            ]
         for tex, slots in enumerate(slot_layout(n_members)):
             lines.append(
-                f"vec4 g_ihmT{tex} = texelFetch({self.SAMPLER_UNIFORMS[tex]}, "
-                f"g_ihmCell, 0);")
+                f"vec4 g_ihmT{tex} = texture({self.SAMPLER_UNIFORMS[tex]}, "
+                f"g_ihmSm);")
             if tex == 0:
                 lines.append("g_ihmInter = clamp(g_ihmT0.r, 0.0, 1.0);")
             for comp, member in enumerate(slots):
@@ -736,6 +834,9 @@ class IntegratedHeatmapManager:
                 for slot in range(n_members):
                     imp = f"max({imp}, g_ihmM{slot})"
                 loop.append(f"float ihmImportance = {imp};")
+                # Same response curve as the gain, so the step ramp and the
+                # brightness ramp agree instead of differing by a curve.
+                loop.append(self._curve_line("ihmImportance"))
                 loop.append(
                     "g_stepScale = mix(max(in_ihm_max_step_scale, 1.0), 1.0, "
                     "ihmImportance);")
@@ -801,23 +902,86 @@ class IntegratedHeatmapManager:
 
     def _gain_block(self, port: int, ch_id: int, variant: str = "M") -> List[str]:
         """Gain lines appended after a port's computeColor statement. Reads
-        the globals computed at PreComputeGradients — no lookups here."""
+        the globals computed at PreComputeGradients — no lookups here.
+
+        NEITHER RAMP MAY PUSH A CHANNEL PAST 1.0, and that is load-bearing.
+        They used to run to 1.9 (combined) and 4.0 (single) and clamp per
+        channel, which silently desaturated any colour without a zero
+        component: the channel colour is the user's tint straight off the
+        transfer function, so (1.0, 0.5, 0.5) x 1.9 clamped to (1.0, .95, .95)
+        — white. A saturated primary survived only because its zero channels
+        had nothing to clip.
+
+        So the hot end is not a constant: it is PER FRAGMENT, the largest
+        factor that still leaves the brightest channel at 1.0. The colour
+        transfer function ramps black -> tint, so most samples sit well below
+        their tint and that factor is genuinely > 1 — hot regions brighten
+        (~1.8x measured) while every channel keeps a fixed ratio to the others,
+        which is what makes whitening impossible rather than merely unlikely.
+
+        A flat 1.0 hot end — the previous fix — could not clip either, but it
+        made a hot region identical to an unmodulated volume, so nothing
+        popped and neighbouring cells were hard to tell apart. Measured on two
+        map values 0.061 apart (the level-0 median between neighbours), the
+        rendered separation goes 1.0x -> 3.2x from the per-fragment ceiling
+        and 4.5x once the response curve is added.
+        """
         cfg = self.cfg
         slot = self._member_slot(ch_id)
         p = f"ihmG{variant}{port}"
+        cold = min(max(float(cfg.cold_dimness), 0.0), 1.0)
+        # Per-fragment ceiling, shared by both formulas below.
+        hi = [
+            f"float {p}Mx = max(max(g_srcColor.r, g_srcColor.g), g_srcColor.b);",
+            f"float {p}Hi = ({p}Mx > 1e-4) ? min(1.0 / {p}Mx, "
+            f"{max(float(cfg.hot_brightness), 1.0):.6f}) : 1.0;",
+        ]
         if slot is not None:
-            return [
-                f"float {p}Rgb = clamp({cfg.combined_base_rgb_gain:.6f} "
-                f"+ {cfg.combined_channel_rgb_weight:.6f} * g_ihmM{slot} "
-                f"+ {cfg.combined_interaction_rgb_weight:.6f} * g_ihmInter, "
-                f"0.0, {cfg.combined_max_rgb_gain:.6f});",
+            # The two map weights, renormalized so V is a true 0..1 ramp
+            # parameter — the curve has to act on the interpolation fraction,
+            # not on a value that already carries the cold offset.
+            span = (cfg.combined_channel_rgb_weight
+                    + cfg.combined_interaction_rgb_weight)
+            wc = cfg.combined_channel_rgb_weight / span if span > 0 else 0.0
+            wi = cfg.combined_interaction_rgb_weight / span if span > 0 else 0.0
+            return hi + [
+                f"float {p}V = clamp({wc:.6f} * g_ihmM{slot} "
+                f"+ {wi:.6f} * g_ihmInter, 0.0, 1.0);",
+                self._curve_line(f"{p}V"),
                 f"float {p}A = mix({cfg.combined_min_alpha_gain:.6f}, 1.0, "
                 f"max(g_ihmM{slot}, g_ihmInter));",
-                f"g_srcColor.rgb = clamp(g_srcColor.rgb * {p}Rgb, 0.0, 1.0);",
+                # No clamp on rgb: {p}Hi is by definition the factor that lands
+                # the brightest channel exactly on 1.0, and a clamp here is
+                # precisely what used to break the colours.
+                f"g_srcColor.rgb *= {p}Hi * mix({cold:.6f}, 1.0, {p}V);",
                 f"g_srcColor.a = clamp(g_srcColor.a * {p}A, 0.0, 1.0);",
             ]
-        return [
-            f"float {p}Gain = mix({cfg.single_low_gain:.6f}, "
-            f"{cfg.single_high_gain:.6f}, g_ihmInter);",
-            f"g_srcColor.rgb = clamp(g_srcColor.rgb * {p}Gain, 0.0, 1.0);",
+        return hi + [
+            f"float {p}V = g_ihmInter;",
+            self._curve_line(f"{p}V"),
+            f"g_srcColor.rgb *= {p}Hi * mix({cold:.6f}, 1.0, {p}V);",
         ]
+
+    def _curve_line(self, var: str) -> str:
+        """S-curve the ramp value, so the steep part of the response lands
+        where rank equalization put the bulk of the cells.
+
+        `cell_contrast` is how many times the smoothstep is applied — each
+        application steepens the middle further, toward a binary hot/cold
+        split. Fractional values blend the last one, so the knob is continuous.
+
+        Empty cells sit at 0 and smoothstep(0) == 0 however many times it is
+        applied, so the nonzero floor's "absent vs present-but-weak"
+        distinction survives untouched at any setting.
+        """
+        c = max(0.0, float(self.cfg.cell_contrast))
+        if c <= 0.0:
+            return f"// {var}: linear response (cell_contrast = 0)"
+        lines = []
+        whole, frac = int(c), c - int(c)
+        for _ in range(whole):
+            lines.append(f"{var} = smoothstep(0.0, 1.0, {var});")
+        if frac > 1e-6:
+            lines.append(
+                f"{var} = mix({var}, smoothstep(0.0, 1.0, {var}), {frac:.6f});")
+        return "\n".join(lines)
