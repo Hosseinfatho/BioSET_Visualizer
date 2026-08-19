@@ -403,6 +403,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         mesh_dir=cfg.mesh_dir,
         renderer=renderer,
         base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
+        nov_renderer=nov_renderer,
     )
     mesh_streamer = MeshStreamer(manager=mesh_manager, renderer=renderer)
     _mesh_streamer_ref[0] = mesh_streamer

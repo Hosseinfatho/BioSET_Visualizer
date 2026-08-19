@@ -76,8 +76,10 @@ class MeshManager:
         renderer: vtkRenderer,
         base_spacing: Tuple[float, float, float] = (0.14, 0.14, 0.28),
         face_budget: int = HARD_FACE_CEILING,
+        nov_renderer: Optional[vtkRenderer] = None,
     ):
         self.renderer = renderer
+        self.nov_renderer = nov_renderer
         self.base_sx, self.base_sy, self.base_sz = base_spacing
         self.hard_face_ceiling = int(face_budget)
 
@@ -98,6 +100,11 @@ class MeshManager:
         self._actor_faces: Dict[tuple, int] = {}
         self._live_faces = 0
         self._channel_colors: Dict[int, Tuple[float, float, float]] = {}
+        # Optimal View mirrors the main scene's mesh actors into its own
+        # renderer, keyed identically so the two stay in step as tiles stream
+        # in and out. None in `_nov_visible` means "every enabled channel".
+        self._nov_actors: "OrderedDict[tuple, vtkActor]" = OrderedDict()
+        self._nov_visible: Optional[set] = None
         self._polydata_cache: Dict[int, object] = {}
         self._lock = threading.Lock()
         self.shading_enabled = True
@@ -362,6 +369,10 @@ class MeshManager:
             self._actors[key] = actor
             self._actor_faces[key] = int(tile.face_count)
             self._live_faces += int(tile.face_count)
+        # Mirror into Optimal View as the tile arrives. Master's version only
+        # had to mirror whole-channel activations; tiles stream now, so the
+        # mirroring hooks the streaming lifecycle instead.
+        self._add_nov_actor(key, polydata, color)
         self._polydata_cache.pop(tile.channel_idx, None)
         return True
 
@@ -428,6 +439,7 @@ class MeshManager:
         if actor is not None:
             self.renderer.RemoveActor(actor)
             self._live_faces -= self._actor_faces.pop(key, 0)
+        self._remove_nov_key(key)
 
     def _drop(self, predicate):
         for key in [k for k in self._actors if predicate(k)]:
@@ -441,6 +453,9 @@ class MeshManager:
         if ci in self._enabled:
             self._enabled[ci] = tuple(color_rgb)
         for key, actor in self._actors.items():
+            if key[0] == ci:
+                actor.GetProperty().SetColor(*color_rgb)
+        for key, actor in self._nov_actors.items():
             if key[0] == ci:
                 actor.GetProperty().SetColor(*color_rgb)
 
@@ -461,6 +476,67 @@ class MeshManager:
         self._enabled.clear()
         self._channel_colors.clear()
         self._polydata_cache.clear()
+        self.clear_nov_meshes()
+
+    # ── Optimal View (NOV) mirroring ───────────────────────
+
+    def set_nov_renderer(self, nov_renderer: Optional[vtkRenderer]) -> None:
+        """Point the mirror at a renderer, dropping any actors held in the old
+        one first — they belong to a renderer that is going away."""
+        if self.nov_renderer is not None and nov_renderer is not self.nov_renderer:
+            self.clear_nov_meshes()
+        self.nov_renderer = nov_renderer
+
+    def _nov_shows(self, channel_idx: int) -> bool:
+        return self._nov_visible is None or int(channel_idx) in self._nov_visible
+
+    def _add_nov_actor(self, key, polydata, color) -> None:
+        """Twin one main-scene tile actor into the NOV renderer."""
+        if self.nov_renderer is None or polydata is None:
+            return
+        if key in self._nov_actors:
+            return
+        actor = self._make_actor(polydata, tuple(color))
+        actor.SetVisibility(1 if self._nov_shows(key[0]) else 0)
+        self.nov_renderer.AddActor(actor)
+        self._nov_actors[key] = actor
+
+    def _remove_nov_key(self, key) -> None:
+        actor = self._nov_actors.pop(key, None)
+        if actor is not None and self.nov_renderer is not None:
+            self.nov_renderer.RemoveActor(actor)
+
+    def sync_nov_meshes(self, visible_channel_ids: Optional[List[int]] = None) -> None:
+        """Rebuild the mirror from whatever is live in the main scene.
+
+        Called when the popup opens, so it has to work from the actors rather
+        than from a tile list: the polydata comes back off each mapper.
+        """
+        if self.nov_renderer is None:
+            return
+        if visible_channel_ids is not None:
+            self._nov_visible = {int(c) for c in visible_channel_ids}
+        self.clear_nov_meshes()
+        for key, actor in list(self._actors.items()):
+            mapper = actor.GetMapper()
+            polydata = mapper.GetInput() if mapper is not None else None
+            self._add_nov_actor(key, polydata, actor.GetProperty().GetColor())
+        print(f"[meshes] Synced {len(self._nov_actors)} mesh actor(s) to NOV")
+
+    def clear_nov_meshes(self) -> None:
+        for key in list(self._nov_actors):
+            self._remove_nov_key(key)
+        self._nov_actors.clear()
+
+    def set_nov_mesh_visibility(self, selected_channel_ids: List[int]) -> None:
+        """Show/hide mirrored actors to match the Optimal View channel picks."""
+        self._nov_visible = {int(c) for c in (selected_channel_ids or [])}
+        # The popup may have just opened, before anything was mirrored.
+        if self.nov_renderer is not None and self._actors and not self._nov_actors:
+            self.sync_nov_meshes()
+            return
+        for key, actor in self._nov_actors.items():
+            actor.SetVisibility(1 if self._nov_shows(key[0]) else 0)
 
     # ── geometry for the label layer ───────────────────────
 
