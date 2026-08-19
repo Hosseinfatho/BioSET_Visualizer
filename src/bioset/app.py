@@ -95,6 +95,25 @@ def run_app(*, idle_timeout: int | None = None):
     if scene.streamer is not None:
         _scale_bar_tick = [0]  # mutable so inner function can update
 
+        _last_cam_pose = [None]
+
+        def _camera_moved() -> bool:
+            """True when the camera pose has changed since the last check.
+
+            Keeps the per-tick cost to a handful of float comparisons while the
+            view is still. Mirrors the label observer's gate in ui/callbacks.py.
+            """
+            try:
+                cam = scene.renderer.GetActiveCamera()
+                pose = (cam.GetPosition(), cam.GetFocalPoint(),
+                        cam.GetViewUp(), cam.GetViewAngle())
+            except Exception:
+                return False
+            if pose == _last_cam_pose[0]:
+                return False
+            _last_cam_pose[0] = pose
+            return True
+
         async def _check_loaded_data_loop():
             """Periodically check if background loading has finished and apply to VTK; also apply NOV progressive resolution updates and adaptive scale bar."""
             while True:
@@ -112,6 +131,36 @@ def run_app(*, idle_timeout: int | None = None):
                     if scene.viewport_plots is not None:
                         if scene.viewport_plots.check_and_apply(server.state):
                             updated = True
+                    if scene.mesh_streamer is not None:
+                        # Actor creation for streamed mesh tiles — must be here,
+                        # the worker only produces polydata.
+                        if scene.mesh_streamer.check_and_apply():
+                            updated = True
+                    # Re-place the heatmap grid squares against the camera. Done
+                    # here rather than in a RenderEvent observer because this
+                    # mutates actor state (position + visibility) and must not
+                    # run mid-render; the poll loop also catches programmatic
+                    # camera moves such as a bookmark restore, which the
+                    # interaction observers never see.
+                    if _camera_moved():
+                        if scene.heatmap is not None and scene.heatmap.update_for_camera():
+                            updated = True
+                        # Contours sit on a volume face too, same as the squares.
+                        if scene.contours is not None:
+                            if scene.contours.update_for_camera():
+                                updated = True
+                            # The contour's iso-value is scoped to the visible
+                            # viewport, so panning changes it even when the LOD
+                            # level does not — and the LOD worker only fires on
+                            # a level change. Re-cut here instead: it reads a
+                            # cached smoothed field, costing 1-3 ms, and this
+                            # poll already catches programmatic camera moves
+                            # that the interaction observers never see.
+                            roi = (scene.heatmap_lod.viewport_roi
+                                   if scene.heatmap_lod is not None else None)
+                            if scene.contours.needs_viewport_update(roi):
+                                scene.contours.update_for_viewport(roi)
+                                updated = True
                     ctrl.check_label_setup()
                     if updated:
                         server.state.flush()  # push state changes (e.g. hierarchy level) before render
@@ -154,33 +203,13 @@ def run_app(*, idle_timeout: int | None = None):
             asyncio.create_task(_check_loaded_data_loop())
             asyncio.create_task(_nov_animation_loop())
 
-            async def _load_default_analysis():
-                # Let the browser connect first; gzip of the default .bioset is heavy.
-                await asyncio.sleep(0.5)
-                if not hasattr(ctrl, "preload_default_analysis"):
-                    return
-                try:
-                    server.state.analysis_loading = True
-                    server.state.flush()
-                except Exception:
-                    pass
-                packed = await asyncio.to_thread(ctrl.preload_default_analysis)
-                if packed:
-                    ctrl.apply_preloaded_analysis(*packed)
-                try:
-                    server.state.analysis_loading = False
-                    server.state.flush()
-                except Exception:
-                    pass
-                if view is not None:
-                    view.update()
-
-            asyncio.create_task(_load_default_analysis())
 
     if scene.streamer is not None:
         scene.streamer.set_render_callback(view.update)
     if scene.heatmap is not None:
         ctrl.set_heatmap(scene.heatmap)
+    if scene.integrated_heatmap is not None:
+        ctrl.set_integrated_heatmap(scene.integrated_heatmap)
     # Enable right-click tile picking/drill-down regardless of mesh availability.
     # (Mesh activation remains conditional inside the picker callback.)
     if scene.interactor is not None and hasattr(ctrl, "setup_right_click_picker"):
@@ -191,6 +220,10 @@ def run_app(*, idle_timeout: int | None = None):
         ctrl.set_viewport_plots(scene.viewport_plots)
     if scene.mesh_manager is not None:
         ctrl.set_mesh_manager(scene.mesh_manager)
+    if scene.mesh_streamer is not None:
+        ctrl.set_mesh_streamer(scene.mesh_streamer)
+    if scene.contours is not None:
+        ctrl.set_contours(scene.contours)
     if scene.heatmap_lod is not None:
         ctrl.set_heatmap_lod(scene.heatmap_lod)
     ctrl.set_renderer(scene.renderer)

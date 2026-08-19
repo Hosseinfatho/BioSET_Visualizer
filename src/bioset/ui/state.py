@@ -109,12 +109,14 @@ def init_state(state):
     state.setdefault("upset_data", [])
     state.setdefault("upset_data_local", [])
     state.setdefault("upset_selection", None)
+    state.setdefault("upset_scale_mode", "log")  # "log" | "linear" (axis scale)
     state.setdefault("upset_offset", 0)
     state.setdefault("upset_limit", 7)
 
     # Bar chart
     state.setdefault("bar_data", [])
     state.setdefault("bar_data_local", [])
+    state.setdefault("bar_scale_mode", "log")  # "log" | "linear" (axis scale)
     state.setdefault("bar_offset", 0)
     state.setdefault("bar_limit", 10)
 
@@ -124,7 +126,9 @@ def init_state(state):
     state.setdefault("dilation_scope_mode", "global")  # "global" (all tiles) or "local" (viewport tiles)
     state.setdefault("dilation_metric_single", "density")  # always fixed to density
     state.setdefault("dilation_metric_multiple", "iou")  # one of: ["iou", "overlap_coeff", "count", "density"]
+    state.setdefault("dilation_scale_mode", "log")  # "log" | "linear" (y axis)
     state.setdefault("dilation_filter_dialog", False)
+    state.setdefault("dilation_selected_channels", [])  # curves ticked in the dialog
     state.setdefault("dilation_filter_options", [])  # Available curve keys for current mode
 
     # Expanded View States
@@ -162,21 +166,29 @@ def init_state(state):
     # Channel intensity histograms (channel_id -> list of normalized bin heights)
     state.setdefault("channel_histograms", {})
 
-    # bioset analysis file loading
+    # analysis results loading (server-side path to colocalization.zarr + tally/)
     state.setdefault("analysis_loaded", False)
     state.setdefault("analysis_loading", False)
-    state.setdefault("analysis_file_name", "")
+    state.setdefault("analysis_dir", "")  # Server-side results directory path
+    state.setdefault("analysis_file_name", "")  # Basename of analysis_dir
 
-    # Analysis metadata (from .bioset file)
-    state.setdefault("analysis_channels", [])  # Channel names from analysis
-    state.setdefault("analysis_dilation_amounts", [])  # Available dilations
-    state.setdefault("analysis_hierarchy_levels", [])  # Available levels
-    state.setdefault("analysis_volume_bounds", {})  # Spatial bounds
+    # Analysis metadata (from the results store)
+    state.setdefault("analysis_channels", [])  # Display names (filtered, unique)
+    # Tallied detent radii (µm) to QUERY with. The matching *effective* radii are
+    # display labels only — see analysis/radii.py for why they must not be queried.
+    state.setdefault("analysis_dilation_amounts", [])
+    state.setdefault("analysis_dilation_labels", [])  # Effective radii, 2dp, for ticks
+    state.setdefault("analysis_radius_max", 0.0)  # Continuous radius slider cap (µm)
+    state.setdefault("analysis_detent_snap", 0.08)  # Magnetic-snap half-window (µm)
+    state.setdefault("analysis_hierarchy_levels", [])  # Heatmap LOD levels
+    state.setdefault("analysis_volume_bounds", {})  # Spatial bounds (voxels)
 
     # Current analysis settings
-    state.setdefault("current_dilation", 0)  # Selected dilation amount
+    state.setdefault("current_dilation", 0)  # Selected radius in µm (continuous)
+    state.setdefault("radius_slider", 0.0)  # Client-side slider thumb (committed on release)
     state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
-    state.setdefault("current_hierarchy_level", 3)  # Selected hierarchy (default overview)
+    state.setdefault("bar_metric_label", "")  # Unit note under the bar chart
+    state.setdefault("upset_metric_label", "")  # Unit + effective radius under UpSet
 
     # Heatmap state
     state.setdefault("heatmap_visible", True)
@@ -186,9 +198,23 @@ def init_state(state):
     state.setdefault("heatmap_available_combinations", [])  # Available combos for active channels
     state.setdefault("heatmap_combo_index", None)  # Selected index in combination list
     state.setdefault("heatmap_auto_level", "auto")  # "auto" or "manual" LOD level selection
-    state.setdefault("heatmap_outline_only", "outline")  # "filled" or "outline" tile display mode
+    # Heatmap mode. The solid-cube "filled" mode was removed; the grid and the
+    # shader-based integrated heatmap are the two that remain.
+    state.setdefault("heatmap_mode", "grid")  # "grid" | "contour" | "integrated"
+    # Effects belonging to the INTEGRATED mode alone. `ihm_effects` is what the
+    # UI binds to — a multi-select button group matching the mode row above —
+    # and the two booleans are derived from it (see on_ihm_effects_change).
+    #
+    # Both ON by default: they ARE the integrated mode. Selecting it with both
+    # off renders an unmodulated volume, which reads as the mode doing nothing.
+    # The contours are no longer listed here; they are their own heatmap mode.
+    state.setdefault("ihm_effects", ["gain", "sampling"])
+    state.setdefault("ihm_gain_enabled", True)
+    state.setdefault("ihm_sampling_enabled", True)
     state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
-    state.setdefault("surface_hidden_channels", []) # Channels whose mesh surfaces are hidden
+    # Channels whose mesh surfaces the user has opted into. Empty by default:
+    # the manifest holds thousands of tiles, so surfaces are never implicit.
+    state.setdefault("surface_enabled_channels", [])
     state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
@@ -197,7 +223,9 @@ def init_state(state):
     state.setdefault("upset_filter_dialog", False)
     state.setdefault("upset_expanded", False)
     state.setdefault("upset_metric", "iou")  # one of ["iou", "overlap_coeff"]
-    state.setdefault("upset_min_channels", 2)  # default minimum combination limit
+    # Exact combination degree to rank; 0 = every size merged (analysis.ALL_DEGREES).
+    # Size 1 is not offered: a set's IoU against itself is always 1.0.
+    state.setdefault("upset_min_channels", 0)
 
     # Bar Plot filtering
     state.setdefault("bar_selected_channels", [])  # Channels to include in Bar
@@ -446,20 +474,62 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'print_dilation_curve'):
             ctrl.print_dilation_curve()
 
-    @state.change("heatmap_outline_only")
-    def on_heatmap_outline_only_change(heatmap_outline_only, **kwargs):
+    @state.change("heatmap_mode")
+    def on_heatmap_mode_change(heatmap_mode, **kwargs):
         if hasattr(ctrl, 'update_heatmap'):
+            ctrl.update_heatmap()
+
+    @state.change("ihm_effects")
+    def on_ihm_effects_change(ihm_effects, **kwargs):
+        """Expand the button group's selection into the flags the shader
+        manager reads. One source of truth: the UI writes only this list."""
+        picked = set(ihm_effects or [])
+        state.ihm_gain_enabled = "gain" in picked
+        state.ihm_sampling_enabled = "sampling" in picked
+
+    @state.change("ihm_gain_enabled", "ihm_sampling_enabled")
+    def on_integrated_effects_change(**kwargs):
+        # Structural change (shader rebuild) — routed through update_heatmap's
+        # integrated branch; no-op in glyph modes.
+        if state.heatmap_mode == "integrated" and hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
 
     @state.change("current_dilation")
     def on_dilation_change(current_dilation, **kwargs):
-        print(f"[state] Dilation changed: {current_dilation}")
+        try:
+            val = float(current_dilation)
+        except (TypeError, ValueError):
+            return
+
+        # Magnetic detents: near a tallied radius, snap to it (those are
+        # answered exactly from the tally). Arbitrary values between detents
+        # pass through and are computed from the EDT field. The window scales
+        # with the dataset's own radius spacing — a fixed one is a dead zone on
+        # coarsely-spaced runs and overlapping on finely-spaced ones.
+        window = float(getattr(state, "analysis_detent_snap", 0.08) or 0.08)
+        snapped = val
+        for d in (state.analysis_dilation_amounts or []):
+            if abs(val - d) <= window:
+                snapped = float(d)
+                break
+        cap = float(state.analysis_radius_max or 0.0)
+        if cap > 0:
+            snapped = max(0.0, min(snapped, cap))
+        if snapped != val:
+            state.current_dilation = snapped  # re-fires once with the snapped value
+            return
+        if getattr(state, "radius_slider", None) != snapped:
+            state.radius_slider = snapped  # keep the slider thumb in sync
+
+        print(f"[state] Radius changed: {snapped}")
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'update_upset_data'):
             ctrl.update_upset_data()
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        if hasattr(ctrl, 'update_dilation_data'):
+            pass  # dilation curves span all radii; no recompute needed here
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 
@@ -477,15 +547,12 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Hierarchy level changed: {current_hierarchy_level}")
         if state.heatmap_auto_level == "auto":
             return
+        # The level selects the heatmap's cell size and nothing else — the
+        # UpSet, bar and dilation answers are level-independent (see the loader
+        # docstring), so recomputing them here was pure duplicate work. The
+        # UpSet call was additionally issued twice.
         if hasattr(ctrl, 'update_heatmap_combinations'):
             ctrl.update_heatmap_combinations()
-        if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data()
-            ctrl.update_upset_data()
-        if hasattr(ctrl, 'update_bar_data'):
-            ctrl.update_bar_data()
-        if hasattr(ctrl, 'update_dilation_data'):
-            ctrl.update_dilation_data()
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 
@@ -546,25 +613,44 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
 
+    def _refresh_all_upset_scopes():
+        """Rebuild every array the UpSet can read.
+
+        There are four: global/all (`upset_data`), global/selected
+        (`upset_data_local`) and the two viewport arrays. Refreshing only the
+        first — which is what the size and selection handlers used to do —
+        leaves three of the four modes showing stale results, so the control
+        looks dead unless you happen to be in Global + All.
+        """
+        # `update_upset_data_local` is NOT called here: writing `upset_data`
+        # already cascades into it via on_upset_data_change, and calling both
+        # computed the local array twice per refresh. Both derive from the same
+        # inputs, so if the global result is unchanged the local one is too.
+        if hasattr(ctrl, 'update_upset_data'):
+            ctrl.update_upset_data()
+        # Pushes the size and selection into the viewport worker and requeues it,
+        # so Local scope no longer waits for a camera nudge.
+        if hasattr(ctrl, 'sync_viewport_plots_enabled'):
+            ctrl.sync_viewport_plots_enabled()
+
     @state.change("upset_selected_channels")
     def on_upset_selected_channels_change(upset_selected_channels, **kwargs):
         print(f"[state] UpSet selected channels changed: {len(upset_selected_channels)} channels")
-        if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data()
+        _refresh_all_upset_scopes()
 
     @state.change("upset_min_channels")
     def on_upset_min_channels_change(upset_min_channels, **kwargs):
-        print(f"[state] UpSet min channels changed: {upset_min_channels}")
-        if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data()
+        print(f"[state] UpSet combination size changed: {upset_min_channels or 'all'}")
+        state.upset_offset = 0
+        state.upset_expanded_offset = 0
+        _refresh_all_upset_scopes()
 
     @state.change("upset_metric")
     def on_upset_metric_change(upset_metric, **kwargs):
+        # Not cosmetic: the ranking is truncated by this metric server-side, so
+        # switching it changes which rows are returned, not just their order.
         print(f"[state] UpSet metric changed: {upset_metric}")
-        if hasattr(ctrl, 'update_upset_data'):
-            ctrl.update_upset_data()
-        if hasattr(ctrl, 'update_upset_data_local'):
-            ctrl.update_upset_data_local()
+        _refresh_all_upset_scopes()
 
     @state.change("bar_selected_channels")
     def on_bar_selected_channels_change(bar_selected_channels, **kwargs):

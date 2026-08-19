@@ -27,6 +27,7 @@ dependencies = [
   "fpdf2",
   "scipy",
   "globus-sdk",
+  "pyarrow",
 ]
 
 [project.scripts]

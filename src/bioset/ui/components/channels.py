@@ -83,8 +83,10 @@ def channels_section(state, ctrl):
                                         style="flex-shrink: 0;",
                                         v_on="{'mousedown': (e) => e.stopPropagation(), 'click': (e) => e.stopPropagation()}",
                                     ):
+                                        # Surfaces are opt-in: filled cube = this
+                                        # channel's tiles stream with the viewport.
                                         vuetify.VIcon(
-                                            "{{ surface_hidden_channels.includes(channel.id) ? 'mdi-cube-off-outline' : 'mdi-cube-outline' }}",
+                                            "{{ surface_enabled_channels.includes(channel.id) ? 'mdi-cube' : 'mdi-cube-outline' }}",
                                             class_="eye-icon mr-5 pr-5",
                                             style="margin-left: 5px;",
                                             v_if="active_channels.includes(channel.id)",

@@ -7,6 +7,193 @@ from typing import Literal, Sequence, Optional, Tuple
 
 
 @dataclass(frozen=True)
+class IntegratedHeatmapConfig:
+    """Tuning for the shader-injected "Integrated" heatmap mode.
+
+    This dataclass is the management surface for the two shader effects
+    (gain / importance sampling) — edit and restart. The outline used to be a
+    third; it is contour geometry now (scene/heatmap_contours.py). Values
+    marked [literal] are baked into the generated GLSL; [uniform] values are
+    uploaded as custom uniforms.
+
+    ══ THE FOUR KNOBS ═════════════════════════════════════════════════════
+    These are the ones to reach for. Each is independent of the others, and
+    each says in its name what it does to the picture. Edit and restart.
+
+      cell_contrast   how EXAGGERATED the difference between neighbouring
+                      cells is.  0 = faithful, 1 = default, 3 = near-binary.
+      hot_brightness  how much BRIGHTER the highlighted regions get, as a
+                      multiple of the unmodulated volume.  1 = no boost.
+      cold_dimness    how much brightness the QUIETEST regions keep.
+                      0 = black, 0.15 = default, 1 = no dimming at all.
+      map_smoothing   how much the cell boundaries are SMOOTHED.
+                      0 = hard squares, 1 = default, >1 = progressively
+                      blurrier.
+
+    A worked example — "I want a stark, high-contrast look":
+        cell_contrast=2.5, hot_brightness=6.0, cold_dimness=0.05
+    and a subtle one — "just tint it, don't shout":
+        cell_contrast=0.0, hot_brightness=1.5, cold_dimness=0.5
+
+    Two of these interact in one way worth knowing: `hot_brightness` is a
+    CEILING, not a promise. A fragment can only be brightened until one of its
+    colour channels reaches 1.0, because going past that clips the channel and
+    drags the colour toward white — which is the bug this whole design exists
+    to prevent. Bright tissue therefore hits its own limit before the ceiling
+    does, so raising `hot_brightness` past ~4 mostly affects faint tissue.
+
+    ── The rest ───────────────────────────────────────────────────────────
+    `map_*` shape the map BEFORE it reaches the shader (which cells count as
+    empty, how the values are spread, how the coarse levels are rescued).
+    `sampling_max_step_scale` is how coarsely cold regions are ray-marched.
+    Resolution needs no tuning: the maps are GPU textures at the heatmap LOD's
+    own grid, so they follow the camera like the grid heatmap does.
+
+    Values marked [literal] are baked into the generated GLSL; [uniform]
+    values are uploaded as custom uniforms. Set BIOSET_DUMP_SHADER=1 to dump
+    the generated GLSL (streaming/shader_debug.py) and confirm a change
+    actually reached the GPU.
+    """
+    # ══ THE FOUR KNOBS ═════════════════════════════════════════════════════
+
+    # ── 1. How exaggerated are the differences between cells? ──
+    # An S-curve on the map value, applied this many times. Rank equalization
+    # spreads cells uniformly, so the steep middle of the curve lands where
+    # the bulk of them sit and pushes neighbours apart.
+    #
+    #   0.0  linear — differences render exactly in proportion to the data
+    #   1.0  one smoothstep (default): measured, a 0.061 map difference (the
+    #        median between adjacent cells at the finest level) renders 1.9x
+    #        to 4.4x more separated than with no curve, depending on how
+    #        bright the tissue is
+    #   2-3  progressively harder, toward a near-binary hot/cold split
+    #
+    # Raising this trades away the ability to tell the HOTTEST cells apart
+    # from each other — they all flatten toward the top of the curve.
+    cell_contrast: float = 1.5                      # [literal]
+
+    # ── 2. How much brighter are the highlighted regions? ──
+    # Ceiling on the per-fragment brightness boost, as a multiple of the
+    # unmodulated volume. 1.0 disables the boost entirely (highlighted regions
+    # then merely fail to be dimmed, which is what made the effect hard to see
+    # before this knob existed).
+    #
+    # Inert for bright tissue, which reaches its own clipping limit first —
+    # measured on a 0.15-to-1.0 map, hot-region red of 0.153 at 2.0, 0.299 at
+    # 4.0, 0.317 at 8.0 on faint tissue, and identical at all three on normal
+    # tissue. Raise it to lift faint channels; it cannot cause whitening at
+    # any value.
+    hot_brightness: float = 1.5                     # [literal]
+
+    # ── 3. How dull are the quiet regions? ──
+    # What fraction of its normal brightness the coldest region keeps.
+    # 0.0 = black (maximum contrast, but empty areas vanish entirely),
+    # 0.15 = default, 1.0 = no dimming (highlighting then comes only from
+    # `hot_brightness`).
+    #
+    # This is the knob for "the whole scene is too dark" — raise it.
+    cold_dimness: float = 0.15                      # [literal]
+
+    # ── 4. How much are cell boundaries smoothed? ──
+    #   0.0      hard-edged squares: no filtering at all. Cells read as
+    #            blocks, worst at the coarse levels where one spans ~1024
+    #            voxels.
+    #   0.0-1.0  hardware bilinear, blended from straight-linear toward a
+    #            smoothstep that is also smooth ACROSS cell centres
+    #   1.0      default
+    #   >1.0     additionally blurs the map itself before upload, with a
+    #            Gaussian of (value - 1) cells. 2.0 is a one-cell blur.
+    #            Costs CPU per level change, nothing per frame.
+    #
+    # Blurring only ever mixes occupied cells with each other; empty cells
+    # stay exactly 0, so the tissue border stays crisp however high this goes.
+    map_smoothing: float = 1.0                      # [literal + CPU]
+
+    # ══ Everything below shapes the map before the knobs above act on it ═══
+
+    # Per-channel member maps bound alongside the interaction map. Matched to
+    # the multivolume's own 10-channel limit: the maps ride in the RGBA
+    # components of up to 3 textures, so this no longer costs shader
+    # registers the way the mat4 uniforms it replaced did.
+    max_member_maps: int = 10                       # [structural]
+
+    # ── How the raw fractions are spread across [floor, 1] ──
+    # "rank"       histogram-equalize the nonzero cells onto [floor, 1].
+    #              Guarantees the full range is used whatever the
+    #              distribution, and matches what the glyph heatmap already
+    #              does. Best for "make subtle differences stand out".
+    # "percentile" clip to [pct_lo, pct_hi] of the nonzero values and
+    #              rescale. Preserves relative magnitudes better than rank.
+    # "max"        divide by the maximum (raw fidelity; what produced the
+    #              barely-visible original).
+    map_contrast_mode: str = "rank"
+    # Where the weakest NON-empty cell lands. Empty cells always stay at 0,
+    # so this keeps "present but weak" distinguishable from "absent".
+    map_nonzero_floor: float = 0.15
+    # Applied after the mode above; < 1 lifts mid-tones, > 1 suppresses them.
+    # Only a manual override — the effective gamma is derived per map from its
+    # own occupancy (see the two constants below and `occupancy_gamma`).
+    map_gamma: float = 1.0
+    # "percentile" mode only.
+    map_pct_lo: float = 2.0
+    map_pct_hi: float = 98.0
+
+    # ── Coarse-level rescue ──
+    # Aggregation is what breaks the coarse levels, not contrast. Measured on
+    # mis_v3, the share of cells holding any signal climbs 45% (Fine) -> 52%
+    # -> 59% -> 73% (Overview), so the empty-vs-occupied distinction that
+    # carries the fine view flattens into a mid-tone wash: 48% of the Overview
+    # map reads dark against 68% of the Fine one.
+    #
+    # `occupancy_gamma` solves for the gamma that restores the target below at
+    # any occupancy, yielding ~1.0 / 1.28 / 1.57 / 2.11 for those four levels.
+    # Fine lands on 1.0 by construction and is untouched.
+    map_target_dark_fraction: float = 0.68   # what Fine already shows
+    map_dark_threshold: float = 0.40         # map value that reads as "dark"
+    map_gamma_max: float = 3.0               # ceiling on the derived gamma
+
+    # ── Gain: what DRIVES a member channel's ramp ──
+    # A member port sees two maps — its own channel's and the interaction's —
+    # and these weight how much each one drives its ramp. Only their ratio
+    # matters; the ends of the ramp are `cold_dimness` and `hot_brightness`.
+    # Raise the interaction weight to make co-localization dominate, or the
+    # channel weight to make each channel follow its own density.
+    #
+    #   v      = clamp(ch_w*own + int_w*inter, 0, 1)     (weights normalized)
+    #   rgb   *= Hi * mix(cold_dimness, 1, curve(v))
+    #   alpha *= mix(min_alpha, 1, max(own, inter))
+    #
+    # The alpha ramp is separate on purpose: opacity is nearly saturated in
+    # this app (raising per-sample alpha 0.12 -> 0.80 buys 7% brightness,
+    # measured), so it dims cold regions but is not a route to making hot ones
+    # pop. That is `hot_brightness`'s job.
+    combined_channel_rgb_weight: float = 0.70       # [literal]
+    combined_interaction_rgb_weight: float = 0.90   # [literal]
+    combined_min_alpha_gain: float = 0.20           # [literal]
+
+    # The halo-outline settings lived here. The outline is real contour
+    # geometry now — see scene/heatmap_contours.py and `ContourConfig`, whose
+    # levels are percentiles of the visible field and whose resolution follows
+    # the camera instead of being pinned to this grid.
+
+    # ── Importance sampling: step = base * mix(max_scale, 1, importance) ──
+    sampling_max_step_scale: float = 10.0           # [uniform]
+
+    @property
+    def map_blur_cells(self) -> float:
+        """Gaussian sigma, in cells, applied to the map before upload."""
+        return max(0.0, float(self.map_smoothing) - 1.0)
+
+    @property
+    def uv_smoothing(self) -> float:
+        """How far the texture-filter blend is warped toward a smoothstep."""
+        return min(1.0, max(0.0, float(self.map_smoothing)))
+
+
+INTEGRATED_HEATMAP = IntegratedHeatmapConfig()
+
+
+@dataclass(frozen=True)
 class VolumeConfig:
     # Source mode
     source: Literal["tiff", "zarr_s3"] = "tiff"
@@ -54,11 +241,14 @@ class VolumeConfig:
     # Heatmap LOD thresholds: (camera_distance, hierarchy_level)
     # Level 3=Overview (coarse), 0=Fine. Same distance axis as distance_rules.
     heatmap_distance_rules: Sequence[Tuple[float, int]] = (
-        (1000.0, 3),  # far out    → Overview  (1024-voxel tiles)
-        (300.0,  2),  # medium     → Coarse    (512-voxel tiles)
-        (150.0,  1),  # close      → Medium    (256-voxel tiles)
-        (-100.0, 0),  # very close → Fine      (128-voxel tiles)
+        (1000.0, 3),  # far out    → Overview  (1024-voxel cells)
+        (300.0,  2),  # medium     → Coarse    (256-voxel cells)
+        (120.0,  1),  # close      → Medium    (64-voxel cells)
+        (-100.0, 0),  # very close → Fine      (16-voxel cells, ~subcellular)
     )
+
+    # Heatmap LOD level → cell edge length in voxels (y/x; z spans the volume).
+    analysis_cell_sizes: dict = None  # None → analysis.constants.DEFAULT_CELL_SIZES_VOX
 
     # ROI padding (voxels at the chosen component)
     roi_margin_vox: int = 16
@@ -80,7 +270,9 @@ class VolumeConfig:
     globus_https_base: Optional[str] = None
     globus_token_file: str = "~/.bioset/globus_token.json"
 
-    # surfaces directory
+    # Surfaces directory. Normally None: the meshes ship inside the analysis
+    # results, so the manager is pointed at <results>/meshes when one loads.
+    # Set this only to use meshes without an analysis directory.
     mesh_dir: Optional[Path] = None
 
     # Rendering Defaults
@@ -112,7 +304,7 @@ def default_config() -> VolumeConfig:
         base_sx=0.14,
         base_sy=0.14,
         base_sz=0.28,
-        mesh_dir=data_dir / "output_meshes",
+        mesh_dir=None,  # taken from <results>/meshes on analysis load
         # Globus HTTPS: env-overridable, with the known working collection as default.
         globus_client_id=os.environ.get(
             "BIOSET_GLOBUS_CLIENT_ID", "6be7e29d-6cf6-42a0-bf49-90ccba4bf8a3"),

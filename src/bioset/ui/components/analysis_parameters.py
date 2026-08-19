@@ -30,44 +30,92 @@ def analysis_parameters_section(state, ctrl):
                     v_show=("analysis_params_open", False),
                     classes="mt-1",
             ):
-                # Dilation Header
+                # Dilation Header: label + current radius + exact/computed chip.
+                # Radii at the preprocessed detents are answered exactly from the
+                # tally; anything else is computed from the EDT field.
                 with vuetify.VListItem(classes="mt-2 text-left ml-4"):
-                    html.Span("Dilation", classes="text-caption grey--text font-weight-bold")
+                    html.Span("Dilation radius", classes="text-caption grey--text font-weight-bold")
+                    html.Span(
+                        "{{ Number(current_dilation).toFixed(2) }} \u03BCm",
+                        classes="text-caption ml-2",
+                        style="color: white;",
+                    )
+                    vuetify.VChip(
+                        v_text="analysis_dilation_amounts.some(d => Math.abs(d - current_dilation) < 0.001) ? 'exact' : 'computed'",
+                        x_small=True,
+                        classes="ml-2",
+                        color=("analysis_dilation_amounts.some(d => Math.abs(d - current_dilation) < 0.001) ? 'green darken-3' : 'amber darken-4'",),
+                        text_color="white",
+                    )
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(classes="pb-0"):
-                        # Dilation slider 
-                        with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-2 mt-2"):
+                        # Continuous radius slider with magnetic detents.
+                        # The thumb tracks `radius_slider` client-side while
+                        # dragging; the committed value lands in
+                        # `current_dilation` on release, where the server snaps
+                        # it to a nearby detent (see state.on_dilation_change).
+                        with html.Div(classes="d-flex align-center justify-center flex-nowrap mb-0 mt-2"):
                             with vuetify.VBtn(
                                     icon=True,
                                     small=True,
-                                    click="current_dilation = Math.max(analysis_dilation_amounts[0] || 0, current_dilation - (analysis_dilation_amounts.length > 1 ? analysis_dilation_amounts[1] - analysis_dilation_amounts[0] : 1))",
+                                    click="(function(){var a = analysis_dilation_amounts.filter(function(d){return d < current_dilation - 1e-6}); var v = a.length ? a[a.length-1] : (analysis_dilation_amounts[0] || 0); radius_slider = v; current_dilation = v;})()",
                             ):
                                 vuetify.VIcon("mdi-minus", small=True)
 
-                            vuetify.VSlider(
-                                v_model=("current_dilation",),
-                                min=("analysis_dilation_amounts.length > 0 ? analysis_dilation_amounts[0] : 0",),
-                                max=(
-                                    "analysis_dilation_amounts.length > 0 ? analysis_dilation_amounts[analysis_dilation_amounts.length - 1] : 0",),
-                                step=(
-                                    "analysis_dilation_amounts.length > 1 ? analysis_dilation_amounts[1] - analysis_dilation_amounts[0] : 1",),
-                                ticks="always",
-                                dense=True,
-                                dark=True,
-                                hide_details=False,
-                                classes="mx-2",
-                                small=True,
-                                style="font-size: 0.75rem;",
-                                tick_labels=("analysis_dilation_amounts.map(v => v + ' \u03BCm')",),
-                            )
+                            with html.Div(style="position: relative; flex: 1 1 auto;", classes="mx-2"):
+                                vuetify.VSlider(
+                                    v_model=("radius_slider", 0.0),
+                                    min=0,
+                                    max=("analysis_radius_max",),
+                                    step=0.01,
+                                    dense=True,
+                                    dark=True,
+                                    hide_details=True,
+                                    thumb_label=True,
+                                    small=True,
+                                    style="font-size: 0.75rem;",
+                                    __events=["change"],
+                                    change="current_dilation = radius_slider",
+                                )
+                                # Detent ticks overlaid on the track
+                                html.Div(
+                                    v_for="d in analysis_dilation_amounts",
+                                    key=("d",),
+                                    style=(
+                                        "'position: absolute; top: 12px; width: 2px; height: 10px; "
+                                        "pointer-events: none; transform: translateX(-50%); "
+                                        "left: ' + (d / analysis_radius_max * 100) + '%; "
+                                        "background: ' + (Math.abs(d - current_dilation) < 0.001 ? '#4caf50' : '#9e9e9e')",
+                                    ),
+                                )
+                                # Label with the EFFECTIVE radius (what the tally
+                                # rows actually describe), positioned at the
+                                # requested one (what we query with). Every other
+                                # label is drawn so 8 detents stay legible.
+                                html.Span(
+                                    v_for="(d, di) in analysis_dilation_amounts",
+                                    key=("'l' + d",),
+                                    v_if="di % 2 === 0",
+                                    v_text="(analysis_dilation_labels[di] !== undefined "
+                                           "? analysis_dilation_labels[di] : d)",
+                                    style=(
+                                        "'position: absolute; top: 22px; font-size: 9px; "
+                                        "pointer-events: none; transform: translateX(-50%); "
+                                        "left: ' + (d / analysis_radius_max * 100) + '%; "
+                                        "color: ' + (Math.abs(d - current_dilation) < 0.001 ? '#4caf50' : '#9e9e9e')",
+                                    ),
+                                )
 
                             with vuetify.VBtn(
                                     icon=True,
                                     small=True,
-                                    click="current_dilation = Math.min(analysis_dilation_amounts[analysis_dilation_amounts.length - 1] || 0, current_dilation + (analysis_dilation_amounts.length > 1 ? analysis_dilation_amounts[1] - analysis_dilation_amounts[0] : 1))",
+                                    click="(function(){var a = analysis_dilation_amounts.filter(function(d){return d > current_dilation + 1e-6}); if (a.length) { radius_slider = a[0]; current_dilation = a[0]; }})()",
                             ):
                                 vuetify.VIcon("mdi-plus", small=True)
+                # Spacer so the detent labels below the track stay visible
+                with vuetify.VListItem(classes="mt-0 pt-0", style="min-height: 14px;"):
+                    html.Span("")
 
                 # Heatmap Header
                 with vuetify.VListItem(classes="mt-4 text-left ml-4"):
@@ -75,8 +123,13 @@ def analysis_parameters_section(state, ctrl):
 
                 with vuetify.VListItem(class_="nav-item nav-item--nested", v_if="!drawer_mini"):
                     with vuetify.VListItemContent():
-                        # Eye toggle + Filled/Outline + Manual/Auto in one row
-                        with html.Div(classes="d-flex align-center justify-center mb-2", style="gap: 8px;"):
+                        # Eye + the three heatmap varieties. Manual/Auto used to
+                        # share this row, but a third variety pushed it past the
+                        # drawer's width and it was cut off; it has its own row
+                        # below now. `flex-wrap` keeps that from recurring if
+                        # the drawer is narrowed or a label grows.
+                        with html.Div(classes="d-flex align-center justify-center flex-wrap mb-2",
+                                      style="gap: 8px;"):
                             # Eye visibility toggle (square icon button)
                             with vuetify.VBtn(
                                     icon=True,
@@ -91,25 +144,57 @@ def analysis_parameters_section(state, ctrl):
                                     style=("heatmap_visible ? 'color:white' : 'color:#555'",),
                                 )
 
-                            # Filled / Outline toggle
+                            # Three heatmap varieties, each its own thing:
+                            #   Grid        glyph squares over the volume
+                            #   Contour     iso-contour geometry
+                            #   Integrated  shader effects on the volume itself
                             with vuetify.VBtnToggle(
-                                    v_model=("heatmap_outline_only", "filled"),
+                                    v_model=("heatmap_mode", "grid"),
                                     mandatory=True,
                                     dense=True,
                                     style="background: transparent;",
                             ):
-                                vuetify.VBtn("Filled", value="filled", small=True, classes="text-capitalize", outlined=True)
-                                vuetify.VBtn("Outline", value="outline", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Grid", value="grid", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Contour", value="contour", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Integrated", value="integrated", small=True,
+                                             classes="text-capitalize", outlined=True)
 
-                            # Manual / Auto toggle
+                        # Manual / Auto level selection, on its own row. It
+                        # governs the granularity buttons further down, so it
+                        # reads as a pair with them.
+                        with html.Div(classes="d-flex justify-center flex-wrap mb-2"):
                             with vuetify.VBtnToggle(
                                     v_model=("heatmap_auto_level", "auto"),
                                     mandatory=True,
                                     dense=True,
                                     style="background: transparent;",
                             ):
-                                vuetify.VBtn("Manual", value="manual", small=True, classes="text-capitalize", outlined=True)
-                                vuetify.VBtn("Auto", value="auto", small=True, classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Manual", value="manual", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Auto", value="auto", small=True,
+                                             classes="text-capitalize", outlined=True)
+
+                        # The two shader effects, which belong to the Integrated
+                        # mode alone — the contours are their own variety now.
+                        # `multiple` rather than `mandatory`: they are
+                        # independent and either may be off. Tuning lives in
+                        # config.IntegratedHeatmapConfig.
+                        with html.Div(
+                                classes="d-flex justify-center mb-2",
+                                v_if="heatmap_mode === 'integrated'",
+                        ):
+                            with vuetify.VBtnToggle(
+                                    v_model=("ihm_effects",),
+                                    multiple=True,
+                                    dense=True,
+                                    style="background: transparent;",
+                            ):
+                                vuetify.VBtn("Gain", value="gain", small=True,
+                                             classes="text-capitalize", outlined=True)
+                                vuetify.VBtn("Sampling", value="sampling", small=True,
+                                             classes="text-capitalize", outlined=True)
 
                         # Combination dropdown
                         with html.Div(classes="d-flex justify-center mb-3"):
@@ -169,7 +254,7 @@ def analysis_parameters_section(state, ctrl):
                                             )
 
                         # Granularity toggle
-                        with html.Div(classes="d-flex justify-center mb-1"):
+                        with html.Div(classes="d-flex justify-center flex-wrap mb-1"):
                             with vuetify.VBtnToggle(
                                     v_model=("current_hierarchy_level",),
                                     mandatory=True,

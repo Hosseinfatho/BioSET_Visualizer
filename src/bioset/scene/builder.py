@@ -34,9 +34,11 @@ from ..config import VolumeConfig
 from .volumes import SpacingConfig, make_volume_from_tiff, color_name_to_rgb
 from ..streaming import VolumeStreamer
 from ..streaming.heatmap_lod import HeatmapLOD
+from ..streaming.mesh_streamer import MeshStreamer
 from ..streaming.viewport_plots import ViewportPlotComputer
 from ..streaming.lod import camera_distance_to_focal
 from .heatmap import HeatmapRenderer
+from .heatmap_contours import ContourRenderer
 from .meshes import MeshManager
 
 # Axis length (smaller = smaller arrows) and camera distance (larger = more margin, no clipping when rotating).
@@ -173,6 +175,9 @@ class VtkScene:
     nov_renderer: Optional[vtkRenderer] = None
     nov_render_window: Optional[vtkRenderWindow] = None
     mesh_manager: Optional[MeshManager] = None
+    mesh_streamer: Optional[MeshStreamer] = None
+    contours: Optional[ContourRenderer] = None
+    integrated_heatmap: Optional[object] = None  # IntegratedHeatmapManager
 
 
 def build_scene(cfg: VolumeConfig) -> VtkScene:
@@ -228,6 +233,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     nov_render_window: Optional[vtkRenderWindow] = None
     _heatmap_lod_ref: list = [None]  # mutable so _on_end_interaction closure can access it
     _viewport_plots_ref: list = [None]
+    _mesh_streamer_ref: list = [None]
 
     heatmap = HeatmapRenderer(heatmap_fill_renderer, outline_renderer=heatmap_outline_renderer)
 
@@ -275,29 +281,35 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                 streamer.on_interaction_end()
                 from bioset.streaming.lod import camera_distance_to_focal, compute_visible_xy_roi_vox
                 dist = camera_distance_to_focal(renderer.GetActiveCamera())
+
+                # Visible ROI at base resolution (component 0), shared by the
+                # heatmap LOD crop and the viewport plots' block mapping.
+                roi = None
+                try:
+                    bounds = streamer._volume_bounds_world(0)
+                    sp = streamer._spacing_for_component(0)
+                    _, ydim, xdim = streamer._dims_for_component(0)
+                    roi = compute_visible_xy_roi_vox(
+                        renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
+                        x_dim=xdim, y_dim=ydim, margin_vox=0,
+                    )
+                except Exception as e:
+                    print(f"[builder] ROI computation error: {e}")
+
+                roi_vox = (roi.x0, roi.x1, roi.y0, roi.y1) if roi is not None else None
                 if _heatmap_lod_ref[0] is not None:
-                    _heatmap_lod_ref[0].on_camera_moved(dist)
+                    _heatmap_lod_ref[0].on_camera_moved(dist, roi_vox=roi_vox)
+                if _mesh_streamer_ref[0] is not None:
+                    _mesh_streamer_ref[0].on_camera_moved(roi_vox=roi_vox)
                 vp = _viewport_plots_ref[0]
-                if vp is not None and vp._enabled:
-                    try:
-                        # Compute ROI at base resolution (component 0) for tile mapping
-                        bounds = streamer._volume_bounds_world(0)
-                        sp = streamer._spacing_for_component(0)
-                        _, ydim, xdim = streamer._dims_for_component(0)
-                        roi = compute_visible_xy_roi_vox(
-                            renderer, bounds_world=bounds, sx=sp.sx, sy=sp.sy,
-                            x_dim=xdim, y_dim=ydim, margin_vox=0,
-                        )
-                        # Convert ROI voxel coords to tile grid indices
-                        # DB tile coords are always in level-0 grid units (128 voxels)
-                        BASE_TILE = 128
-                        gx0 = roi.x0 // BASE_TILE
-                        gx1 = (roi.x1 + BASE_TILE - 1) // BASE_TILE
-                        gy0 = roi.y0 // BASE_TILE
-                        gy1 = (roi.y1 + BASE_TILE - 1) // BASE_TILE
-                        vp.on_camera_moved((gx0, gx1), (gy0, gy1))
-                    except Exception as e:
-                        print(f"[viewport_plots] ROI computation error: {e}")
+                if vp is not None and vp._enabled and roi is not None:
+                    # Convert ROI voxel coords to tally-block indices (128 voxels)
+                    from bioset.analysis.constants import BLOCK_VOX
+                    gx0 = roi.x0 // BLOCK_VOX
+                    gx1 = (roi.x1 + BLOCK_VOX - 1) // BLOCK_VOX
+                    gy0 = roi.y0 // BLOCK_VOX
+                    gy1 = (roi.y1 + BLOCK_VOX - 1) // BLOCK_VOX
+                    vp.on_camera_moved((gx0, gx1), (gy0, gy1))
 
             def _on_nov_end_interaction(obj, evt):
                 nov_render_window.Render()
@@ -331,6 +343,11 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
                 # on_interaction_end -> async stream -> apply.
                 try:
                     streamer.on_interaction_start()
+                except Exception:
+                    pass
+                # Drop any hover highlight so it doesn't render stale during the drag.
+                try:
+                    heatmap.clear_highlight()
                 except Exception:
                     pass
 
@@ -379,20 +396,44 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     renderer.ResetCameraClippingRange()
     renderer.ResetCamera()
 
-    mesh_manager: Optional[MeshManager] = None
-    if cfg.mesh_dir:
-        mesh_manager = MeshManager(
-            mesh_dir=cfg.mesh_dir,
-            renderer=renderer,
-            base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
-            nov_renderer=nov_renderer,
-        )
+    # The meshes now ship inside the analysis results, so the manager starts
+    # empty and is pointed at <results>/meshes when one is loaded. cfg.mesh_dir
+    # remains an override for using meshes without an analysis directory.
+    mesh_manager = MeshManager(
+        mesh_dir=cfg.mesh_dir,
+        renderer=renderer,
+        base_spacing=(cfg.base_sx, cfg.base_sy, cfg.base_sz),
+        nov_renderer=nov_renderer,
+    )
+    mesh_streamer = MeshStreamer(manager=mesh_manager, renderer=renderer)
+    _mesh_streamer_ref[0] = mesh_streamer
+
+    # Iso-contours for the integrated mode, on the same layer-2 renderer the
+    # grid squares use. Driven by the LOD worker so they inherit zoom-dependent
+    # resolution and viewport cropping.
+    contours = ContourRenderer(heatmap_outline_renderer)
 
     heatmap_lod: Optional[HeatmapLOD] = HeatmapLOD(distance_rules=cfg.heatmap_distance_rules) if streamer is not None else None
     _heatmap_lod_ref[0] = heatmap_lod
+    if heatmap_lod is not None:
+        heatmap_lod.set_contour_renderer(contours)
 
     viewport_plots: Optional[ViewportPlotComputer] = ViewportPlotComputer() if streamer is not None else None
     _viewport_plots_ref[0] = viewport_plots
+
+    # Integrated-heatmap shader effects on the streamer's shared multi-volume.
+    # Wired here (builder imports both packages) to avoid the pre-existing
+    # scene<->streaming import cycle inside the streamer.
+    integrated_heatmap = None
+    if streamer is not None:
+        from .integrated_heatmap import IntegratedHeatmapManager
+        integrated_heatmap = IntegratedHeatmapManager()
+        # The maps ride to the GPU as textures, so the manager needs the
+        # window (MakeCurrent before activating one) and the renderer (the
+        # texture-unit manager it registers with).
+        integrated_heatmap.set_render_window(render_window)
+        integrated_heatmap.set_renderer(renderer)
+        streamer.shader_effects_hook = integrated_heatmap.on_multivolume_rebuilt
 
     return VtkScene(
         renderer=renderer,
@@ -405,4 +446,7 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
         nov_renderer=nov_renderer,
         nov_render_window=nov_render_window,
         mesh_manager=mesh_manager,
+        mesh_streamer=mesh_streamer,
+        contours=contours,
+        integrated_heatmap=integrated_heatmap,
     )

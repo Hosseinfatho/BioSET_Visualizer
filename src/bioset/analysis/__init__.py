@@ -1,15 +1,19 @@
 from .loader import (
+    ALL_DEGREES,
     AnalysisLoader,
     AnalysisMetadata,
     CombinationData,
+    HeatmapField,
     TileData,
-    decompress_bioset_to_cache,
+    crop_field_to_roi,
 )
 
 __all__ = [
+    "ALL_DEGREES",
     "AnalysisLoader",
     "AnalysisMetadata",
     "CombinationData",
+    "HeatmapField",
     "TileData",
-    "decompress_bioset_to_cache",
+    "crop_field_to_roi",
 ]

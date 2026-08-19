@@ -3,7 +3,7 @@
   "title": "Tissue-Resident T cell and Tumor Interface",
   "category": "Immune_Tumor",
   "created": "2026-04-07T23:05:26Z",
-  "updated": "2026-04-07T23:06:18Z",
+  "updated": "2026-08-11T22:35:14Z",
   "notes": "This region displays a striking spatial interplay between a dense MART1-positive melanocytic tumor mass (red, volumetrically dominant) and CD8a-positive cytotoxic T lymphocytes (green) distributed both at the tumor periphery and interspersed within the tumor core. CD103-positive cells (white) appear as discrete focal clusters embedded within the CD8a and MART1 signals, identifying a tissue-resident memory cytotoxic T cell (Trm) population actively engaging the tumor. The pattern suggests an immune-infiltrated rather than immune-excluded microenvironment, with Trm cells positioned at direct contact sites with melanoma cells — consistent with active cytotoxic surveillance and potential antigen-driven retention.",
   "description": "This region displays a striking spatial interplay between a dense MART1-positive melanocytic tumor mass (red, volumetrically dominant) and CD8a-positive cytotoxic T lymphocytes (green) distributed both at the tumor periphery and interspersed within the tumor core. CD103-positive cells (white) appear as discrete focal clusters embedded within the CD8a and MART1 signals, identifying a tissue-resident memory cytotoxic T cell (Trm) population actively engaging the tumor. The pattern suggests an immune-infiltrated rather than immune-excluded microenvironment, with Trm cells positioned at direct contact sites with melanoma cells — consistent with active cytotoxic surveillance and potential antigen-driven retention.",
   "camera": {
@@ -177,7 +177,7 @@
       "content": ""
     }
   ],
-  "chat_history_updated": "2026-04-07T23:06:18Z",
+  "chat_history_updated": "2026-08-11T22:35:14Z",
   "optional_LOD": {
     "component": 2,
     "roi": {

@@ -1,44 +1,134 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple, List
+import math
+from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 
+import numpy as np
 import vtk
-from vtkmodules.vtkFiltersSources import vtkCubeSource
-from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper, vtkRenderer
+from vtkmodules.vtkCommonCore import vtkPoints
+from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkPolyData
+from vtkmodules.vtkRenderingCore import (
+    vtkActor,
+    vtkGlyph3DMapper,
+    vtkPolyDataMapper,
+    vtkRenderer,
+)
+from vtkmodules.util.numpy_support import numpy_to_vtk
 
-from ..analysis import TileData
+from ..analysis import HeatmapField, TileData
 
 
 @dataclass
 class HeatmapConfig:
-    base_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)  
-    min_opacity: float = 0.1
-    max_opacity: float = 0.8
-    # Outline opacity is independent from filled-tile opacity.
-    # In outline mode we encode tile value via opacity (and grayscale brightness),
-    # while keeping line thickness fixed.
+    base_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    # Cell value is encoded as grayscale brightness plus opacity, at a fixed
+    # line width.
     outline_min_opacity: float = 0.05
     outline_max_opacity: float = 0.95
-    z_height: float = 1.0  # todo, data and meta data decide?
-    z_offset: float = 0.0    
-    edge_visibility: bool = True
-    edge_color: Tuple[float, float, float] = (0.0, 0.0, 0.0)
-    edge_opacity: float = 1.0
-    edge_width: float = 1.0
-    percentile_cutoff: float = 0.01  # Only show tiles above this active_fraction percentile
-    opacity_scale: str = 'exponential'  # 'linear' or 'exponential'
-    gamma: float = 0.5  # Used if opacity_scale is 'exponential', <1 spreads highs, >1 spreads lows
-    outline_only: bool = False  # If True, draw only tile outlines (wireframe); brightness = gray→white by value, same thickness
-    outline_line_width: float = 5.0  # Fixed line width for all outline tiles
-    # If >0 in outline_only mode, also draw a matching outline behind the volume (back)
-    # and connect the 4 corners with the same line width/brightness.
-    outline_box_depth: float = 0.0  # world Z distance from front to back (used if outline_box_front_z not set)
-    outline_box_back_z: float = 0.0  # world Z of the back plane (front plane is back_z + depth)
-    outline_box_front_z: float = 0.0  # if set, world Z of front plane (in front of image, closer to camera)
+    z_height: float = 1.0
+    z_offset: float = 0.0
+    percentile_cutoff: float = 0.01  # Only show cells above this active_fraction percentile
+    outline_line_width: float = 5.0  # Fixed line width for all cells
+
+    # World Z of the two volume faces the grid brackets. Equal values mean the
+    # volume depth is unknown, and a single square is drawn on the cell plane.
+    #
+    # These are the faces themselves, NOT an offset in front of them. Putting
+    # the near square outside the volume made it invisible when zoomed in: all
+    # three layered renderers share one vtkCamera, ClippingRange is camera
+    # state, and only the volume renderer ever calls ResetCameraClippingRange —
+    # so the near plane is always derived from the volume bounds and anything
+    # in front of them gets clipped. Depth order is handled by the render
+    # layers, not by pushing geometry toward the camera.
+    volume_z_lo: float = 0.0
+    volume_z_hi: float = 0.0
+
+    # The near square is never allowed closer to the camera than this fraction
+    # of the camera-to-focal distance. At deep zoom the camera ends up inside
+    # the volume's Z slab, and without this the square lands on the lens.
+    min_near_distance_frac: float = 0.06
+    # Draw the far square only while the two project at similar sizes. Past
+    # this ratio they no longer overlap and read as two unrelated grids.
+    far_square_max_ratio: float = 1.15
 
 
-class HeatmapRenderer:    
+def _camera_focal_distance(camera) -> float:
+    """Eye-to-focal-point distance.
+
+    Same quantity as `streaming.lod.camera_distance_to_focal`; duplicated here
+    rather than imported because scene/ importing streaming/ closes an existing
+    import cycle (see scene/builder.py).
+    """
+    px, py, pz = camera.GetPosition()
+    fx, fy, fz = camera.GetFocalPoint()
+    return math.sqrt((px - fx) ** 2 + (py - fy) ** 2 + (pz - fz) ** 2)
+
+
+def select_view_planes(camera, z_lo: float, z_hi: float,
+                       min_near_frac: float = 0.06):
+    """Pick which of two world-Z planes faces the camera, and how far each is.
+
+    Returns ``(near_z, far_z, d_near, d_far)`` with distances measured along the
+    view axis, or ``None`` when both planes are behind the camera.
+    ``far_z``/``d_far`` are None when only one plane is in front.
+
+    Only planes IN FRONT of the camera are candidates: zooming deep puts the
+    camera inside the volume's own Z slab, and ranking by signed distance would
+    then pick the plane behind the camera as "near" — the bug that made the
+    front squares disappear. `min_near_frac` holds the near plane off the lens
+    when the camera sits essentially on it, where the projection would otherwise
+    be unbounded.
+    """
+    cx, cy, cz = camera.GetPosition()
+    _, _, dz = camera.GetDirectionOfProjection()
+    if abs(dz) < 1e-9:
+        return None
+
+    candidates = sorted((d, z) for d, z in
+                        (((z_lo - cz) / dz, z_lo), ((z_hi - cz) / dz, z_hi))
+                        if d > 0.0)
+    if not candidates:
+        return None
+
+    d_near, near_z = candidates[0]
+    d_far, far_z = candidates[1] if len(candidates) > 1 else (None, None)
+
+    min_d = max(min_near_frac * _camera_focal_distance(camera), 1e-6)
+    if d_near < min_d:
+        near_z = cz + dz * min_d
+        d_near = min_d
+    return near_z, far_z, d_near, d_far
+
+
+_LUT_SIZE = 256
+
+# Glyph roles: which persistent actor draws what, and on which layer.
+#   front — square outline in front of the volume, layer-2 renderer
+#   back  — square outline behind the volume, layer-0 renderer
+#
+# Two flat squares, never a box. Corner connectors joining the two planes used
+# to be drawn as well, which made each cell read as a wireframe cube; zoomed in,
+# those connectors project as long diverging lines across the volume depth and
+# swamp the grid.
+_ROLES = ("front", "back")
+
+
+class HeatmapRenderer:
+    """Heatmap cells rendered as instanced glyphs (one persistent
+    vtkGlyph3DMapper actor per role instead of one vtkActor per cell — the
+    fine grid can carry hundreds of thousands of cells).
+
+    Draws the grid: one square outline on the front face of the volume and a
+    matching one on the back, with cell value encoded as grayscale brightness
+    plus opacity at a fixed line width. The solid-cube "filled" mode this used
+    to also offer has been removed; the other heatmap mode is the shader-based
+    integrated one, which does not go through here.
+
+    Actors and mappers are created once and reused across updates (input/source
+    swaps only) so an update never re-creates GPU pipeline objects.
+    """
+
     def __init__(
         self,
         renderer: vtkRenderer,
@@ -46,377 +136,326 @@ class HeatmapRenderer:
         outline_renderer: Optional[vtkRenderer] = None,
         config: Optional[HeatmapConfig] = None,
     ):
-        # renderer: used for filled tiles (behind the volume)
-        # outline_renderer: used for wireframe-only tiles (in front of the volume)
+        # renderer: layer 0, behind the volume (back rects)
+        # outline_renderer: layer 2, in front (front squares)
         self.renderer = renderer
         self.outline_renderer = outline_renderer
         self.config = config or HeatmapConfig()
-        
-        self._actors: Dict[Tuple[int, int], vtkActor] = {}
-        self._outline_actors: Dict[Tuple[int, int], vtkActor] = {}
-        self._outline_back_actors: Dict[Tuple[int, int], vtkActor] = {}
-        self._outline_connector_actors: Dict[Tuple[int, int], vtkActor] = {}
+
         self._visible = True
-        
-        self._current_tiles: List[TileData] = []
+        self._glyphs: Dict[str, dict] = {}     # role -> {actor, mapper, renderer}
+        self._active_roles: set[str] = set()
+        self._lut_cache: Dict[tuple, vtk.vtkLookupTable] = {}
+
+        self._field: Optional[HeatmapField] = None
         self._current_spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
-        
-        self._actor_to_tile: Dict[vtkActor, TileData] = {}
-    
-    def update_tiles(
+        # Camera the squares are placed against; shared by all three layers.
+        self._camera = getattr(outline_renderer or renderer, "GetActiveCamera", lambda: None)()
+
+
+    # ──────────────────────────────────────────────
+    # Update
+    # ──────────────────────────────────────────────
+
+    def update_field(
         self,
-        tiles: List[TileData],
+        field: Optional[HeatmapField],
         spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         color: Optional[Tuple[float, float, float]] = None,
-        outline_only: Optional[bool] = None,
     ):
-        self.clear()
-        
-        if not tiles:
-            return
-        
-        self._current_tiles = tiles
-        self._current_spacing = spacing
-        if outline_only is not None:
-            self.config.outline_only = outline_only
-        
-        fractions = [t.active_fraction for t in tiles]
-        fractions_sorted = sorted(fractions)
-        cutoff_idx = max(0, int(len(fractions_sorted) * self.config.percentile_cutoff))
-        cutoff_value = fractions_sorted[cutoff_idx]
-        tiles = [t for t in tiles if t.active_fraction >= cutoff_value and t.active_fraction > 0]
+        """Draw the grid for `field`.
 
-        if not tiles:
+        `color` is accepted and stored but does not affect the ramp: cells are
+        drawn grayscale-by-value so brightness reads as magnitude. It was only
+        ever used by the removed filled mode.
+        """
+        self.clear()
+        if field is None or field.counts.size == 0:
             return
+        if color is not None:
+            self.config.base_color = color
+
+        fractions = field.fractions.astype(np.float64)
+
+        # Percentile floor (matches old behavior: drop bottom percentile + zeros)
+        order = np.sort(fractions)
+        cutoff_value = order[max(0, int(order.size * self.config.percentile_cutoff))]
+        keep = (fractions >= cutoff_value) & (fractions > 0)
+        if not np.any(keep):
+            return
+
+        cells = field.cells_yx[keep]
+        counts = field.counts[keep]
+        fracs = fractions[keep]
 
         # Quantile normalization: rank-based mapping spreads even small
-        # differences across the full 0→1 range so neighbouring tiles with
-        # similar values get visually distinct colours / opacities.
-        sorted_fracs = sorted(t.active_fraction for t in tiles)
-        n = len(sorted_fracs)
-        # Map each unique value to its average rank (handles ties)
-        rank_map: dict[float, float] = {}
-        i = 0
-        while i < n:
-            j = i
-            while j < n and sorted_fracs[j] == sorted_fracs[i]:
-                j += 1
-            avg_rank = (i + j - 1) / 2.0
-            rank_map[sorted_fracs[i]] = avg_rank / (n - 1) if n > 1 else 1.0
-            i = j
+        # differences across the full 0→1 range (ties get their average rank).
+        n = fracs.size
+        uniq, inverse, cnt = np.unique(fracs, return_inverse=True, return_counts=True)
+        ends = np.cumsum(cnt)
+        starts = ends - cnt
+        avg_rank = (starts + ends - 1) / 2.0
+        normalized = (avg_rank[inverse] / (n - 1)) if n > 1 else np.ones(n)
 
-        sx, sy, sz = spacing
-        base_color = color if color else self.config.base_color
+        self._field = HeatmapField(
+            level=field.level,
+            cell_size_vox=field.cell_size_vox,
+            ny=field.ny,
+            nx=field.nx,
+            cells_yx=cells,
+            counts=counts,
+            fractions=fracs.astype(np.float32),
+        )
+        self._current_spacing = spacing
 
-        for tile in tiles:
-            x_center = (tile.x0 + tile.x1) / 2.0 * sx
-            y_center = (tile.y0 + tile.y1) / 2.0 * sy
-            z_center = self.config.z_height / 2.0 + self.config.z_offset
+        sx, sy, _ = spacing
+        cw_x = field.cell_size_vox * sx  # cell width in world units
+        cw_y = field.cell_size_vox * sy
+        z_center = self.config.z_height / 2.0 + self.config.z_offset
 
-            x_size = (tile.x1 - tile.x0) * sx
-            y_size = (tile.y1 - tile.y0) * sy
-            z_size = self.config.z_height
+        # Instance points at cell centers, scalar = normalized rank value
+        pts = np.empty((n, 3), dtype=np.float64)
+        pts[:, 0] = (cells[:, 1] + 0.5) * cw_x
+        pts[:, 1] = (cells[:, 0] + 0.5) * cw_y
+        pts[:, 2] = z_center
+        instances = vtkPolyData()
+        vpts = vtkPoints()
+        vpts.SetData(numpy_to_vtk(pts, deep=True))
+        instances.SetPoints(vpts)
+        scalars = numpy_to_vtk(normalized.astype(np.float32), deep=True)
+        scalars.SetName("value")
+        instances.GetPointData().SetScalars(scalars)
 
-            normalized = rank_map[tile.active_fraction]
+        if self.outline_renderer is None:
+            return
+        lut = self._make_lut()
+        # Both squares are baked flat at the instance plane; where they actually
+        # sit along Z is an actor position set by `update_for_camera`, so the
+        # placement can follow the camera without rebuilding any geometry.
+        square = self._rect_source(cw_x, cw_y, 0.0)
+        self._activate("front", instances, square, lut)
+        if self._has_depth:
+            self._activate("back", instances, square, lut)
+        self.update_for_camera(self._camera)
 
-            # Outline mode: only brightness (gray→white by value); same line width for all.
-            if self.config.outline_only:
-                tile_color = (normalized, normalized, normalized)
-                opacity = self.config.outline_min_opacity + normalized * (self.config.outline_max_opacity - self.config.outline_min_opacity)
-            elif self.config.opacity_scale == 'linear':
-                pass  # normalized already set from rank
-            else:
-                normalized = normalized ** self.config.gamma
-            
-            if not self.config.outline_only:
-                opacity = self.config.min_opacity + normalized * (self.config.max_opacity - self.config.min_opacity)
-                tile_color = base_color
+    @property
+    def _has_depth(self) -> bool:
+        """Whether the volume's two faces are known and distinct."""
+        return abs(self.config.volume_z_hi - self.config.volume_z_lo) > 1e-9
 
-            tile_key = (tile.x0, tile.y0)
+    def set_camera(self, camera):
+        """Camera used to place the squares. Shared across all three layers."""
+        self._camera = camera
 
-            # Mode behavior:
-            # - outline_only=True: draw wireframe in outline_renderer (front), no fill
-            # - outline_only=False: draw fill in renderer (behind), no wireframe
-            if self.config.outline_only:
-                if self.outline_renderer is None:
-                    continue
-                # If outline_box_depth is enabled, draw a true 12-edge "box" outline with
-                # consistent thickness/brightness on all edges (no duplicates).
-                if self.config.outline_box_depth and self.config.outline_box_depth > 0:
-                    # Back rectangle: on heatmap tile position (behind the image).
-                    z_back = float(z_center)
-                    # Front rectangle: in front of the image (closer to camera). Use explicit front Z if set.
-                    if self.config.outline_box_front_z and self.config.outline_box_front_z != 0.0:
-                        z_front = float(self.config.outline_box_front_z)
-                    else:
-                        z_front = float(z_center) + float(z_size) / 2.0
-                        z_back = z_front - float(self.config.outline_box_depth)
+    def update_for_camera(self, camera=None) -> bool:
+        """Place the squares relative to the camera; returns True if anything moved.
 
-                    front_actor = self._create_rect_outline_actor(
-                        center_xy=(x_center, y_center),
-                        z_plane=z_front,
-                        size_xy=(x_size, y_size),
-                        color=tile_color,
-                        opacity=opacity,
-                    )
-                    back_actor = self._create_rect_outline_actor(
-                        center_xy=(x_center, y_center),
-                        z_plane=z_back,
-                        size_xy=(x_size, y_size),
-                        color=tile_color,
-                        opacity=opacity,
-                    )
-                    connector_actor = self._create_corner_connectors_actor(
-                        center_xy=(x_center, y_center),
-                        z_back=z_back,
-                        z_front=z_front,
-                        size_xy=(x_size, y_size),
-                        color=tile_color,
-                        opacity=opacity,
-                    )
+        Two things are decided here:
 
-                    self._outline_actors[tile_key] = front_actor
-                    self._outline_back_actors[tile_key] = back_actor
-                    self._outline_connector_actors[tile_key] = connector_actor
-                    self._actor_to_tile[front_actor] = tile
-                    self._actor_to_tile[back_actor] = tile
-                    self._actor_to_tile[connector_actor] = tile
+        * **Which face is near.** The roles are fixed to their renderers
+          (`front` on the layer drawn over the volume, `back` on the one drawn
+          behind), but which volume face each sits on follows the camera — so
+          orbiting underneath keeps the visible square on the face being
+          looked at instead of leaving it pinned to the top.
+        * **Whether the far square is worth drawing.** Two squares 54 units
+          apart project at very different sizes once the camera is close; past
+          `far_square_max_ratio` they stop overlapping and read as two
+          unrelated grids, so only the near one is kept.
+        """
+        if camera is not None:
+            self._camera = camera
+        cam = self._camera
+        if cam is None or not self._active_roles:
+            return False
 
-                    if self._visible:
-                        # Front on outline layer (in front of volume)
-                        self.outline_renderer.AddActor(front_actor)
-                        # Back should be behind the volume -> use the back renderer (layer 0).
-                        self.renderer.AddActor(back_actor)
-                        # Connectors should stay visible like front overlay -> add to outline layer.
-                        self.outline_renderer.AddActor(connector_actor)
-                else:
-                    # Default: draw current outline as a cube wireframe.
-                    outline_actor = self._create_cube_actor(
-                        center=(x_center, y_center, z_center),
-                        size=(x_size, y_size, z_size),
-                        color=tile_color,
-                        opacity=opacity,
-                        outline_only=True,
-                    )
-                    self._outline_actors[tile_key] = outline_actor
-                    self._actor_to_tile[outline_actor] = tile
-                    if self._visible:
-                        self.outline_renderer.AddActor(outline_actor)
-            else:
-                fill_actor = self._create_cube_actor(
-                    center=(x_center, y_center, z_center),
-                    size=(x_size, y_size, z_size),
-                    color=tile_color,
-                    opacity=opacity,
-                    outline_only=False,
-                )
-                self._actors[tile_key] = fill_actor
-                self._actor_to_tile[fill_actor] = tile
-                if self._visible:
-                    self.renderer.AddActor(fill_actor)
-    
-    def _create_cube_actor(
-        self,
-        center: Tuple[float, float, float],
-        size: Tuple[float, float, float],
-        color: Tuple[float, float, float],
-        opacity: float,
-        outline_only: bool = False,
-    ) -> vtkActor:
-        cube = vtkCubeSource()
-        cube.SetCenter(*center)
-        cube.SetXLength(size[0])
-        cube.SetYLength(size[1])
-        cube.SetZLength(size[2])
-        
-        mapper = vtkPolyDataMapper()
-        mapper.SetInputConnection(cube.GetOutputPort())
-        
+        z_center = self.config.z_height / 2.0 + self.config.z_offset
+        if not self._has_depth:
+            return self._place("front", z_center, z_center)
+
+        planes = select_view_planes(
+            cam, float(self.config.volume_z_lo), float(self.config.volume_z_hi),
+            self.config.min_near_distance_frac)
+        if planes is None:
+            # Whole volume behind the camera: nothing sensible to place.
+            return self._set_visible_role("front", False) | self._set_visible_role("back", False)
+        near_z, far_z, d_near, d_far = planes
+        has_far = far_z is not None
+        if not has_far:
+            far_z = near_z
+        show_far = has_far and (d_far / d_near) <= self.config.far_square_max_ratio
+
+        changed = self._place("front", near_z, z_center)
+        changed |= self._place("back", far_z, z_center)
+        changed |= self._set_visible_role("front", True)
+        changed |= self._set_visible_role("back", show_far)
+        return changed
+
+    def _set_visible_role(self, role: str, visible: bool) -> bool:
+        """Toggle one role's actor. Independent of `set_visible`, which adds and
+        removes actors for the whole heatmap."""
+        entry = self._glyphs.get(role)
+        if entry is None:
+            return False
+        want = 1 if visible else 0
+        if entry["actor"].GetVisibility() == want:
+            return False
+        entry["actor"].SetVisibility(want)
+        return True
+
+    def _place(self, role: str, world_z: float, z_center: float) -> bool:
+        """Move a role's actor so its square sits at `world_z`. Cheap: this only
+        dirties the actor matrix, leaving the glyph instance buffer alone."""
+        entry = self._glyphs.get(role)
+        if entry is None:
+            return False
+        dz = world_z - z_center
+        if abs(entry["actor"].GetPosition()[2] - dz) < 1e-9:
+            return False
+        entry["actor"].SetPosition(0.0, 0.0, dz)
+        return True
+
+    def _make_lut(self):
+        """256-entry LUT encoding the value→brightness/opacity ramp, memoized.
+
+        Per-instance color+alpha comes from mapping the instance scalar through
+        this table (avoids per-instance RGBA direct-scalar quirks on glyph
+        mappers).
+        """
+        c = self.config
+        key = (round(c.outline_min_opacity, 4), round(c.outline_max_opacity, 4))
+        cached = self._lut_cache.get(key)
+        if cached is not None:
+            return cached
+
+        lut = vtk.vtkLookupTable()
+        lut.SetNumberOfTableValues(_LUT_SIZE)
+        lut.SetRange(0.0, 1.0)
+        for i in range(_LUT_SIZE):
+            t = i / (_LUT_SIZE - 1)
+            a = (c.outline_min_opacity
+                 + t * (c.outline_max_opacity - c.outline_min_opacity))
+            lut.SetTableValue(i, t, t, t, a)
+        lut.Build()
+        if len(self._lut_cache) > 16:
+            self._lut_cache.clear()
+        self._lut_cache[key] = lut
+        return lut
+
+    def _role_renderer(self, role: str) -> Optional[vtkRenderer]:
+        if role == "back":
+            return self.renderer
+        return self.outline_renderer
+
+    def _ensure_glyph(self, role: str) -> dict:
+        """Create the persistent actor+mapper for a role on first use."""
+        entry = self._glyphs.get(role)
+        if entry is not None:
+            return entry
+        mapper = vtkGlyph3DMapper()
+        mapper.ScalingOff()
+        mapper.OrientOff()
+        mapper.SetScalarRange(0.0, 1.0)
+        mapper.SetColorModeToMapScalars()
+        mapper.ScalarVisibilityOn()
+
         actor = vtkActor()
         actor.SetMapper(mapper)
-        actor.SetScale(128, 128, 1.0)  # TOD
-        
         prop = actor.GetProperty()
-        prop.SetColor(*color)
-        prop.SetOpacity(opacity)
-        
-        if outline_only:
-            # Wireframe: full tile border; fixed thickness, brightness varies by tile value
-            prop.SetRepresentationToWireframe()
-            prop.SetLineWidth(self.config.outline_line_width)
-        else:
-            if self.config.edge_visibility:
-                prop.EdgeVisibilityOff()
-                prop.SetEdgeColor(*self.config.edge_color)
-                prop.SetLineWidth(self.config.edge_width)
-        
-        return actor
+        prop.SetLineWidth(self.config.outline_line_width)
+        # Analytic picking is used instead of geometric pickers.
+        actor.SetPickable(False)
 
-    def _create_polyline_actor(
-        self,
-        points_xyz: List[Tuple[float, float, float]],
-        line_pairs: List[Tuple[int, int]],
-        *,
-        color: Tuple[float, float, float],
-        opacity: float,
-    ) -> vtkActor:
-        pts = vtk.vtkPoints()
-        pts.SetNumberOfPoints(len(points_xyz))
-        for i, (x, y, z) in enumerate(points_xyz):
-            pts.SetPoint(i, float(x), float(y), float(z))
+        entry = {"actor": actor, "mapper": mapper, "renderer": self._role_renderer(role)}
+        self._glyphs[role] = entry
+        return entry
 
-        lines = vtk.vtkCellArray()
-        for a, b in line_pairs:
+    def _activate(self, role: str, instances, source_poly, lut):
+        """Point a persistent glyph actor at new instance/source data and show it."""
+        entry = self._ensure_glyph(role)
+        mapper = entry["mapper"]
+        mapper.SetInputData(instances)
+        mapper.SetSourceData(source_poly)
+        mapper.SetLookupTable(lut)
+        self._active_roles.add(role)
+        ren = entry["renderer"]
+        if self._visible and ren is not None and not ren.HasViewProp(entry["actor"]):
+            ren.AddActor(entry["actor"])
+
+    def _deactivate_all(self):
+        for role in list(self._active_roles):
+            entry = self._glyphs.get(role)
+            if entry and entry["renderer"] is not None:
+                entry["renderer"].RemoveActor(entry["actor"])
+        self._active_roles.clear()
+
+    @staticmethod
+    def _rect_source(w: float, h: float, z: float) -> vtkPolyData:
+        """4-edge rectangle polyline centered at the origin, at relative z."""
+        hx, hy = w / 2.0, h / 2.0
+        pts = vtkPoints()
+        for x, y in ((-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)):
+            pts.InsertNextPoint(x, y, z)
+        lines = vtkCellArray()
+        for a, b in ((0, 1), (1, 2), (2, 3), (3, 0)):
             ln = vtk.vtkLine()
-            ln.GetPointIds().SetId(0, int(a))
-            ln.GetPointIds().SetId(1, int(b))
+            ln.GetPointIds().SetId(0, a)
+            ln.GetPointIds().SetId(1, b)
             lines.InsertNextCell(ln)
-
-        poly = vtk.vtkPolyData()
+        poly = vtkPolyData()
         poly.SetPoints(pts)
         poly.SetLines(lines)
+        return poly
 
-        mapper = vtkPolyDataMapper()
-        mapper.SetInputData(poly)
+    # ──────────────────────────────────────────────
+    # Visibility / lifecycle
+    # ──────────────────────────────────────────────
 
-        actor = vtkActor()
-        actor.SetMapper(mapper)
-        # Allow picking (right-click drill-down) on outline geometry.
-        actor.SetPickable(True)
-        # Match the existing tile scaling so back/connector lines align with the current outlines.
-        actor.SetScale(128, 128, 1.0)
-
-        prop = actor.GetProperty()
-        prop.SetColor(*color)
-        prop.SetOpacity(opacity)
-        prop.SetRepresentationToWireframe()
-        prop.SetLineWidth(self.config.outline_line_width)
-        return actor
-
-    def _rect_points(
-        self,
-        *,
-        center_xy: Tuple[float, float],
-        z_plane: float,
-        size_xy: Tuple[float, float],
-    ) -> List[Tuple[float, float, float]]:
-        cx, cy = center_xy
-        sx, sy = size_xy
-        hx = sx / 2.0
-        hy = sy / 2.0
-        z = float(z_plane)
-        # Order: (x-,y-), (x+,y-), (x+,y+), (x-,y+)
-        return [
-            (cx - hx, cy - hy, z),
-            (cx + hx, cy - hy, z),
-            (cx + hx, cy + hy, z),
-            (cx - hx, cy + hy, z),
-        ]
-
-    def _create_rect_outline_actor(
-        self,
-        *,
-        center_xy: Tuple[float, float],
-        z_plane: float,
-        size_xy: Tuple[float, float],
-        color: Tuple[float, float, float],
-        opacity: float,
-    ) -> vtkActor:
-        pts = self._rect_points(center_xy=center_xy, z_plane=z_plane, size_xy=size_xy)
-        edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
-        return self._create_polyline_actor(pts, edges, color=color, opacity=opacity)
-
-    def _create_corner_connectors_actor(
-        self,
-        *,
-        center_xy: Tuple[float, float],
-        z_back: float,
-        z_front: float,
-        size_xy: Tuple[float, float],
-        color: Tuple[float, float, float],
-        opacity: float,
-    ) -> vtkActor:
-        back_pts = self._rect_points(center_xy=center_xy, z_plane=z_back, size_xy=size_xy)
-        front_pts = self._rect_points(center_xy=center_xy, z_plane=z_front, size_xy=size_xy)
-        pts = back_pts + front_pts  # 0-3 back, 4-7 front
-        connectors = [(0, 4), (1, 5), (2, 6), (3, 7)]
-        return self._create_polyline_actor(pts, connectors, color=color, opacity=opacity)
-    
     def set_color(self, color: Tuple[float, float, float]):
         self.config.base_color = color
-        for actor in self._actors.values():
-            actor.GetProperty().SetColor(*color)
-    
+        # Colors are baked into the (cached) LUT; a re-render with the new
+        # color happens on the next update_field call.
+
     def set_visible(self, visible: bool):
         if visible == self._visible:
             return
-        
         self._visible = visible
-        
-        for actor in self._actors.values():
+        for role in self._active_roles:
+            entry = self._glyphs.get(role)
+            if not entry or entry["renderer"] is None:
+                continue
             if visible:
-                if not self.renderer.HasViewProp(actor):
-                    self.renderer.AddActor(actor)
+                if not entry["renderer"].HasViewProp(entry["actor"]):
+                    entry["renderer"].AddActor(entry["actor"])
             else:
-                self.renderer.RemoveActor(actor)
-        if self.outline_renderer is not None:
-            for actor in self._outline_actors.values():
-                if visible:
-                    if not self.outline_renderer.HasViewProp(actor):
-                        self.outline_renderer.AddActor(actor)
-                else:
-                    self.outline_renderer.RemoveActor(actor)
-            for actor in self._outline_connector_actors.values():
-                if visible:
-                    if not self.outline_renderer.HasViewProp(actor):
-                        self.outline_renderer.AddActor(actor)
-                else:
-                    self.outline_renderer.RemoveActor(actor)
+                entry["renderer"].RemoveActor(entry["actor"])
 
-        for actor in self._outline_back_actors.values():
-            if visible:
-                if not self.renderer.HasViewProp(actor):
-                    self.renderer.AddActor(actor)
-            else:
-                self.renderer.RemoveActor(actor)
-    
+
     def clear(self):
-        for actor in self._actors.values():
-            self.renderer.RemoveActor(actor)
-        if self.outline_renderer is not None:
-            for actor in self._outline_actors.values():
-                self.outline_renderer.RemoveActor(actor)
-            for actor in self._outline_connector_actors.values():
-                self.outline_renderer.RemoveActor(actor)
-        for actor in self._outline_back_actors.values():
-            self.renderer.RemoveActor(actor)
-        self._actors.clear()
-        self._outline_actors.clear()
-        self._outline_back_actors.clear()
-        self._outline_connector_actors.clear()
-        self._current_tiles = []
-        self._actor_to_tile.clear()
-        
-    def get_tile_for_actor(self, actor) -> Optional[TileData]:
-        """Reverse-lookup: given a picked vtkActor, return its TileData."""
-        return self._actor_to_tile.get(actor)
-    
-    def get_tile_at_position(self, x: float, y: float) -> Optional[TileData]:
-        sx, sy, _ = self._current_spacing
-        
-        vx = x / sx
-        vy = y / sy
-        
-        for tile in self._current_tiles:
-            if tile.x0 <= vx < tile.x1 and tile.y0 <= vy < tile.y1:
-                return tile
-        
-        return None
-    
+        self._deactivate_all()
+        # Reset placement: the actor entries survive deactivation, so a stale
+        # position (or a hidden far square) would carry into the next field.
+        for entry in self._glyphs.values():
+            entry["actor"].SetPosition(0.0, 0.0, 0.0)
+            entry["actor"].SetVisibility(1)
+        self._field = None
+
+    @property
+    def current_cell_size_vox(self) -> int:
+        return self._field.cell_size_vox if self._field else 0
+
+    # Analytic picking (display ray -> z-plane -> cell) and the hover highlight
+    # actor lived here. Both existed only to serve hover-highlighting and the
+    # right-click tile drill-down; each hover cost a pick plus a full
+    # render/encode/push, and neither drives anything now that surfaces are
+    # opt-in. `clear_highlight` remains as a no-op for existing call sites.
+
+    def clear_highlight(self) -> bool:
+        return False
+
     @property
     def tile_count(self) -> int:
-        return len(self._actors)
-    
+        return int(self._field.counts.size) if self._field is not None else 0
+
     @property
     def is_visible(self) -> bool:
         return self._visible

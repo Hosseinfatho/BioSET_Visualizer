@@ -145,6 +145,16 @@ class VolumeStreamer:
         self._needs_still_render = False
         self._idle_ticks = 0
 
+        # True between Start/EndInteractionEvent — lets other subsystems
+        # (e.g. hover picking) skip work while the camera is being dragged.
+        self.interacting = False
+
+        # Optional hook fired after _rebuild_multivolume recreates the
+        # multi-volume + mapper (shader state lives on the multi-volume and
+        # dies with it). Signature: fn(multi_volume, mapper, channel_port
+        # dict, dummy_port or None). MAIN THREAD ONLY.
+        self.shader_effects_hook = None
+
         # Interactive resolution cap: while loading/interacting we upload a
         # small (fast) texture; once idle we rebuild full-res from cached numpy
         # and swap it in. _capped_channels = channels currently shown downsized.
@@ -1571,10 +1581,21 @@ class VolumeStreamer:
         # Keep the multi-volume at >=2 inputs (see _make_dummy_volume): with 0 or
         # 1 real channel, append the transparent dummy so a lone real volume
         # doesn't hit the origin-shift bug.
+        dummy_port = None
         if len(ready) <= 1:
-            dport = len(ready)
-            self._multi_volume.SetVolume(self._dummy_volume, dport)
-            self._multi_mapper.SetInputDataObject(dport, self._dummy_image)
+            dummy_port = len(ready)
+            self._multi_volume.SetVolume(self._dummy_volume, dummy_port)
+            self._multi_mapper.SetInputDataObject(dummy_port, self._dummy_image)
+
+        # Reinstall shader effects on the freshly created shader property.
+        if self.shader_effects_hook is not None:
+            try:
+                self.shader_effects_hook(
+                    self._multi_volume, self._multi_mapper,
+                    dict(self._channel_port), dummy_port,
+                )
+            except Exception as e:
+                print(f"[stream] shader effects reattach failed: {e}")
 
     def _set_channel_input(self, ch: int, img: "vtkImageData") -> None:
         """Point a channel's port at a new texture (the per-frame hot path)."""
@@ -1703,6 +1724,7 @@ class VolumeStreamer:
         sharp texture (the viewport still matches the loaded ROI at the very
         start); the per-move handler drops to the coarse base only once an
         interaction actually pushes the viewport past the loaded region."""
+        self.interacting = True
         self._update_interaction_textures()
 
     def on_interaction_move(self) -> None:
@@ -2791,6 +2813,7 @@ class VolumeStreamer:
         viewport for the async loader and returns the desired component (for
         heatmap LOD to consume). Does NOT block on loading or full-quality render.
         """
+        self.interacting = False
         # Defensive: some zoom/scroll interactions can push the camera clipping
         # range into an invalid state (everything clipped => black screen).
         # Reset it, but do NOT render here — the interactor already rendered this
