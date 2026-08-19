@@ -203,28 +203,6 @@ def run_app(*, idle_timeout: int | None = None):
             asyncio.create_task(_check_loaded_data_loop())
             asyncio.create_task(_nov_animation_loop())
 
-            async def _load_default_analysis():
-                # Let the browser connect first; gzip of the default .bioset is heavy.
-                await asyncio.sleep(0.5)
-                if not hasattr(ctrl, "preload_default_analysis"):
-                    return
-                try:
-                    server.state.analysis_loading = True
-                    server.state.flush()
-                except Exception:
-                    pass
-                packed = await asyncio.to_thread(ctrl.preload_default_analysis)
-                if packed:
-                    ctrl.apply_preloaded_analysis(*packed)
-                try:
-                    server.state.analysis_loading = False
-                    server.state.flush()
-                except Exception:
-                    pass
-                if view is not None:
-                    view.update()
-
-            asyncio.create_task(_load_default_analysis())
 
     if scene.streamer is not None:
         scene.streamer.set_render_callback(view.update)

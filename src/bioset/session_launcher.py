@@ -15,7 +15,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import traceback
 import uuid
@@ -404,29 +403,6 @@ def _parse_launcher_args(argv: list[str] | None = None):
     return args
 
 
-def _warm_analysis_cache() -> None:
-    """Gunzip the default .bioset once so workers open SQLite instead of gzip."""
-    try:
-        from bioset.analysis.loader import decompress_bioset_to_cache
-
-        env_path = (os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "").strip()
-        candidates = []
-        if env_path:
-            candidates.append(Path(env_path))
-        for folder in (Path("/app/preprocessed"), Path("preprocessed")):
-            if folder.is_dir():
-                candidates.extend(sorted(folder.glob("*.bioset")))
-        src = next((path for path in candidates if path.is_file()), None)
-        if src is None:
-            _log("[bioset] No default .bioset found to cache")
-            return
-        dest = decompress_bioset_to_cache(src)
-        _log(f"[bioset] Analysis SQLite cache ready: {dest}")
-    except Exception as exc:
-        _log(f"[bioset] Analysis cache warm-up failed: {exc}")
-        traceback.print_exc()
-
-
 def run_launcher(argv: list[str] | None = None) -> None:
     args = _parse_launcher_args(argv)
     hub = SessionHub(max_sessions=args.max_sessions, worker_timeout=max(1, args.timeout))
@@ -435,9 +411,6 @@ def run_launcher(argv: list[str] | None = None) -> None:
     url = f"http://{display_host}:{args.port}/"
     _log(f"[bioset] Multi-user launcher at {url}")
     _log("[bioset] Each refresh starts a new session; each browser is isolated.")
-    threading.Thread(
-        target=_warm_analysis_cache, name="bioset-analysis-cache", daemon=True
-    ).start()
     if not args.server:
         webbrowser.open(url)
     web.run_app(app, host=args.host, port=args.port, print=None)
