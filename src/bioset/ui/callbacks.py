@@ -115,7 +115,31 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def set_heatmap_lod(heatmap_lod):
         """Set the heatmap LOD renderer reference."""
         _refs["heatmap_lod"] = heatmap_lod
+        # Re-upload the shader maps whenever the worker lands a new level, so
+        # gain and sampling resolve with zoom the way the grid heatmap does.
+        heatmap_lod.set_shader_maps_hook(_reupload_shader_maps)
         print(f"[callbacks] Heatmap LOD set: {heatmap_lod}")
+
+    def _reupload_shader_maps(level: int) -> bool:
+        """LOD worker landed `level` while in integrated mode.
+
+        Returns True when the maps changed, so the poll loop redraws.
+        """
+        mgr = _refs.get("integrated_heatmap")
+        loader = _refs.get("analysis_loader")
+        combo = state.heatmap_combination or []
+        if mgr is None or loader is None or not combo:
+            return False
+        name_to_id = {ch["name"]: ch["id"] for ch in (state.channels or [])}
+        inter, members = mgr.compute_maps(
+            loader, combo, state.current_dilation, name_to_id,
+            list(state.active_channels or []), hierarchy_level=level)
+        mgr.set_maps(inter, members)
+        if inter is None:
+            return False
+        print(f"[callbacks] Shader maps re-uploaded at level {level}: "
+              f"{inter.shape[1]}x{inter.shape[0]}")
+        return True
 
     def set_viewport_plots(viewport_plots):
         """Set the viewport plot computer reference."""
@@ -821,11 +845,12 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.heatmap_combination = []
         update_heatmap()
 
-    def _camera_view_for_contours(streamer, heatmap_lod):
+    def _camera_level_and_roi(streamer, heatmap_lod):
         """(hierarchy level, viewport ROI) implied by where the camera is NOW.
 
-        The contour's iso-value is scoped to the viewport and its resolution to
-        the level, so both have to describe the live camera. Reads the same
+        The contour's iso-value is scoped to the viewport and its resolution
+        to the level; the integrated mode's maps are built at the level. Both
+        have to describe the live camera. Reads the same
         helpers the LOD worker does (`choose_heatmap_level` on the camera
         distance, `compute_visible_xy_roi_vox` for the rect) so the synchronous
         entry and the worker cannot disagree.
@@ -901,7 +926,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             # different aggregations are different functions, and nesting says
             # nothing across that boundary. The camera still supplies the
             # viewport, which is what selects the iso and crops the geometry.
-            _, roi = _camera_view_for_contours(streamer, heatmap_lod)
+            _, roi = _camera_level_and_roi(streamer, heatmap_lod)
             field = loader.get_heatmap_field(
                 channels=combo,
                 dilation=state.current_dilation,
@@ -921,7 +946,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             import traceback
             traceback.print_exc()
 
-    def _update_integrated_heatmap(mgr, loader, heatmap, streamer):
+    def _update_integrated_heatmap(mgr, loader, heatmap, streamer,
+                                   heatmap_lod=None):
         """Drive the shader-injected Integrated Heatmap mode.
 
         Gain and importance sampling only — the contours are their own mode
@@ -941,16 +967,22 @@ def register_callbacks(ctrl, state, view, streamer=None):
             mgr.set_world_extent(bounds[1], bounds[3])
             name_to_id = {ch["name"]: ch["id"] for ch in (state.channels or [])}
             active_ids = list(state.active_channels or [])
-            inter16, members = mgr.compute_maps(
-                loader, combo, state.current_dilation, name_to_id, active_ids)
+            # Camera-derived level, so the maps enter at the resolution the
+            # camera is already at instead of waiting for the next LOD land.
+            level, _ = _camera_level_and_roi(streamer, heatmap_lod)
+            inter, members = mgr.compute_maps(
+                loader, combo, state.current_dilation, name_to_id, active_ids,
+                hierarchy_level=level)
             mgr.set_effects(
                 gain=bool(state.ihm_gain_enabled),
                 sampling=bool(state.ihm_sampling_enabled),
             )
-            mgr.set_maps(inter16, members)
+            mgr.set_maps(inter, members)
             mgr.set_active(True)
+            shape = inter.shape if inter is not None else None
             print(f"[callbacks] Integrated heatmap: combo={combo}, "
-                  f"members={list(members)}, radius={state.current_dilation}")
+                  f"members={list(members)}, radius={state.current_dilation}, "
+                  f"level={level}, map={shape}")
         except Exception as e:
             print(f"[callbacks] Integrated heatmap update failed: {e}")
             import traceback
@@ -1000,7 +1032,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             # Shader effects only; contours belong to their own mode.
             if contours is not None:
                 contours.clear()
-            _update_integrated_heatmap(mgr, loader, heatmap, streamer)
+            if heatmap_lod is not None:
+                heatmap_lod.set_mode("integrated")
+            _update_integrated_heatmap(mgr, loader, heatmap, streamer, heatmap_lod)
             _finish_heatmap_update(streamer)
             return
 
@@ -1008,6 +1042,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
             # Contour geometry only; the shader stays out of it.
             if mgr is not None:
                 mgr.set_active(False)
+            if heatmap_lod is not None:
+                heatmap_lod.set_mode("contour")
             _update_contour_heatmap(loader, heatmap, heatmap_lod, streamer)
             _finish_heatmap_update(streamer)
             return
@@ -1018,6 +1054,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if contours is not None:
             contours.clear()
         if heatmap_lod:
+            heatmap_lod.set_mode("grid")
             heatmap_lod.suspend(False)
 
         if not state.heatmap_visible:

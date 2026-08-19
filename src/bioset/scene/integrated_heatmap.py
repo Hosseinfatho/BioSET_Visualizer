@@ -49,13 +49,43 @@ from ..config import INTEGRATED_HEATMAP, IntegratedHeatmapConfig
 # Pure helpers (no VTK)
 # ──────────────────────────────────────────────────────────────
 
-def pack_map_to_mat4(flat: np.ndarray, mat4_count: int) -> list:
-    """Zero-pad a flat float map to mat4_count*16 floats for
-    SetUniformMatrix4x4v upload. Pure identity packing — the GLSL side
-    reconstructs flat index i as [i>>4][(i>>2)&3][i&3]."""
-    values = np.zeros(mat4_count * 16, dtype=np.float32)
-    values[: flat.size] = flat
-    return values.tolist()
+def interleave_maps(maps: Sequence[Optional[np.ndarray]],
+                    shape: Tuple[int, int]) -> np.ndarray:
+    """Pack up to 4 (h, w) maps into one contiguous (h, w, 4) float32 image.
+
+    Missing slots stay zero, which every effect formula reads as "absent".
+    """
+    h, w = shape
+    out = np.zeros((h, w, 4), dtype=np.float32)
+    for i, m in enumerate(maps[:4]):
+        if m is not None:
+            out[..., i] = m
+    return np.ascontiguousarray(out)
+
+
+def slot_layout(n_members: int) -> List[List[Optional[int]]]:
+    """Which member index lives in which (texture, component) slot.
+
+    Texture 0 reserves component 0 (R) for the interaction map, so it holds
+    members 0-2; each further texture holds 4 more. Returns one 4-entry list
+    per texture, each holding a member index or None.
+    """
+    layout: List[List[Optional[int]]] = []
+    member = 0
+    while True:
+        slots: List[Optional[int]] = [None, None, None, None]
+        start = 1 if not layout else 0
+        for c in range(start, 4):
+            if member < n_members:
+                slots[c] = member
+                member += 1
+        layout.append(slots)
+        if member >= n_members:
+            return layout
+
+
+def textures_needed(n_members: int) -> int:
+    return len(slot_layout(n_members))
 
 
 def apply_map_contrast(frac: np.ndarray,
@@ -108,87 +138,164 @@ def apply_map_contrast(frac: np.ndarray,
     return out
 
 
-def downsample_field_to_grid(field, grid_shape_zyx, bin_factor_y: int,
-                             gw: int, gh: int,
-                             cfg: IntegratedHeatmapConfig = INTEGRATED_HEATMAP
-                             ) -> Optional[np.ndarray]:
-    """Reduce a level-0 HeatmapField to a (gh, gw) map over the full volume
-    XY, contrast-stretched into [0,1] with zeros preserved.
+# ──────────────────────────────────────────────────────────────
+# GPU map textures
+# ──────────────────────────────────────────────────────────────
 
-    Denominators are computed analytically (edge-corrected bins per cell):
-    the sparse field omits zero-count cells, but those cells still hold bins.
+class IhmMapTextures:
+    """The heatmap maps as RGBA float32 GPU textures.
 
-    Legend caveat (from the experiment, doubly true after contrast
-    stretching): per-map normalization means equal tones in two maps do NOT
-    mean equal numbers.
+    Why textures rather than the mat4 uniforms this replaces: a dynamically
+    indexed uniform array occupies real constant registers, ceil(gw*gh/16)*4
+    per map against ~1024 on NVIDIA, which is what pinned the map to a 16x16
+    grid over the whole volume (95 x 48 um cells) at every zoom.
+
+    THE BINDING IS THE WHOLE TRICK, and it is not obvious. Taken from
+    integrated_heatmap_trame/final_texture_heatmaps.py, which gets right three
+    things an earlier attempt here got wrong:
+
+      * vtkOpenGLUniforms will push an int every draw but insists on declaring
+        it `uniform int`. So the unit is stored with SetUniformi and only the
+        GLSL DECLARATION is rewritten to `uniform sampler2D` (see
+        `declaration_replacements`). Declaring the sampler separately and
+        pushing an unrelated int leaves the declaration and the value as two
+        different objects, and nothing arrives. Doing it this way also covers
+        the first frame after a shader rebuild, which an UpdateShaderEvent
+        observer would miss.
+
+      * the texture must stay ACTIVE for the mapper's whole render — Render()
+        on VolumeMapperRenderStartEvent, PostRender() on
+        VolumeMapperRenderEndEvent. That is what makes VTK's texture-unit
+        manager reserve the unit; otherwise the mapper takes it for its own
+        volume texture and every sample reads zero.
+
+      * vtkOpenGLTexture + SetInputData, NOT vtkTextureObject.Create2DFromRaw.
+        The high-level object participates in unit management; the low-level
+        one bypasses it.
+
+    Main thread only (GL objects).
     """
-    if field is None or field.counts.size == 0:
-        return None
-    gz, gy_bins, gx_bins = grid_shape_zyx
-    cell_bins = max(1, field.cell_size_vox // bin_factor_y)
 
-    # Scatter active-bin counts into the shader grid (floor assignment; at
-    # 345x682 -> 16x16 the boundary-straddle error is sub-cell).
-    gy = (field.cells_yx[:, 0].astype(np.int64) * gh) // field.ny
-    gx = (field.cells_yx[:, 1].astype(np.int64) * gw) // field.nx
-    counts = np.zeros((gh, gw), dtype=np.float64)
-    np.add.at(counts, (gy, gx), field.counts)
+    MAX_TEXTURES = 3          # interaction + up to 11 member slots
+    UNIFORMS = ("in_ihm_maps0", "in_ihm_maps1", "in_ihm_maps2")
 
-    # Analytical denominators: bins per level-0 cell row/col, edge-corrected,
-    # reduced separably into the shader grid.
-    rows = np.clip(gy_bins - np.arange(field.ny) * cell_bins, 0, cell_bins)
-    cols = np.clip(gx_bins - np.arange(field.nx) * cell_bins, 0, cell_bins)
-    row_g = (np.arange(field.ny) * gh) // field.ny
-    col_g = (np.arange(field.nx) * gw) // field.nx
-    rows_per_g = np.bincount(row_g, weights=rows, minlength=gh)
-    cols_per_g = np.bincount(col_g, weights=cols, minlength=gw)
-    denoms = gz * np.outer(rows_per_g, cols_per_g)
+    def __init__(self):
+        self._render_window = None
+        self._textures: List[object] = []
+        self._keep: List[tuple] = []      # numpy/vtk refs must outlive a render
+        self._units: List[int] = []
+        self._shape: Optional[Tuple[int, int]] = None
+        self._bound = False
 
-    frac = counts / np.maximum(denoms, 1.0)
-    if not np.all(np.isfinite(frac)):
-        print("[ihm] WARNING: non-finite values in downsampled map — zero-filled")
-        frac = np.nan_to_num(frac, nan=0.0, posinf=0.0, neginf=0.0)
-    return np.ascontiguousarray(apply_map_contrast(frac, cfg), dtype=np.float32)
+    def set_render_window(self, render_window):
+        self._render_window = render_window
 
+    @property
+    def count(self) -> int:
+        return len(self._textures)
 
-def bilinear_lookup_lines(uv_expression: str, prefix: str, uniform: str,
-                          gw: int, gh: int, smooth_blend: bool) -> List[str]:
-    """Inlined GLSL bilinear lookup ending in `float {prefix}Value`.
+    @property
+    def shape(self) -> Optional[Tuple[int, int]]:
+        return self._shape
 
-    smooth_blend gives C1 continuity at cell centers, which looks nicer for
-    gain modulation. It also drives the field's derivative to zero at every
-    cell center. Only the gain/sampling lookups use this; the outline that
-    once required smooth_blend=False is contour geometry now.
-    """
-    p, u = prefix, uniform
-    lines = [
-        f"vec2 {p}GridPosition = clamp({uv_expression}, vec2(0.0), vec2(1.0)) "
-        f"* vec2({float(gw):.1f}, {float(gh):.1f}) - vec2(0.5, 0.5);",
-        f"ivec2 {p}Cell0 = ivec2(floor({p}GridPosition));",
-        f"ivec2 {p}Cell1 = {p}Cell0 + ivec2(1, 1);",
-        f"vec2 {p}Blend = fract({p}GridPosition);",
-    ]
-    if smooth_blend:
-        lines.append(f"{p}Blend = smoothstep(vec2(0.0), vec2(1.0), {p}Blend);")
-    lines.extend([
-        f"{p}Cell0 = clamp({p}Cell0, ivec2(0, 0), ivec2({gw - 1}, {gh - 1}));",
-        f"{p}Cell1 = clamp({p}Cell1, ivec2(0, 0), ivec2({gw - 1}, {gh - 1}));",
-        f"int {p}Index00 = {p}Cell0.y * {gw} + {p}Cell0.x;",
-        f"int {p}Index10 = {p}Cell0.y * {gw} + {p}Cell1.x;",
-        f"int {p}Index01 = {p}Cell1.y * {gw} + {p}Cell0.x;",
-        f"int {p}Index11 = {p}Cell1.y * {gw} + {p}Cell1.x;",
-    ])
-    for corner in ("00", "10", "01", "11"):
-        lines.append(
-            f"float {p}Value{corner} = clamp({u}[{p}Index{corner} >> 4]"
-            f"[({p}Index{corner} >> 2) & 3][{p}Index{corner} & 3], 0.0, 1.0);"
-        )
-    lines.extend([
-        f"float {p}ValueX0 = mix({p}Value00, {p}Value10, {p}Blend.x);",
-        f"float {p}ValueX1 = mix({p}Value01, {p}Value11, {p}Blend.x);",
-        f"float {p}Value = mix({p}ValueX0, {p}ValueX1, {p}Blend.y);",
-    ])
-    return lines
+    def ensure(self, n_textures: int) -> int:
+        """Allocate lazily; returns the count now held. The count is
+        STRUCTURAL (baked into the generated GLSL), so callers must rebuild
+        the shader when it changes."""
+        from vtkmodules.vtkRenderingOpenGL2 import vtkOpenGLTexture
+        from vtkmodules.vtkRenderingCore import vtkTexture
+        n = max(1, min(int(n_textures), self.MAX_TEXTURES))
+        while len(self._textures) > n:
+            self._textures.pop()
+            self._keep.pop()
+            if self._units:
+                self._units.pop()
+        while len(self._textures) < n:
+            tex = vtkOpenGLTexture()
+            tex.SetColorModeToDirectScalars()
+            tex.SetQualityTo32Bit()
+            tex.InterpolateOff()
+            tex.MipmapOff()
+            tex.SetWrap(vtkTexture.ClampToEdge)
+            try:
+                tex.UseSRGBColorSpaceOff()
+            except Exception:
+                pass
+            self._textures.append(tex)
+            self._keep.append(())
+            self._units.append(0)
+        return len(self._textures)
+
+    def upload(self, images: Sequence[np.ndarray]) -> bool:
+        """One (h, w, 4) float32 image per texture."""
+        from vtkmodules.util.numpy_support import numpy_to_vtk
+        from vtkmodules.vtkCommonCore import VTK_FLOAT
+        from vtkmodules.vtkCommonDataModel import vtkImageData
+        if not self._textures or not images:
+            return False
+        h, w = images[0].shape[:2]
+        for i, (tex, img) in enumerate(zip(self._textures, images)):
+            packed = np.ascontiguousarray(img, dtype=np.float32)
+            image = vtkImageData()
+            image.SetDimensions(w, h, 1)
+            image.SetSpacing(1.0, 1.0, 1.0)
+            image.SetOrigin(0.0, 0.0, 0.0)
+            arr = numpy_to_vtk(packed.reshape((-1, 4), order="C"), deep=True,
+                               array_type=VTK_FLOAT)
+            arr.SetName(f"ihm_maps{i}")
+            image.GetPointData().SetScalars(arr)
+            tex.SetInputData(image)
+            # Hold the numpy AND vtk objects: dropping them mid-render is a
+            # use-after-free, not merely a reload.
+            self._keep[i] = (packed, image, arr)
+        self._shape = (h, w)
+        return True
+
+    def declaration_replacements(self) -> List[Tuple[str, str]]:
+        """(original, replacement) pairs turning each pushed int uniform's
+        declaration into a sampler2D."""
+        return [(f"uniform int {self.UNIFORMS[i]};",
+                 f"uniform sampler2D {self.UNIFORMS[i]};")
+                for i in range(len(self._textures))]
+
+    def seed_uniforms(self, uniforms):
+        """Register the ints so VTK emits `uniform int` declarations for the
+        replacements above to rewrite."""
+        for i in range(len(self._textures)):
+            uniforms.SetUniformi(self.UNIFORMS[i], int(self._units[i]))
+
+    def bind(self, renderer, uniforms) -> bool:
+        """VolumeMapperRenderStartEvent: activate and publish the units."""
+        if not self._textures or renderer is None:
+            return False
+        if self._render_window is not None:
+            self._render_window.MakeCurrent()
+        for i, tex in enumerate(self._textures):
+            tex.Render(renderer)
+            unit = int(tex.GetTextureUnit())
+            if unit < 0:
+                tex.PostRender(renderer)
+                print(f"[ihm] texture {i} failed to activate")
+                return False
+            self._units[i] = unit
+            uniforms.SetUniformi(self.UNIFORMS[i], unit)
+        self._bound = True
+        return True
+
+    def release(self, renderer):
+        """VolumeMapperRenderEndEvent."""
+        if not self._bound:
+            return
+        for tex in self._textures:
+            tex.PostRender(renderer)
+        self._bound = False
+
+    def clear(self):
+        self._textures = []
+        self._keep = []
+        self._units = []
+        self._shape = None
+        self._bound = False
 
 
 # ──────────────────────────────────────────────────────────────
@@ -209,8 +316,10 @@ class IntegratedHeatmapManager:
       forces a recompile. Structural changes go through rebuild().
     """
 
-    MEMBER_UNIFORMS = tuple(
-        f"in_ihm_member{i}" for i in range(INTEGRATED_HEATMAP.max_member_maps))
+    # Sampler uniforms come from the texture helper, NOT from the member cap:
+    # the old MEMBER_UNIFORMS was sized off the config singleton at import
+    # time, which silently caps the member count the moment the cap is raised.
+    SAMPLER_UNIFORMS = IhmMapTextures.UNIFORMS
     FLOAT_UNIFORMS = (
         "in_ihm_inv_x", "in_ihm_inv_y",
         "in_ihm_max_step_scale",
@@ -227,8 +336,11 @@ class IntegratedHeatmapManager:
         self._gain = True
         self._sampling = True
 
-        self._inter_packed: Optional[list] = None
-        self._member_packed: "OrderedDict[int, list]" = OrderedDict()  # ch id -> packed
+        self._textures = IhmMapTextures()
+        self._have_maps = False
+        self._n_textures = 1
+        self._observer_mapper = None
+        self._renderer = None
         self._member_ids: Tuple[int, ...] = ()
 
         self._inv_x = 0.0
@@ -239,7 +351,7 @@ class IntegratedHeatmapManager:
 
     @property
     def uniform_names(self) -> tuple:
-        return ("in_ihm_inter",) + self.MEMBER_UNIFORMS + self.FLOAT_UNIFORMS
+        return self.SAMPLER_UNIFORMS + self.FLOAT_UNIFORMS
 
     # ── lifecycle ──────────────────────────────────────────
 
@@ -263,6 +375,7 @@ class IntegratedHeatmapManager:
         self._mapper = mapper
         self._channel_port = dict(channel_port)
         self._dummy_port = dummy_port
+        self._attach_texture_observers(mapper)
         if self._active and self._channel_port:
             # Reinstall with the current maps/effects. Membership may have
             # changed; callbacks follow up with a map recompute, but the old
@@ -290,6 +403,42 @@ class IntegratedHeatmapManager:
         if changed and self._active:
             self.rebuild()
 
+    def set_render_window(self, render_window):
+        """Needed for MakeCurrent before the texture is activated."""
+        self._textures.set_render_window(render_window)
+
+    def _attach_texture_observers(self, mapper):
+        """Hold the map textures active for the mapper's whole render.
+
+        That is what makes VTK's texture-unit manager reserve their units; the
+        mapper otherwise claims them for its own volume textures and every
+        sample reads zero. Registered per mapper, so a multivolume rebuild
+        re-arms them.
+
+        Deliberately NOT UpdateShaderEvent: observing that with callData
+        segfaults this VTK build, and it would also miss the first frame after
+        a shader rebuild.
+        """
+        if mapper is None or self._observer_mapper is mapper:
+            return
+        from vtkmodules.vtkCommonCore import vtkCommand
+
+        def _start(caller, event):
+            if self._active and self._have_maps:
+                sp = self._shader_property()
+                if sp is not None:
+                    self._textures.bind(self._renderer, sp.GetFragmentCustomUniforms())
+
+        def _end(caller, event):
+            self._textures.release(self._renderer)
+
+        mapper.AddObserver(vtkCommand.VolumeMapperRenderStartEvent, _start)
+        mapper.AddObserver(vtkCommand.VolumeMapperRenderEndEvent, _end)
+        self._observer_mapper = mapper
+
+    def set_renderer(self, renderer):
+        self._renderer = renderer
+
     def set_world_extent(self, x_max: float, y_max: float):
         self._inv_x = 1.0 / x_max if x_max > 0 else 0.0
         self._inv_y = 1.0 / y_max if y_max > 0 else 0.0
@@ -297,36 +446,38 @@ class IntegratedHeatmapManager:
     # ── maps ───────────────────────────────────────────────
 
     def compute_maps(self, loader, combo_names: Sequence[str], dilation: float,
-                     name_to_id: Dict[str, int], active_ids: Sequence[int]):
-        """Compute (inter16, member16_by_channel_id) from the analysis loader.
+                     name_to_id: Dict[str, int], active_ids: Sequence[int],
+                     hierarchy_level: int = 0):
+        """(interaction map, member maps by channel id) at `hierarchy_level`.
 
-        Members = combination channels that are bound to active volume ports,
-        in combination order, capped at cfg.max_member_maps.
+        Resolution follows the heatmap LOD, so the map the shader samples
+        resolves as you zoom instead of sitting on a fixed 16x16 grid over the
+        whole slide (95 x 48 um cells).
+
+        The field must be UNCROPPED. HeatmapLOD crops at the fine levels, and
+        `crop_field_to_roi` zeroes everything outside the ROI — gain multiplies
+        volume colour by this map, so a cropped one would dim the volume
+        everywhere outside the viewport.
         """
-        key = (tuple(combo_names), round(float(dilation), 4))
+        key = (tuple(combo_names), round(float(dilation), 4), int(hierarchy_level))
         cached = self._map_cache.get(key)
         if cached is None:
-            grid = loader.grid
-            inter_field = loader.get_heatmap_field(
-                channels=list(combo_names), dilation=dilation, hierarchy_level=0)
-            inter16 = downsample_field_to_grid(
-                inter_field, grid.grid_shape_zyx, grid.bin_factors[1],
-                self.cfg.grid_w, self.cfg.grid_h, self.cfg)
-            member16_by_name = {}
+            inter = self._field_to_map(loader.get_heatmap_field(
+                channels=list(combo_names), dilation=dilation,
+                hierarchy_level=hierarchy_level))
+            member_by_name = {}
             for name in combo_names:
-                f = loader.get_heatmap_field(
-                    channels=[name], dilation=dilation, hierarchy_level=0)
-                m16 = downsample_field_to_grid(
-                    f, grid.grid_shape_zyx, grid.bin_factors[1],
-                    self.cfg.grid_w, self.cfg.grid_h, self.cfg)
-                if m16 is not None:
-                    member16_by_name[name] = m16
-            cached = (inter16, member16_by_name)
+                m = self._field_to_map(loader.get_heatmap_field(
+                    channels=[name], dilation=dilation,
+                    hierarchy_level=hierarchy_level))
+                if m is not None:
+                    member_by_name[name] = m
+            cached = (inter, member_by_name)
             self._map_cache[key] = cached
             while len(self._map_cache) > 12:
                 self._map_cache.popitem(last=False)
 
-        inter16, member16_by_name = cached
+        inter, member_by_name = cached
         active_set = set(active_ids)
         members_by_id: Dict[int, np.ndarray] = {}
         skipped = 0
@@ -334,41 +485,75 @@ class IntegratedHeatmapManager:
             ch_id = name_to_id.get(name)
             if ch_id is None or ch_id not in active_set:
                 continue
-            if name not in member16_by_name:
+            if name not in member_by_name:
                 continue
             if len(members_by_id) >= self.cfg.max_member_maps:
                 skipped += 1
                 continue
-            members_by_id[ch_id] = member16_by_name[name]
+            members_by_id[ch_id] = member_by_name[name]
         if skipped:
             print(f"[ihm] member-map cap {self.cfg.max_member_maps} reached; "
                   f"{skipped} member channel(s) fall back to the interaction map")
-        return inter16, members_by_id
+        return inter, members_by_id
 
-    def set_maps(self, inter16: Optional[np.ndarray],
+    @staticmethod
+    def _field_to_map(field) -> Optional[np.ndarray]:
+        """Dense contrast-stretched (ny, nx) map from a HeatmapField.
+
+        `downsample_field_to_grid` used to reduce the field onto the fixed
+        shader grid with analytic denominators. At the field's own resolution
+        that reduction is the identity — `field.fractions` is already the
+        per-cell fraction — so this is a scatter plus the same contrast stretch.
+        """
+        if field is None or field.counts.size == 0:
+            return None
+        dense = np.zeros((field.ny, field.nx), dtype=np.float32)
+        dense[field.cells_yx[:, 0], field.cells_yx[:, 1]] = field.fractions
+        return np.ascontiguousarray(apply_map_contrast(dense), dtype=np.float32)
+
+    def set_maps(self, inter: Optional[np.ndarray],
                  members_by_id: Dict[int, np.ndarray]):
-        """Install new maps. Uniform-push when the member-id set (structural:
-        slot assignment is baked into the GLSL) is unchanged; full rebuild
-        otherwise."""
+        """Install new maps into the GPU textures.
+
+        Uniform-push when nothing structural moved; full rebuild when the
+        member id set or the TEXTURE COUNT changes — both are baked into the
+        generated GLSL (slot assignment, and one sampler declaration each).
+        """
         if not self._check_main_thread():
             return
-        if inter16 is None:
-            self._inter_packed = None
+        if inter is None:
+            self._have_maps = False
             if self._active:
                 self.clear()
             return
-        self._inter_packed = pack_map_to_mat4(inter16.ravel(order="C"),
-                                              self.cfg.mat4_count)
+
         new_ids = tuple(members_by_id.keys())
-        self._member_packed = OrderedDict(
-            (ch, pack_map_to_mat4(m.ravel(order="C"), self.cfg.mat4_count))
-            for ch, m in members_by_id.items()
-        )
-        structural = new_ids != self._member_ids
+        n_tex = textures_needed(len(new_ids))
+        if self._textures.ensure(n_tex) != n_tex:
+            print("[ihm] map textures unavailable — effects off")
+            self._have_maps = False
+            if self._active:
+                self.clear()
+            return
+
+        member_maps = [members_by_id[c] for c in new_ids]
+        images = []
+        for tex, slots in enumerate(slot_layout(len(new_ids))):
+            chans: List[Optional[np.ndarray]] = [None, None, None, None]
+            if tex == 0:
+                chans[0] = inter
+            for comp, member in enumerate(slots):
+                if member is not None:
+                    chans[comp] = member_maps[member]
+            images.append(interleave_maps(chans, inter.shape[:2]))
+        self._textures.upload(images)
+        self._have_maps = True
+
         self._member_ids = new_ids
+        self._n_textures = n_tex
         if not self._active:
             return
-        if structural or self._installed_signature != self._signature():
+        if self._installed_signature != self._signature():
             self.rebuild()
         else:
             self.update_uniforms()
@@ -379,7 +564,10 @@ class IntegratedHeatmapManager:
         return (
             self._active, self._gain, self._sampling,
             tuple(sorted(self._channel_port.items())),
-            self._member_ids, self._dummy_port,
+            self._member_ids, self._n_textures, self._dummy_port,
+            # The grid size is baked into the generated texelFetch, so a level
+            # change is structural even when the member set is unchanged.
+            self._textures.shape,
             id(self._multi_volume),
         )
 
@@ -394,7 +582,7 @@ class IntegratedHeatmapManager:
         for name in self.uniform_names:
             uniforms.RemoveUniform(name)
 
-        if (self._active and self._channel_port and self._inter_packed is not None
+        if (self._active and self._channel_port and self._have_maps
                 and (self._gain or self._sampling)):
             self._install_replacements(sp)
             self._upload_uniforms(uniforms)
@@ -451,13 +639,11 @@ class IntegratedHeatmapManager:
 
     def _upload_uniforms(self, uniforms):
         cfg = self.cfg
-        if self._inter_packed is not None:
-            uniforms.SetUniformMatrix4x4v(
-                "in_ihm_inter", cfg.mat4_count, self._inter_packed)
-        for slot, ch_id in enumerate(self._member_ids):
-            uniforms.SetUniformMatrix4x4v(
-                self.MEMBER_UNIFORMS[slot], cfg.mat4_count,
-                self._member_packed[ch_id])
+        # Seed the sampler units as ordinary ints. VTK declares them
+        # `uniform int` and pushes them every draw; `_install_replacements`
+        # rewrites only those declarations to sampler2D. That pairing is what
+        # makes the binding work at all — see IhmMapTextures.
+        self._textures.seed_uniforms(uniforms)
         uniforms.SetUniformf("in_ihm_inv_x", float(self._inv_x))
         uniforms.SetUniformf("in_ihm_inv_y", float(self._inv_y))
         uniforms.SetUniformf("in_ihm_max_step_scale", float(cfg.sampling_max_step_scale))
@@ -471,9 +657,31 @@ class IntegratedHeatmapManager:
             p != self._dummy_port for p, _ in ports), "dummy port in gain ports"
         return ports
 
-    def _lookup(self, prefix: str, uniform: str, smooth: bool) -> List[str]:
-        return bilinear_lookup_lines(
-            "g_ihmUV", prefix, uniform, self.cfg.grid_w, self.cfg.grid_h, smooth)
+    def _sampler_lookup(self, n_members: int) -> List[str]:
+        """One texelFetch per texture, filling g_ihmInter and g_ihmM{slot}.
+
+        Replaces a hand-unrolled bilinear lookup that cost ~20 generated lines
+        PER MAP — it existed only because the maps were dynamically indexed
+        mat4 uniforms. Integer fetch, no filtering, as in the reference.
+        """
+        shape = self._textures.shape or (1, 1)
+        gh, gw = shape
+        lines = [
+            f"ivec2 g_ihmCell = ivec2(floor(g_ihmUV * vec2({float(gw):.1f}, "
+            f"{float(gh):.1f})));",
+            f"g_ihmCell = clamp(g_ihmCell, ivec2(0), ivec2({gw - 1}, {gh - 1}));",
+        ]
+        for tex, slots in enumerate(slot_layout(n_members)):
+            lines.append(
+                f"vec4 g_ihmT{tex} = texelFetch({self.SAMPLER_UNIFORMS[tex]}, "
+                f"g_ihmCell, 0);")
+            if tex == 0:
+                lines.append("g_ihmInter = clamp(g_ihmT0.r, 0.0, 1.0);")
+            for comp, member in enumerate(slots):
+                if member is not None:
+                    lines.append(f"g_ihmM{member} = clamp("
+                                 f"g_ihmT{tex}.{'rgba'[comp]}, 0.0, 1.0);")
+        return lines
 
     def _install_replacements(self, sp):
         cfg = self.cfg
@@ -483,6 +691,13 @@ class IntegratedHeatmapManager:
         # 1. Global declarations, piggybacked on a statement that sits at
         # global scope in the generated shader (leaves //VTK::Base::Dec free
         # for the shader-dump tool).
+        # Turn each pushed int uniform's DECLARATION into a sampler2D. The
+        # value keeps arriving through VTK's own uniform machinery, which is
+        # what covers the first frame after a shader rebuild.
+        if need_loop_lookups:
+            for original, replacement in self._textures.declaration_replacements():
+                sp.AddFragmentShaderReplacement(original, False, replacement, False)
+
         decls = ["vec4 g_fragColor = vec4(0.0);"]
         if need_loop_lookups:
             decls.append("mat4 g_ihmWorldMat;")
@@ -515,12 +730,7 @@ class IntegratedHeatmapManager:
                 "g_ihmUV = clamp((g_ihmWorldMat * vec4(g_dataPos, 1.0)).xy "
                 "* vec2(in_ihm_inv_x, in_ihm_inv_y), 0.0, 1.0);",
             ]
-            loop.extend(self._lookup("ihmInterL", "in_ihm_inter", smooth=True))
-            loop.append("g_ihmInter = ihmInterLValue;")
-            for slot in range(n_members):
-                loop.extend(self._lookup(
-                    f"ihmM{slot}L", self.MEMBER_UNIFORMS[slot], smooth=True))
-                loop.append(f"g_ihmM{slot} = ihmM{slot}LValue;")
+            loop.extend(self._sampler_lookup(n_members))
             if self._sampling:
                 imp = "g_ihmInter"
                 for slot in range(n_members):

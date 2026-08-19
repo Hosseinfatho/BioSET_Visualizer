@@ -37,30 +37,19 @@ class IntegratedHeatmapConfig:
        from (0.45), so per-sample modulation composites into a smaller final
        difference and the constants have to work harder.
 
-    3. SPATIAL RESOLUTION (`grid_w`/`grid_h`) — matters most when zoomed in.
-       At 16x16 one cell spans ~682x344 voxels (~95x48 um on mis_full), so a
-       zoomed-in viewport can sit inside a couple of cells and see a nearly
-       constant field. Raising the grid is bounded by the NVIDIA constant
-       register budget (~1024 per fragment program, shared with VTK's own):
+    3. SPATIAL RESOLUTION — the maps are GPU textures at the heatmap LOD's
+       own grid, so they resolve with zoom rather than sitting on a fixed
+       grid over the whole slide. Nothing to tune here; the level comes from
+       the camera, like the grid heatmap's.
 
-           registers per map = ceil(grid_w * grid_h / 16) * 4
-           total = (1 + max_member_maps) maps
-
-           16x16 ->  64/map ->  320 total   (current, ample headroom)
-           24x24 -> 144/map ->  720 total   (safe at max_member_maps=4)
-           32x32 -> 256/map -> 1280 total   (needs max_member_maps <= 2)
-
-       Overrunning the budget shows up as a shader link failure, which the
-       harness (scratchpad verify_ihm_shader.py) captures — so this is
-       checkable, not guesswork. Set BIOSET_DUMP_SHADER=1 to dump the
-       generated GLSL (streaming/shader_debug.py) and confirm a change
-       actually reached the GPU.
+       Set BIOSET_DUMP_SHADER=1 to dump the generated GLSL
+       (streaming/shader_debug.py) and confirm a change reached the GPU.
     """
-    # ── Shader grid over the full volume XY (see HOW TO TUNE #3) ──
-    grid_w: int = 16                                # [literal]
-    grid_h: int = 16                                # [literal]
-    # Per-channel member maps bound alongside the interaction map.
-    max_member_maps: int = 4                        # [structural]
+    # Per-channel member maps bound alongside the interaction map. Matched to
+    # the multivolume's own 10-channel limit: the maps ride in the RGBA
+    # components of up to 3 textures, so this no longer costs shader
+    # registers the way the mat4 uniforms it replaced did.
+    max_member_maps: int = 10                       # [structural]
 
     # ── Map contrast (see HOW TO TUNE #1) ──
     # "rank"       histogram-equalize the nonzero cells onto [floor, 1].
@@ -100,10 +89,6 @@ class IntegratedHeatmapConfig:
 
     # ── Importance sampling: step = base * mix(max_scale, 1, importance) ──
     sampling_max_step_scale: float = 10.0           # [uniform]
-
-    @property
-    def mat4_count(self) -> int:
-        return -(-(self.grid_w * self.grid_h) // 16)
 
     @property
     def combined_max_rgb_gain(self) -> float:

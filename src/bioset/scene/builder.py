@@ -427,6 +427,11 @@ def build_scene(cfg: VolumeConfig) -> VtkScene:
     if streamer is not None:
         from .integrated_heatmap import IntegratedHeatmapManager
         integrated_heatmap = IntegratedHeatmapManager()
+        # The maps ride to the GPU as textures, so the manager needs the
+        # window (MakeCurrent before activating one) and the renderer (the
+        # texture-unit manager it registers with).
+        integrated_heatmap.set_render_window(render_window)
+        integrated_heatmap.set_renderer(renderer)
         streamer.shader_effects_hook = integrated_heatmap.on_multivolume_rebuilt
 
     return VtkScene(

@@ -26,6 +26,7 @@ class HeatmapRequest:
     dilation: float
     timestamp: float
     roi_vox: object = None        # (x0, x1, y0, y1) viewport in voxels, or None
+    mode: str = "grid"            # grid | contour | integrated
 
 
 @dataclass
@@ -51,7 +52,6 @@ class HeatmapResult:
     # must not land on the main thread.
     base_field: object = None
 
-
 class HeatmapLOD:
     """Drives automatic heatmap cell-size selection based on camera zoom.
 
@@ -72,7 +72,11 @@ class HeatmapLOD:
         self._debounce_lock = threading.Lock()
         self._pending: Optional[HeatmapRequest] = None
         self._current_level: int = 3
-        self._contours = None          # ContourRenderer, integrated mode
+        self._contours = None          # ContourRenderer, contour mode
+        self._shader_maps_hook = None  # callable(level), integrated mode
+        # Which mode the worker is computing for. Held here rather than read
+        # off ui.state so the worker thread stays out of the UI module.
+        self._mode = "grid"
 
         self._loader = None
         self._channel_order: List[str] = []
@@ -184,7 +188,12 @@ class HeatmapLOD:
             channels=list(self._channels),
             dilation=self._dilation,
             timestamp=time.monotonic(),
-            roi_vox=roi_vox if desired_level in self.CROP_LEVELS else None,
+            # Integrated mode draws no glyphs, so there is nothing to crop
+            # for — and cropping would cost the shader an extra uncropped
+            # fetch, since gain must not dim the volume off-screen.
+            roi_vox=(roi_vox if (desired_level in self.CROP_LEVELS
+                                 and self._mode != "integrated") else None),
+            mode=self._mode,
         )
 
         with self._debounce_lock:
@@ -245,10 +254,13 @@ class HeatmapLOD:
             cropped = sub is not field
             field = sub
         # One field for the contours, always the finest and never cropped.
-        base_field = field if (req.level == 0 and not cropped) else None
-        if base_field is None:
-            base_field = req.loader.get_heatmap_field(
-                channels=req.channels, dilation=req.dilation, hierarchy_level=0)
+        base_field = None
+        if req.mode == "contour":
+            base_field = field if (req.level == 0 and not cropped) else None
+            if base_field is None:
+                base_field = req.loader.get_heatmap_field(
+                    channels=req.channels, dilation=req.dilation,
+                    hierarchy_level=0)
         if self._is_superseded(req):
             return
         n = field.counts.size if field is not None else 0
@@ -311,10 +323,21 @@ class HeatmapLOD:
         mode = getattr(state, "heatmap_mode", "grid")
         if mode == "integrated":
             # The shader modulates the volume itself; there is no field
-            # geometry to place, and the maps are driven from the callbacks.
+            # geometry to place. The maps still come through here, so that the
+            # textures re-resolve when the camera settles on a new level —
+            # this branch used to draw nothing at all, which is why the map
+            # stayed at whatever the last UI action set it to.
             heatmap_renderer.clear()
             if self._contours is not None:
                 self._contours.clear()
+            if self._shader_maps_hook is not None:
+                try:
+                    # True asks the poll loop for a redraw — the shader
+                    # changed, and nothing else in this branch would trigger
+                    # one.
+                    return bool(self._shader_maps_hook(result.level))
+                except Exception as e:
+                    print(f"[heatmap_lod] Shader map upload failed: {e}")
             return False
 
         if mode == "contour":
@@ -343,8 +366,17 @@ class HeatmapLOD:
         return True
 
     def set_contour_renderer(self, contours):
-        """Renderer used when `state.heatmap_mode == "integrated"`."""
+        """Renderer used when `state.heatmap_mode == "contour"`."""
         self._contours = contours
+
+    def set_mode(self, mode: str):
+        """grid | contour | integrated — decides which uncropped field the
+        worker computes alongside the (possibly cropped) display field."""
+        self._mode = mode or "grid"
+
+    def set_shader_maps_hook(self, hook):
+        """Called with the settled level when `heatmap_mode == "integrated"`."""
+        self._shader_maps_hook = hook
 
     @property
     def current_level(self) -> int:
