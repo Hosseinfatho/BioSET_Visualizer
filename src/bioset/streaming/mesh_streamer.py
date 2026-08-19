@@ -48,6 +48,7 @@ class MeshStreamer:
         self._pending: Optional[MeshRequest] = None
         self._latest_ts = 0.0
         self._last_roi = None
+        self._visible_keys = None
         self._inflight: set = set()
 
     def set_manager(self, manager, renderer=None):
@@ -98,8 +99,12 @@ class MeshStreamer:
         try:
             self._last_roi = req.roi_vox
             tiles = mgr.visible_tiles(req.roi_vox)
+            # Record the visible set so the main thread can retire everything
+            # else. Set before loading, so a tile that arrives late is still
+            # recognised as wanted.
+            self._visible_keys = {mgr.tile_key(t) for t in tiles}
             if mgr.last_truncated:
-                print(f"[mesh] triangle budget reached — showing the {len(tiles)} "
+                print(f"[mesh] out-of-memory ceiling hit — showing the {len(tiles)} "
                       f"tiles nearest the view centre")
             wanted = 0
             for tile in tiles:
@@ -146,7 +151,16 @@ class MeshStreamer:
             if mgr.apply_loaded(item.tile, item.polydata):
                 changed = True
         if changed:
-            mgr.evict_to_budget()
+            # Retire whatever has left the viewport, THEN fall back on the LRU
+            # for anything still over budget. Without the first step, tiles
+            # scrolled off screen kept their actors and their share of the
+            # budget, which is part of why the visible ones went missing.
+            keep = self._visible_keys
+            if keep is not None:
+                dropped = mgr.evict_outside(keep)
+                if dropped:
+                    print(f"[mesh_streamer] retired {dropped} tiles that left the view")
+            mgr.evict_to_budget(keep or set())
         return changed
 
     def clear(self):
@@ -160,3 +174,4 @@ class MeshStreamer:
                 break
         self._inflight.clear()
         self._last_roi = None
+        self._visible_keys = None

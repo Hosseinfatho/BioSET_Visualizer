@@ -59,12 +59,13 @@ class MeshManager:
     not, and stay on the main thread via `apply_loaded`.
     """
 
-    # Triangles allowed on screen across all enabled channels. The median tile
-    # is ~15k faces, so this is a few hundred tiles.
-    DEFAULT_FACE_BUDGET = 3_000_000
-    # Loaded tiles kept alive beyond the visible set, so small camera moves do
-    # not re-read what they just evicted.
-    LRU_FACE_BUDGET = 12_000_000
+    # Out-of-memory guard, NOT a display budget: every tile intersecting the
+    # viewport is shown. Only a pathological view trips this — all 49 channels
+    # over the whole slide is 157M faces — and when it does, it says so.
+    HARD_FACE_CEILING = 60_000_000
+    # Tiles kept alive beyond the visible set, so a small pan does not re-read
+    # what it just dropped. Sized as a fraction of the ceiling.
+    LRU_FACE_BUDGET = 24_000_000
     # Points VTK falls back to per tile on drag frames when even the decimated
     # representation is too slow. ~2% of a median tile's vertices.
     LOD_CLOUD_POINTS = 400
@@ -74,11 +75,11 @@ class MeshManager:
         mesh_dir: Path | str | None,
         renderer: vtkRenderer,
         base_spacing: Tuple[float, float, float] = (0.14, 0.14, 0.28),
-        face_budget: int = DEFAULT_FACE_BUDGET,
+        face_budget: int = HARD_FACE_CEILING,
     ):
         self.renderer = renderer
         self.base_sx, self.base_sy, self.base_sz = base_spacing
-        self.face_budget = int(face_budget)
+        self.hard_face_ceiling = int(face_budget)
 
         self.mesh_dir: Optional[Path] = None
         self._manifest: Optional[dict] = None
@@ -214,8 +215,8 @@ class MeshManager:
         """Tiles intersecting `roi_vox` = (x0, x1, y0, y1) for enabled channels.
 
         Sorted by distance from the ROI centre and cut off at the triangle
-        budget, so the tiles nearest what the user is looking at win. Sets
-        `last_truncated` when the budget bit.
+        Every intersecting tile is returned, ordered nearest-first so the
+        streamer fills in from the middle of the view outwards.
         """
         self.last_truncated = False
         if not self._tiles:
@@ -241,14 +242,26 @@ class MeshManager:
         my = (self._t_y0[idx] + self._t_y1[idx]) * 0.5 - cy
         idx = idx[np.argsort(mx * mx + my * my)]
 
-        budget = int(face_budget if face_budget is not None else self.face_budget)
-        faces = self._t_faces[idx]
-        total = np.cumsum(faces)
-        n = int(np.searchsorted(total, budget, side="right"))
-        if n < idx.size:
+        # EVERY tile intersecting the viewport, not a budgeted subset. The
+        # budget used to cut this list at 3M faces, which silently hid most of
+        # the surfaces whenever the view was wide: one channel at full slide
+        # showed 80 of 153 tiles, three channels showed 94 of 471. Tiles are
+        # still ordered nearest-first so streaming fills in from the centre of
+        # what the user is looking at.
+        #
+        # `hard_face_ceiling` remains only as an out-of-memory guard for the
+        # pathological case (all 49 channels at full slide is 157M faces). When
+        # it bites it is recorded on `last_truncated` and logged, never silent.
+        ceiling = int(face_budget if face_budget is not None
+                      else self.hard_face_ceiling)
+        total = np.cumsum(self._t_faces[idx])
+        if total.size and total[-1] > ceiling:
+            n = max(1, int(np.searchsorted(total, ceiling, side="right")))
             self.last_truncated = True
-            n = max(n, 1)  # always show something
-        return [self._tiles[int(i)] for i in idx[:n]]
+            print(f"[meshes] {idx.size} tiles in view need {int(total[-1]):,} "
+                  f"faces, over the {ceiling:,} ceiling — showing {n}")
+            idx = idx[:n]
+        return [self._tiles[int(i)] for i in idx]
 
     # ── opt-in ─────────────────────────────────────────────
 
@@ -352,8 +365,24 @@ class MeshManager:
         self._polydata_cache.pop(tile.channel_idx, None)
         return True
 
+    def evict_outside(self, keep: set) -> int:
+        """Drop every live tile that is NOT in `keep` (the current viewport).
+
+        This is what "remove them as they move out" means, and the LRU below
+        never did it: it only fired once the live set exceeded a face budget,
+        so tiles behind the camera stayed resident indefinitely and the budget
+        they occupied was denied to tiles actually in view.
+        """
+        gone = 0
+        for key in list(self._actors):
+            if key not in keep:
+                self._remove_key(key)
+                gone += 1
+        return gone
+
     def evict_to_budget(self, keep: Optional[set] = None):
-        """Drop least-recently-used tiles until the live budget is satisfied."""
+        """Backstop only: drop least-recently-used tiles if the live set is
+        still over budget after `evict_outside` has run."""
         keep = keep or set()
         while self._live_faces > self.LRU_FACE_BUDGET and self._actors:
             for key in list(self._actors):
