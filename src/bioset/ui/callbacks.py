@@ -56,7 +56,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         "renderer": None,
         "label_manager": None,
         "biomni_client": None,
-        "last_tile_channel_stats": None,
         "interactor": None,
     }
 
@@ -1444,11 +1443,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
         print(f"[callbacks] Dilation data updated: {len(result)}/{len(all_keys)} curves shown")
     
     def _compute_current_tile_ranges():
-        """Compute tile grid ranges for the current viewport. Returns ((gx0, gx1), (gy0, gy1)) or None."""
+        """Compute tile grid ranges for the current viewport. Returns ((gx0, gx1), (gy0, gy1)) or None.
+
+        Deliberately independent of the viewport-plots subsystem: this is a
+        camera question, and the VLM context needs the answer whether or not
+        the right drawer happens to be open in local scope.
+        """
         streamer = _refs.get("streamer")
         renderer = _refs.get("renderer")
-        vp = _refs.get("viewport_plots")
-        if not streamer or not renderer or not vp:
+        if not streamer or not renderer:
             return None
         try:
             from bioset.streaming.lod import compute_visible_xy_roi_vox
@@ -1699,7 +1702,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
             nov_view.update()
             
     _refs["biomni_client"] = None
-    _refs["last_tile_channel_stats"] = None  # populated on right-click tile selection
 
     def _get_biomni_client():
         """Get or create the local Biomni client."""
@@ -1793,13 +1795,89 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
         return markers
 
-    def _require_tile_stats() -> dict | None:
-        """Return cached tile channel_stats, or add an error message and return None."""
-        cs = _refs.get("last_tile_channel_stats")
+    def _viewport_channel_stats() -> dict | None:
+        """Statistics for what is ON SCREEN, in the schema the agent expects.
+
+        This replaces the right-clicked tile the VLM features used to hang off.
+        The server prompt already describes channel_stats as covering "the
+        current region" and reads mean_intensity/dtype_max and
+        segmented_voxels/total_voxels as ratios, so a viewport drops straight
+        in — no schema change, no server change.
+
+        Combinations ride INSIDE this dict rather than as a sibling key: the
+        server forwards channel_stats into the task JSON verbatim, so nesting
+        them means the agent sees them immediately, whereas a sibling key is
+        dropped before it ever reaches the model.
+
+        Computed per call rather than read from the viewport-plot cache, which
+        only exists while the right drawer is open in local scope.
+        """
+        loader = _refs.get("analysis_loader")
+        if not loader or not loader.is_loaded:
+            return None
+
+        ranges = _compute_current_tile_ranges()
+        if ranges is None:
+            # No camera yet — fall back to the whole volume rather than
+            # sending nothing, so the agent is grounded either way.
+            bx_range = by_range = None
+            scope = "whole volume"
+        else:
+            (gx0, gx1), (gy0, gy1) = ranges
+            bx_range, by_range = (gx0, gx1), (gy0, gy1)
+            scope = "viewport"
+
+        dilation = getattr(state, "current_dilation", 0.0)
+        stats = loader.region_channel_stats(by_range, bx_range, dilation)
+        if not stats:
+            return None
+
+        from bioset.analysis.constants import BLOCK_VOX
+        stats["region"] = {
+            "scope": scope,
+            "x_blocks": list(bx_range) if bx_range else None,
+            "y_blocks": list(by_range) if by_range else None,
+            "block_voxels": BLOCK_VOX,
+        }
+
+        # Co-localization for the same region — the strongest evidence the
+        # agent can get about which markers actually overlap here, as opposed
+        # to inferring it from colours in the screenshot.
+        try:
+            metrics = loader.get_viewport_metrics(
+                by_range if by_range else (0, loader.tally.n_blocks_y),
+                bx_range if bx_range else (0, loader.tally.n_blocks_x),
+                dilation,
+                min_channels=_combo_size(loader),
+                limit=15,
+                combo_channels=_upset_selection(loader),
+            )
+            stats["combinations"] = [
+                {
+                    "channels": list(row["channels"]),
+                    "iou": round(float(row.get("iou", 0.0)), 4),
+                    "overlap_coeff": round(float(row.get("overlap_coeff", 0.0)), 4),
+                }
+                for row in (metrics.get("upset") or [])
+            ]
+            # False => the counts came from a coarser pyramid level and are a
+            # superset: comparable, but not exact. Passed on rather than
+            # quietly presented as exact.
+            stats["combinations_exact"] = bool(metrics.get("exact", True))
+        except Exception as e:
+            print(f"[callbacks] Viewport combinations unavailable: {e}")
+            stats["combinations"] = []
+            stats["combinations_exact"] = False
+
+        return stats
+
+    def _require_viewport_stats() -> dict | None:
+        """Viewport stats, or an error message in the chat and None."""
+        cs = _viewport_channel_stats()
         if not cs:
             state.chatbot_messages = state.chatbot_messages + [{
                 "role": "error",
-                "content": "No tile selected. Right-click a heatmap tile first.",
+                "content": "No analysis loaded. Load an analysis directory first.",
             }]
         return cs
 
@@ -1812,8 +1890,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot send message - Biomni not initialised")
             return
 
-        # Free-form chat works without a selected tile; include stats only when available.
-        channel_stats = _refs.get("last_tile_channel_stats")
+        # Grounded in whatever is on screen. This used to read a cache that
+        # only the removed tile picker ever wrote, so it was always None.
+        channel_stats = _viewport_channel_stats()
 
         user_text = state.chatbot_input.strip()
         print(f"[callbacks] Biomni query: {user_text}")
@@ -1852,7 +1931,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot label - Biomni not initialised")
             return
 
-        channel_stats = _require_tile_stats()
+        channel_stats = _require_viewport_stats()
         if channel_stats is None:
             return
 
@@ -1905,7 +1984,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print("[callbacks] Cannot suggest - Biomni not initialised")
             return
 
-        channel_stats = _require_tile_stats()
+        channel_stats = _require_viewport_stats()
         if channel_stats is None:
             return
 
@@ -2104,6 +2183,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 markers=markers,
                 mode=state.biomni_mode,
                 image=screenshot_base64,
+                # A bookmark names a PLACE, so what is in view is the whole
+                # point. This call previously sent markers and a screenshot
+                # only, leaving the agent to guess the region from pixels.
+                channel_stats=_viewport_channel_stats(),
             )
 
             suggested_title = (result.get("title") or "").strip()
@@ -2159,24 +2242,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         else:
             if label_mgr:
                 refresh_labels()
-
-    def deselect_tile():
-        """Deselect the current tile: remove surface meshes, clear labels, reset state."""
-        print("[callbacks] Deselecting tile")
-        mesh_mgr = _refs.get("mesh_manager")
-        if mesh_mgr:
-            for ch_id in list(state.active_channels):
-                mesh_mgr.deactivate_channel_mesh(ch_id)
-        label_mgr = _refs.get("label_manager")
-        if label_mgr:
-            label_mgr.clear()
-            _refs["label_manager"] = None
-        state.selected_tile = None
-        state.chatbot_labels_generated = False
-        state.anchor_labels = False
-        v = _refs.get("view")
-        if v:
-            v.update()
 
     def _apply_mesh_labels(raw_labels: dict, overall: list):
         """Create/restart LabelSceneManager with the new labels from Biomni /label."""
@@ -2315,57 +2380,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
         # Last resort: already smallest quality
         return base64.b64encode(raw).decode("utf-8")
 
-    def _print_tile_channel_stats(tile, dilation):
-        """Print per-channel stats for the tally block containing a picked
-        heatmap cell, and cache the channel_stats dict for Biomni."""
-        loader = _refs.get("analysis_loader")
-        heatmap = _refs.get("heatmap")
-        if not loader or not loader.is_loaded or not heatmap:
-            return
-
-        from bioset.analysis.constants import BLOCK_VOX
-
-        cs = heatmap.current_cell_size_vox or 1
-        # Cell center in voxel coordinates → containing 128-voxel tally block
-        vox_x = (tile.x0 + tile.x1) / 2.0 * cs
-        vox_y = (tile.y0 + tile.y1) / 2.0 * cs
-        block_x = int(vox_x // BLOCK_VOX)
-        block_y = int(vox_y // BLOCK_VOX)
-
-        stats = loader.get_block_channel_stats(block_y, block_x, dilation)
-        print(f"[picker] Channel stats — cell ({tile.x0},{tile.y0}) "
-              f"block ({block_y},{block_x}) radius={dilation}:")
-        if stats:
-            print(f"  {'Channel':<20} {'Voxels':>10} {'MeanInt':>10} {'SumInt':>14}")
-            print(f"  {'-'*20} {'-'*10} {'-'*10} {'-'*14}")
-            for row in stats:
-                print(f"  {row['channel']:<20} {row['voxel_count']:>10} "
-                      f"{row['mean_intensity']:>10.3f} {row['sum_intensity']:>14.1f}")
-        else:
-            print("  (no data for this block / radius)")
-
-        bounds = loader.metadata.volume_bounds if loader.metadata else {}
-        z_depth = max(1, bounds["z"][1] - bounds["z"][0]) if bounds and "z" in bounds else 1
-        total_voxels = BLOCK_VOX * BLOCK_VOX * z_depth
-
-        # Intensity scale comes from the image metadata when available.
-        dtype_max = getattr(state, "dtype_max", None) or (
-            loader.metadata.dtype_max if loader.metadata else 65535)
-
-        _refs["last_tile_channel_stats"] = {
-            "dtype_max": dtype_max,
-            "total_voxels": total_voxels,
-            "channels": {
-                row["channel"]: {
-                    "mean_intensity": row["mean_intensity"],
-                    "segmented_voxels": row["voxel_count"],
-                }
-                for row in stats
-            },
-        }
-        print(f"[picker] channel_stats cached: {len(stats)} channels, "
-              f"total_voxels={total_voxels}, dtype_max={dtype_max}")
-
     def setup_right_click_picker(interactor):
         """No-op: heatmap tile picking was removed.
 
@@ -2462,7 +2476,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear
     ctrl.toggle_labels = toggle_labels
-    ctrl.deselect_tile = deselect_tile
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.set_mesh_streamer = set_mesh_streamer
     ctrl.set_contours = set_contours

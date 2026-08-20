@@ -18,9 +18,8 @@ def floating_chatbot_section(state, ctrl):
             v_if="analysis_loaded && !right_drawer_open",
             fab=True,
             large=True,
-            dark=("!selected_tile",),
-            color=("selected_tile ? 'white' : ''",),
-            outlined=("!selected_tile",),
+            dark=True,
+            outlined=True,
             style="position: absolute; bottom: 16px; right: 16px; z-index: 100;",
             click="chatbot_panel_open = !chatbot_panel_open",
     ):
@@ -31,9 +30,8 @@ def floating_chatbot_section(state, ctrl):
             v_if="analysis_loaded && right_drawer_open",
             fab=True,
             large=True,
-            dark=("!selected_tile",),
-            color=("selected_tile ? 'white' : ''",),
-            outlined=("!selected_tile",),
+            dark=True,
+            outlined=True,
             style="position: absolute; bottom: 16px; right: 366px; z-index: 100;",
             click="chatbot_panel_open = !chatbot_panel_open",
     ):
@@ -59,23 +57,17 @@ def floating_chatbot_section(state, ctrl):
                 ):
                     vuetify.VIcon("mdi-delete-outline", x_small=True, color="grey lighten-1")
 
-            # ── Selected-tile subtitle + deselect button ──────────────────────
-            with html.Div(
-                    v_if="selected_tile",
-                    classes="d-flex align-center mb-1",
-            ):
-                vuetify.VIcon("mdi-grid", x_small=True, color="white", classes="mr-1")
+            # ── Scope indicator ───────────────────────────────────────────────
+            # The agent is grounded in whatever is on screen, so say so: the
+            # answers change as the camera moves, which is otherwise invisible.
+            with html.Div(classes="d-flex align-center mb-1"):
+                vuetify.VIcon("mdi-crop-free", x_small=True, color="white",
+                              classes="mr-1")
                 html.Span(
-                    "Selected Tile",
+                    "Current viewport",
                     classes="text-caption white--text font-weight-medium",
                     style="flex: 1;",
                 )
-                with vuetify.VBtn(
-                        icon=True, x_small=True,
-                        click=ctrl.deselect_tile,
-                        title="Deselect tile — removes surface mesh and labels",
-                ):
-                    vuetify.VIcon("mdi-close-circle-outline", x_small=True, color="grey")
 
             # ── Not-initialized notice ────────────────────────────────────────
             with html.Div(v_if="!chatbot_authenticated", classes="mb-2 mt-2"):
@@ -189,10 +181,9 @@ def floating_chatbot_section(state, ctrl):
 
                 # ── Action buttons ────────────────────────────────────────────
                 with html.Div(classes="d-flex align-center mt-2"):
-                    # Label — tile-only
+                    # Label — grounded in the viewport
                     vuetify.VBtn(
                         "Label",
-                        v_if="selected_tile",
                         click=ctrl.chatbot_label,
                         x_small=True,
                         outlined=True,
@@ -200,10 +191,9 @@ def floating_chatbot_section(state, ctrl):
                         disabled=("chatbot_loading",),
                         classes="mr-1",
                     )
-                    # Suggest Channels — tile-only
+                    # Suggest Channels — grounded in the viewport
                     vuetify.VBtn(
                         "Suggest Channels",
-                        v_if="selected_tile",
                         click=ctrl.chatbot_suggest,
                         x_small=True,
                         outlined=True,

@@ -70,7 +70,7 @@ class IntegratedHeatmapConfig:
     #
     # Raising this trades away the ability to tell the HOTTEST cells apart
     # from each other — they all flatten toward the top of the curve.
-    cell_contrast: float = 1.5                      # [literal]
+    cell_contrast: float = 3.0                      # [literal]
 
     # ── 2. How much brighter are the highlighted regions? ──
     # Ceiling on the per-fragment brightness boost, as a multiple of the
@@ -83,7 +83,7 @@ class IntegratedHeatmapConfig:
     # 4.0, 0.317 at 8.0 on faint tissue, and identical at all three on normal
     # tissue. Raise it to lift faint channels; it cannot cause whitening at
     # any value.
-    hot_brightness: float = 1.5                     # [literal]
+    hot_brightness: float = 3.0                     # [literal]
 
     # ── 3. How dull are the quiet regions? ──
     # What fraction of its normal brightness the coldest region keeps.
@@ -92,7 +92,7 @@ class IntegratedHeatmapConfig:
     # `hot_brightness`).
     #
     # This is the knob for "the whole scene is too dark" — raise it.
-    cold_dimness: float = 0.15                      # [literal]
+    cold_dimness: float = 0.3                      # [literal]
 
     # ── 4. How much are cell boundaries smoothed? ──
     #   0.0      hard-edged squares: no filtering at all. Cells read as
@@ -107,7 +107,7 @@ class IntegratedHeatmapConfig:
     #
     # Blurring only ever mixes occupied cells with each other; empty cells
     # stay exactly 0, so the tissue border stays crisp however high this goes.
-    map_smoothing: float = 1.0                      # [literal + CPU]
+    map_smoothing: float = 0.5                      # [literal + CPU]
 
     # ══ Everything below shapes the map before the knobs above act on it ═══
 

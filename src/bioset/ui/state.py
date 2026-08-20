@@ -211,11 +211,9 @@ def init_state(state):
     state.setdefault("ihm_effects", ["gain", "sampling"])
     state.setdefault("ihm_gain_enabled", True)
     state.setdefault("ihm_sampling_enabled", True)
-    state.setdefault("selected_tile", None) # Selected tile from right-click drill-down
     # Channels whose mesh surfaces the user has opted into. Empty by default:
     # the manifest holds thousands of tiles, so surfaces are never implicit.
     state.setdefault("surface_enabled_channels", [])
-    state.setdefault("selected_tile_combinations", [])  # Combinations for picked tile
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
     state.setdefault("upset_search", "")

@@ -1211,3 +1211,64 @@ class AnalysisLoader:
             })
         rows.sort(key=lambda r: r["voxel_count"], reverse=True)
         return rows
+
+    def region_channel_stats(
+        self,
+        by_range: Optional[Tuple[int, int]],
+        bx_range: Optional[Tuple[int, int]],
+        dilation: float,
+    ) -> dict:
+        """Per-channel stats over a block range, in the schema the VLM expects.
+
+        `{"dtype_max", "total_voxels", "channels": {name: {"mean_intensity",
+        "segmented_voxels"}}}` — the same shape the tile picker used to build
+        for one block, now over an arbitrary region (None ranges = whole
+        volume). The agent reads `mean_intensity / dtype_max` as expression
+        level and `segmented_voxels / total_voxels` as coverage, so both
+        denominators have to describe the same region as the numerators.
+
+        `mean_intensity` comes from the SUMMED region totals. Averaging
+        per-block means instead would weight a block holding a hundred voxels
+        the same as one holding a hundred thousand.
+
+        It is `None` where the dataset carries no intensity for the region —
+        mis_v3 leaves most of `sum_intensity` NaN. Null rather than 0.0,
+        because 0.0 reads as "measured, and absent", which is a different
+        claim. `intensity_available` says whether any of it was real.
+
+        Every included channel appears, zeros and all: the agent is told to
+        reason about markers that are absent here, and the store only returns
+        the ones with signal.
+        """
+        if not self.is_loaded:
+            return {}
+        ri = self.is_detent(dilation)
+        ri = ri if ri is not None else self._nearest_detent(dilation)
+        sums = self.tally.channel_stats_region(ri, by_range, bx_range)
+
+        # Z is in VOXELS, from the volume bounds — `grid_shape_zyx` counts
+        # bins, and mixing the two understates the denominator ~4x, which
+        # would let segmented_voxels exceed total_voxels.
+        bounds = self.metadata.volume_bounds if self.metadata else {}
+        z_depth = max(1, bounds["z"][1] - bounds["z"][0]) if "z" in bounds else 1
+        ny = self.tally.n_blocks_y if by_range is None else by_range[1] - by_range[0]
+        nx = self.tally.n_blocks_x if bx_range is None else bx_range[1] - bx_range[0]
+        total_voxels = max(0, ny) * max(0, nx) * BLOCK_VOX * BLOCK_VOX * z_depth
+
+        channels = {}
+        any_intensity = False
+        for c in self.registry.included_indices():
+            vc, si, vc_known = sums.get(c, (0, 0.0, 0))
+            mean = (si / vc_known) if vc_known > 0 else None
+            any_intensity = any_intensity or mean is not None
+            channels[self.registry.name_of(c)] = {
+                "mean_intensity": mean,
+                "segmented_voxels": int(vc),
+            }
+        return {
+            "dtype_max": int(self.metadata.dtype_max) if self.metadata else 65535,
+            "total_voxels": int(total_voxels),
+            "intensity_available": any_intensity,
+            "stats_radius_um": self.detent_label_um(ri),
+            "channels": channels,
+        }

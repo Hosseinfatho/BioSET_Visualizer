@@ -526,6 +526,37 @@ class TallyStore:
         nz = np.flatnonzero(vc)
         return {int(c): (int(vc[c]), float(si[c])) for c in nz}
 
+    def channel_stats_region(
+        self,
+        radius_idx: int,
+        by_range: Optional[Tuple[int, int]] = None,
+        bx_range: Optional[Tuple[int, int]] = None,
+    ) -> Dict[int, Tuple[int, float, int]]:
+        """Per-channel (voxel_count, sum_intensity, voxels_backing_intensity)
+        over a block range.
+
+        Separate from `channel_stats_sum` because `sum_intensity` is NOT always
+        populated — on mis_v3, 1.30M of 1.48M rows are NaN while the rest carry
+        real values. A plain sum therefore returns NaN for any channel touching
+        one such block, which is both wrong and unserializable as JSON.
+
+        So intensity is summed NaN-safely, and the third element reports how
+        many voxels actually backed that sum. A mean must divide by THAT, not
+        by the full voxel count, or it is diluted by blocks that never
+        contributed. Coverage still uses the full count, which is always known.
+        """
+        sl = self._cs_slice(radius_idx, by_range, bx_range)
+        vc_blocks = self._cs_voxels[sl]
+        si_blocks = self._cs_intensity[sl]
+
+        known = np.isfinite(si_blocks)
+        vc = vc_blocks.sum(axis=(0, 1))
+        si = np.where(known, si_blocks, 0.0).sum(axis=(0, 1))
+        vc_known = np.where(known, vc_blocks, 0).sum(axis=(0, 1))
+
+        nz = np.flatnonzero(vc)
+        return {int(c): (int(vc[c]), float(si[c]), int(vc_known[c])) for c in nz}
+
     def channel_stats_block(self, block_y: int, block_x: int, radius_idx: int):
         """[(channel, voxel_count, sum_intensity)] for one block."""
         if not (0 <= block_y < self.n_blocks_y and 0 <= block_x < self.n_blocks_x):
