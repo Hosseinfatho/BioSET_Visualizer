@@ -1,0 +1,149 @@
+{
+  "id": "00c5e0d6-ddc4-4c34-9888-136ce8f4d0df",
+  "title": "A8, zoomed in",
+  "category": "BioSET_Verification",
+  "created": "2026-08-21T11:52:40Z",
+  "updated": "2026-08-21T12:21:12Z",
+  "notes": "B cell associated with collagen fibres in the dermis",
+  "description": "B cell associated with collagen fibres in the dermis",
+  "camera": {
+    "position": [
+      691.3481912429215,
+      465.8021443651723,
+      374.07340722405746
+    ],
+    "focalPoint": [
+      691.3481912429215,
+      465.8021443651723,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 25,
+      "name": "CD4",
+      "color": "#00FFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 27,
+      "name": "CD20",
+      "color": "#FF00FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 69,
+      "name": "Collagen (SHG)",
+      "color": "#FFFF00",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    27,
+    25,
+    69
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1920,
+    "height": 993
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          691.3481912429215,
+          465.8021443651723,
+          374.07340722405746
+        ],
+        "focalPoint": [
+          691.3481912429215,
+          465.8021443651723,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "B cell associated with collagen fibres in the dermis",
+      "comments": [],
+      "channels": [
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#00FFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 27,
+          "name": "CD20",
+          "color": "#FF00FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 69,
+          "name": "Collagen (SHG)",
+          "color": "#FFFF00",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        27,
+        25,
+        69
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 993
+      },
+      "optional_LOD": {
+        "component": 2,
+        "roi": {
+          "x0": 768,
+          "x1": 1664,
+          "y0": 512,
+          "y1": 1152
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [],
+  "chat_history_updated": "2026-08-21T12:21:12Z",
+  "optional_LOD": {
+    "component": 2,
+    "roi": {
+      "x0": 768,
+      "x1": 1664,
+      "y0": 512,
+      "y1": 1152
+    }
+  }
+}

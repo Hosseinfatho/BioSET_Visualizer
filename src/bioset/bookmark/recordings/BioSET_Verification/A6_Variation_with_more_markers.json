@@ -1,0 +1,178 @@
+{
+  "id": "6ffa63e5-07ce-4299-8642-d827a171a9fc",
+  "title": "A6, Variation with more markers",
+  "category": "BioSET_Verification",
+  "created": "2026-08-21T11:19:48Z",
+  "updated": "2026-08-21T11:21:31Z",
+  "notes": "",
+  "description": "",
+  "camera": {
+    "position": [
+      763.489945465,
+      385.49000000000007,
+      889.3955913111524
+    ],
+    "focalPoint": [
+      763.489945465,
+      385.49000000000007,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 15,
+      "name": "PDL1",
+      "color": "#FFA500",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 25,
+      "name": "CD4",
+      "color": "#00FF00",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 26,
+      "name": "LAG3",
+      "color": "#00FFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 35,
+      "name": "CD8a",
+      "color": "#FF00FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    35,
+    25,
+    26,
+    15
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1920,
+    "height": 993
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          763.489945465,
+          385.49000000000007,
+          889.3955913111524
+        ],
+        "focalPoint": [
+          763.489945465,
+          385.49000000000007,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "",
+      "comments": [],
+      "channels": [
+        {
+          "id": 15,
+          "name": "PDL1",
+          "color": "#FFA500",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 25,
+          "name": "CD4",
+          "color": "#00FF00",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 26,
+          "name": "LAG3",
+          "color": "#00FFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#FF00FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        35,
+        25,
+        26,
+        15
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 993
+      },
+      "optional_LOD": {
+        "component": 3,
+        "roi": {
+          "x0": 128,
+          "x1": 1152,
+          "y0": 0,
+          "y1": 640
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "describe the states of the t-cells"
+    },
+    {
+      "role": "assistant",
+      "content": "CD8a (magenta) and CD4 (green) mark cytotoxic and helper T cell lineages, respectively, and the image reveals a striking spatial dichotomy: CD4+ cells form a broad, diffuse background sheet throughout the tumor mass, while CD8a+ cells concentrate as dense, discrete foci running along a diagonal axis through the tissue — consistent with CD8+ cytotoxic T cells actively infiltrating along tumor-stromal interfaces rather than distributing homogeneously. Both populations show substantial coverage across this viewport (CD8a: ~1.82 × 10⁹ segmented voxels; CD4: ~2.32 × 10⁹ segmented voxels), indicating a genuinely infiltrated rather than immune-excluded microenvironment. The dataset contains LAG3 (~2.34 × 10⁹ voxels) and PD1 (~1.68 × 10⁹ voxels) with broad coverage, suggesting that a significant fraction of these T cells — particularly the CD8+ infiltrate — likely express exhaustion-associated checkpoint receptors, implying a dysfunctional or exhausted state rather than fully effector-competent cytotoxicity. FOXP3 coverage (~6.26 × 10⁸ voxels) is notably lower, indicating that regulatory T cell suppression is present but not the dominant immune-modulatory mechanism in this region; the CD4+ population here is therefore likely a mixture of effector-helper and a minority Treg component."
+    }
+  ],
+  "chat_history_updated": "2026-08-21T11:21:31Z",
+  "optional_LOD": {
+    "component": 3,
+    "roi": {
+      "x0": 128,
+      "x1": 1152,
+      "y0": 0,
+      "y1": 640
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "id": "29e61efb-e5d0-4524-ad5e-5a9573c32f9c",
+  "title": "AB1, zoomed in",
+  "category": "BioSET_Verification",
+  "created": "2026-08-21T12:26:18Z",
+  "updated": "2026-08-21T12:26:18Z",
+  "notes": "unfortunately this looks noisy when zoomed in",
+  "description": "unfortunately this looks noisy when zoomed in",
+  "camera": {
+    "position": [
+      305.4092093373559,
+      642.1143413678357,
+      282.03161625063734
+    ],
+    "focalPoint": [
+      305.4092093373559,
+      642.1143413678357,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 15,
+      "name": "PDL1",
+      "color": "#FFA500",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 35,
+      "name": "CD8a",
+      "color": "#00FFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 39,
+      "name": "PD1",
+      "color": "#FF00FF",
+      "range": [
+        89.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    15,
+    35,
+    39
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1920,
+    "height": 993
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          305.4092093373559,
+          642.1143413678357,
+          282.03161625063734
+        ],
+        "focalPoint": [
+          305.4092093373559,
+          642.1143413678357,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "unfortunately this looks noisy when zoomed in",
+      "comments": [],
+      "channels": [
+        {
+          "id": 15,
+          "name": "PDL1",
+          "color": "#FFA500",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#00FFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 39,
+          "name": "PD1",
+          "color": "#FF00FF",
+          "range": [
+            89.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        15,
+        35,
+        39
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 993
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 512,
+          "x1": 1664,
+          "y0": 1920,
+          "y1": 2688
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [],
+  "chat_history_updated": "2026-08-21T12:26:18Z",
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 512,
+      "x1": 1664,
+      "y0": 1920,
+      "y1": 2688
+    }
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "id": "905d70f8-aa33-4b8b-aeff-f5ec24febe5a",
+  "title": "A1",
+  "category": "BioSET_Verification",
+  "created": "2026-08-21T08:13:37Z",
+  "updated": "2026-08-21T08:14:42Z",
+  "notes": "",
+  "description": "",
+  "camera": {
+    "position": [
+      763.489945465,
+      385.49000000000007,
+      1764.5515196937674
+    ],
+    "focalPoint": [
+      763.489945465,
+      385.49000000000007,
+      27.020000000000003
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 2,
+      "name": "MX1",
+      "color": "#FFFF00",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF00FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 31,
+      "name": "IRF1",
+      "color": "#00FFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 42,
+      "name": "CD11c",
+      "color": "#0000FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    42,
+    2,
+    31,
+    3
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1920,
+    "height": 993
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          763.489945465,
+          385.49000000000007,
+          1764.5515196937674
+        ],
+        "focalPoint": [
+          763.489945465,
+          385.49000000000007,
+          27.020000000000003
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "",
+      "comments": [],
+      "channels": [
+        {
+          "id": 2,
+          "name": "MX1",
+          "color": "#FFFF00",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF00FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 31,
+          "name": "IRF1",
+          "color": "#00FFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 42,
+          "name": "CD11c",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        42,
+        2,
+        31,
+        3
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 993
+      },
+      "optional_LOD": {
+        "component": 4,
+        "roi": {
+          "x0": 0,
+          "x1": 681,
+          "y0": 0,
+          "y1": 344
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [],
+  "chat_history_updated": "2026-08-21T08:14:42Z",
+  "optional_LOD": {
+    "component": 4,
+    "roi": {
+      "x0": 0,
+      "x1": 681,
+      "y0": 0,
+      "y1": 344
+    }
+  }
+}

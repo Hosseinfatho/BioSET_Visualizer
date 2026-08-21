@@ -1,0 +1,209 @@
+{
+  "id": "5ed893ce-28d3-4152-b363-fb30ac913236",
+  "title": "A3, overview",
+  "category": "BioSET_Verification",
+  "created": "2026-08-21T08:09:35Z",
+  "updated": "2026-08-21T08:11:19Z",
+  "notes": "For clarification that blood vessels are quite easily distinguishable also from afar",
+  "description": "For clarification that blood vessels are quite easily distinguishable also from afar",
+  "camera": {
+    "position": [
+      895.9663740067994,
+      430.0342659883721,
+      1857.0943272560826
+    ],
+    "focalPoint": [
+      895.9663740067994,
+      430.0342659883721,
+      27.02
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 19,
+      "name": "CD31",
+      "color": "#00FF00",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 33,
+      "name": "B-catenin",
+      "color": "#0000FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 37,
+      "name": "CD11b",
+      "color": "#FF00FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 42,
+      "name": "CD11c",
+      "color": "#FF00FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 59,
+      "name": "Catalase",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 63,
+      "name": "Vimentin",
+      "color": "#FFFFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    19,
+    63,
+    59,
+    37,
+    42,
+    33
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 1920,
+    "height": 993
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          895.9663740067994,
+          430.0342659883721,
+          1857.0943272560826
+        ],
+        "focalPoint": [
+          895.9663740067994,
+          430.0342659883721,
+          27.02
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "For clarification that blood vessels are quite easily distinguishable also from afar",
+      "comments": [],
+      "channels": [
+        {
+          "id": 19,
+          "name": "CD31",
+          "color": "#00FF00",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 33,
+          "name": "B-catenin",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 37,
+          "name": "CD11b",
+          "color": "#FF00FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 42,
+          "name": "CD11c",
+          "color": "#FF00FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 59,
+          "name": "Catalase",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 63,
+          "name": "Vimentin",
+          "color": "#FFFFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        19,
+        63,
+        59,
+        37,
+        42,
+        33
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 1920,
+        "height": 993
+      },
+      "optional_LOD": {
+        "component": 4,
+        "roi": {
+          "x0": 0,
+          "x1": 681,
+          "y0": 0,
+          "y1": 344
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [],
+  "chat_history_updated": "2026-08-21T08:11:19Z",
+  "optional_LOD": {
+    "component": 4,
+    "roi": {
+      "x0": 0,
+      "x1": 681,
+      "y0": 0,
+      "y1": 344
+    }
+  }
+}
