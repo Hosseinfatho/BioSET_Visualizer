@@ -206,6 +206,40 @@ class BiomniLocalClient:
         resp = requests.post(f"{self.base_url}/suggest", json=payload, timeout=300)
         return _check_response(resp)
 
+    def explain(
+        self,
+        markers: list[str],
+        channel_stats: dict,
+        mode: str = _DEFAULT_MODE,
+        image: Optional[str] = None,
+    ) -> dict:
+        """Call POST /explain — describe what is in the current viewport.
+
+        The unprompted counterpart to /query: same grounding, but the agent
+        picks what is worth saying instead of answering a question.
+
+        Args:
+            markers:       currently selected markers e.g. ["CD3:#00FF00"]
+            channel_stats: viewport statistics — per-channel coverage and
+                           intensity, the measured overlaps in `combinations`,
+                           and the region the numbers describe
+            mode:          "minimal" | "db" | "full"
+            image:         Optional base64-encoded JPEG screenshot
+
+        Returns dict with key "answer".
+        """
+        if not self.initialized:
+            raise RuntimeError("Client not initialised. Call init() first.")
+
+        payload: dict = {"markers": markers, "channel_stats": channel_stats,
+                         "mode": mode}
+        if image:
+            payload["image"] = image
+
+        print(f"[biomni] POST /explain  markers={len(markers)}  image={bool(image)}")
+        resp = requests.post(f"{self.base_url}/explain", json=payload, timeout=300)
+        return _check_response(resp)
+
     def plot(
         self,
         plot_payload: dict,

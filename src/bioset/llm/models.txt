@@ -1,3 +1,7 @@
-claude-sonnet-4-6 default
+claude-sonnet-4-6
 claude-opus-4-6
-claude-haiku-4-5-20251001 default_llm
+claude-haiku-4-5-20251001 
+claude-fable-5
+claude-opus-5 default default_llm
+claude-sonnet-5
+

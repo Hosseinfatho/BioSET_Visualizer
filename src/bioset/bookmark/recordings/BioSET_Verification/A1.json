@@ -3,7 +3,7 @@
   "title": "A1",
   "category": "BioSET_Verification",
   "created": "2026-08-21T08:13:37Z",
-  "updated": "2026-08-21T08:14:42Z",
+  "updated": "2026-08-21T14:46:47Z",
   "notes": "",
   "description": "",
   "camera": {
@@ -156,7 +156,7 @@
   ],
   "chat_history_enabled": true,
   "chat_history": [],
-  "chat_history_updated": "2026-08-21T08:14:42Z",
+  "chat_history_updated": "2026-08-21T14:46:47Z",
   "optional_LOD": {
     "component": 4,
     "roi": {

@@ -2032,6 +2032,55 @@ def register_callbacks(ctrl, state, view, streamer=None):
         finally:
             state.chatbot_loading = False
 
+    def chatbot_explain():
+        """Ask the agent to describe what is in the current viewport.
+
+        The unprompted counterpart to free chat: same grounding, no question.
+        Everything the app can offer goes with it — the selected markers, the
+        viewport statistics (per-channel coverage and intensity, the measured
+        overlaps in `combinations`, and the region they describe) and a
+        screenshot — so the agent chooses what is worth saying rather than
+        being told what to look at.
+        """
+        if not state.chatbot_authenticated:
+            print("[callbacks] Cannot explain - Biomni not initialised")
+            return
+
+        channel_stats = _require_viewport_stats()
+        if channel_stats is None:
+            return
+
+        markers = _build_markers()
+        marker_display = ", ".join(m.split(":")[0] for m in markers) if markers else "(none)"
+        print(f"[callbacks] Biomni explain viewport: {marker_display}")
+        state.chatbot_messages = state.chatbot_messages + [
+            {"role": "user", "content": "Explain what is in this view"}
+        ]
+        state.chatbot_loading = True
+
+        try:
+            client = _get_biomni_client()
+            screenshot_base64 = capture_screenshot()
+
+            result = client.explain(markers, channel_stats, image=screenshot_base64)
+
+            answer = (result.get("answer") or "").strip()
+            if not answer:
+                raise ValueError("no 'answer' in the /explain response")
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "assistant", "content": answer}
+            ]
+            print("[callbacks] Biomni explain response received")
+
+        except Exception as e:
+            error_msg = f"Error: {e}"
+            print(f"[callbacks] Biomni explain error: {error_msg}")
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "error", "content": error_msg}
+            ]
+        finally:
+            state.chatbot_loading = False
+
     def chatbot_explain_upset():
         """Explain the currently displayed UpSet plot via /plot."""
         if not state.chatbot_authenticated:
@@ -2472,6 +2521,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_label = chatbot_label
     ctrl.chatbot_suggest_bookmark = chatbot_suggest_bookmark
     ctrl.chatbot_suggest = chatbot_suggest
+    ctrl.chatbot_explain = chatbot_explain
     ctrl.chatbot_explain_upset = chatbot_explain_upset
     ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear

@@ -57,18 +57,6 @@ def floating_chatbot_section(state, ctrl):
                 ):
                     vuetify.VIcon("mdi-delete-outline", x_small=True, color="grey lighten-1")
 
-            # ── Scope indicator ───────────────────────────────────────────────
-            # The agent is grounded in whatever is on screen, so say so: the
-            # answers change as the camera moves, which is otherwise invisible.
-            with html.Div(classes="d-flex align-center mb-1"):
-                vuetify.VIcon("mdi-crop-free", x_small=True, color="white",
-                              classes="mr-1")
-                html.Span(
-                    "Current viewport",
-                    classes="text-caption white--text font-weight-medium",
-                    style="flex: 1;",
-                )
-
             # ── Not-initialized notice ────────────────────────────────────────
             with html.Div(v_if="!chatbot_authenticated", classes="mb-2 mt-2"):
                 html.Span(
@@ -181,6 +169,16 @@ def floating_chatbot_section(state, ctrl):
 
                 # ── Action buttons ────────────────────────────────────────────
                 with html.Div(classes="d-flex align-center mt-2"):
+                    # Explain — describe the current view, no question asked
+                    vuetify.VBtn(
+                        "Explain",
+                        click=ctrl.chatbot_explain,
+                        x_small=True,
+                        outlined=True,
+                        color="white",
+                        disabled=("chatbot_loading",),
+                        classes="mr-1",
+                    )
                     # Label — grounded in the viewport
                     vuetify.VBtn(
                         "Label",
