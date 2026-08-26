@@ -1,0 +1,29 @@
+{
+  "datasets": [
+    {
+      "name": "MIS",
+      "zarr_url": "D:\\Melanoma\\rechunked_mis.zarr",
+      "separate_metadata": true,
+      "metadata_url": "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml",
+      "analysis_dir": "D:\\results\\mis_v3"
+    },
+    {
+      "name": "VGP1",
+      "zarr_url": "D:\\Melanoma\\d1_invasive_margin_lsp13626.zarr",
+      "separate_metadata": false,
+      "analysis_dir": "D:\\results\\d1_margin"
+    },
+    {
+      "name": "VGP2",
+      "zarr_url": "D:\\Melanoma\\d2_invasive_margin_lsp13626.zarr",
+      "separate_metadata": false,
+      "analysis_dir": "D:\\results\\d2_margin"
+    },
+    {
+      "name": "STIC",
+      "zarr_url": "D:\\STIC\\stic_tr4_lsp18251.zarr",
+      "separate_metadata": false,
+      "analysis_dir": "D:\\results\\stic_full"
+    }
+  ]
+}

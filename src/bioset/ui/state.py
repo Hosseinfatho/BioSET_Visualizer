@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bioset.datasets import find_dataset_preset, load_dataset_presets
+
 # TODO: import from config.py
 DEFAULT_CHANNEL_COLORS = (
     "#FFFFFF", # White
@@ -30,6 +32,10 @@ def init_state(state):
     ]
     
     # Data sources
+    # Named presets from datasets.json. Only the names are shared with the
+    # client; the paths are looked up server-side when one is picked.
+    state.setdefault("dataset_presets", [p.name for p in load_dataset_presets()])
+    state.setdefault("dataset_preset", None)
     state.setdefault("zarr_url", "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0")
     state.setdefault("metadata_url", "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml")
     state.setdefault("data_loading", False)
@@ -349,6 +355,24 @@ def register_state_change_handlers(state, ctrl):
             if changed:
                 state.visible_channel_ids = visible
     
+    @state.change("dataset_preset")
+    def on_dataset_preset_change(dataset_preset, **kwargs):
+        """Fill the Data Sources fields from a preset. Loading stays manual."""
+        if not dataset_preset:
+            return
+        preset = find_dataset_preset(dataset_preset)
+        if preset is None:
+            return
+        print(f"[state] Dataset preset: {preset.name}")
+        state.zarr_url = preset.zarr_url
+        # metadata_open is not just the panel toggle: load_data() reads it to
+        # decide whether the separate OME-XML supplies the channel names.
+        state.metadata_open = preset.separate_metadata
+        # Cleared when the preset has no separate metadata, so a URL from a
+        # previously picked preset cannot leak into the next load.
+        state.metadata_url = preset.metadata_url if preset.separate_metadata else ""
+        state.analysis_dir = preset.analysis_dir
+
     @state.change("bg_color")
     def on_bg_color_change(bg_color, **kwargs):
         if hasattr(ctrl, 'update_background_color'):

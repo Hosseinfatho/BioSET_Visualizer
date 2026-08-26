@@ -39,7 +39,23 @@ def data_sources_section(state, ctrl):
                             with html.Template(v_slot_activator="{ on, attrs }"):
                                 vuetify.VIcon("mdi-link-variant", style="font-size: 25px;", v_bind="attrs", v_on="on")
                             html.Span("{{ zarr_url || 'Zarr URL' }}")
-                    with vuetify.VListItemContent(v_if="!drawer_mini", class_="mb-0 pb-0"):
+                    with vuetify.VListItemContent(
+                        v_if="!drawer_mini",
+                        class_="dataset-name-row mb-0 pb-0",
+                    ):
+                        # Optional name for the dataset. The arrow on its right
+                        # lists the presets from datasets.json; picking one fills
+                        # the fields below, nothing loads.
+                        vuetify.VCombobox(
+                            v_model=("dataset_preset", None),
+                            items=("dataset_presets", []),
+                            placeholder="Name",
+                            v_if="dataset_presets.length",
+                            dense=True,
+                            clearable=True,
+                            hide_details=True,
+                            classes="dataset-name-field mb-4",
+                        )
                         vuetify.VTextField(
                             v_model=("zarr_url", ""),
                             label="Zarr URL",
@@ -126,7 +142,7 @@ def data_sources_section(state, ctrl):
                 with html.Div(v_if="!drawer_mini && data_loaded"):
                     vuetify.VDivider()
                     with vuetify.VListItem(class_="nav-item nav-item--nested"):
-                        with vuetify.VListItemContent(class_="mt-2 mb-0 pb-0"):
+                        with vuetify.VListItemContent(class_="mt-4 mb-0 pb-0"):
                             vuetify.VTextField(
                                 v_model=("analysis_dir", ""),
                                 label="Analysis results path",

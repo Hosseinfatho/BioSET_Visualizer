@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import uuid
@@ -121,6 +122,8 @@ class WorkerSession:
         return data[-tail:]
 
     def terminate(self) -> None:
+        # Killing the worker closes its stdout pipe, which ends the pump thread;
+        # the pump owns closing log_file, so there is no race with it here.
         if not self.alive():
             return
         try:
@@ -130,9 +133,10 @@ class WorkerSession:
 
 
 class SessionHub:
-    def __init__(self, max_sessions: int, worker_timeout: int):
+    def __init__(self, max_sessions: int, worker_timeout: int, logs: bool = False):
         self.max_sessions = max_sessions
         self.worker_timeout = worker_timeout
+        self.logs = logs
         self.sessions: dict[str, WorkerSession] = {}
         self._lock = asyncio.Lock()
 
@@ -153,8 +157,9 @@ class SessionHub:
             "--server",
             "--timeout",
             str(self.worker_timeout),
-            "--logs",
         ]
+        if self.logs:
+            cmd.append("--logs")
         if "--profile" in sys.argv:
             cmd.append("--profile")
             try:
@@ -165,16 +170,58 @@ class SessionHub:
                 pass
         return cmd
 
-    def _spawn_process(self, port: int, log_file) -> subprocess.Popen:
+    def _spawn_process(self, port: int) -> subprocess.Popen:
         env = os.environ.copy()
         env["BIOSET_WORKER"] = "1"
         kwargs = {
             "env": env,
             "cwd": os.getcwd(),
+            # CREATE_NO_WINDOW below detaches the worker from this console, so
+            # inherited handles reach nothing. Capture instead and pump the
+            # output ourselves — see _start_pump.
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "bufsize": 1,
+            "errors": "replace",
         }
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         return subprocess.Popen(self._worker_cmd(port), **kwargs)
+
+    def _start_pump(self, session: WorkerSession) -> None:
+        """Drain the worker's output into its log file, echoing when --logs.
+
+        Started as soon as the process exists so the pipe can never fill and
+        block the worker. Owns closing log_file: the loop ends when the worker
+        closes its stdout.
+        """
+        echo = self.logs
+        prefix = f"[{session.sid[:8]}] "
+        stream = session.proc.stdout
+        log_file = session.log_file
+
+        def pump() -> None:
+            try:
+                for line in stream:
+                    try:
+                        log_file.write(line)
+                    except (OSError, ValueError):
+                        pass
+                    if echo:
+                        sys.__stderr__.write(prefix + line)
+                        sys.__stderr__.flush()
+            except (OSError, ValueError):
+                pass
+            finally:
+                try:
+                    log_file.close()
+                except (OSError, ValueError):
+                    pass
+
+        threading.Thread(
+            target=pump, name=f"bioset-log-{session.sid[:8]}", daemon=True
+        ).start()
 
     async def spawn(self) -> WorkerSession:
         async with self._lock:
@@ -189,13 +236,14 @@ class SessionHub:
             log_path = Path(tempfile.gettempdir()) / f"bioset-session-{sid}.log"
             log_file = log_path.open("w", encoding="utf-8", buffering=1)
             try:
-                proc = self._spawn_process(port, log_file)
+                proc = self._spawn_process(port)
             except Exception:
                 log_file.close()
                 raise
             session = WorkerSession(
                 sid=sid, port=port, proc=proc, log_path=log_path, log_file=log_file
             )
+            self._start_pump(session)
             self.sessions[sid] = session
 
         deadline = time.time() + WORKER_START_TIMEOUT_S
@@ -391,7 +439,8 @@ def _parse_launcher_args(argv: list[str] | None = None):
         "--timeout",
         type=int,
         default=WORKER_IDLE_TIMEOUT_S,
-        help="Seconds after disconnect before a worker exits (default: 5).",
+        help=f"Seconds after disconnect before a worker exits "
+             f"(default: {WORKER_IDLE_TIMEOUT_S}).",
     )
     parser.add_argument(
         "--max-sessions",
@@ -405,7 +454,11 @@ def _parse_launcher_args(argv: list[str] | None = None):
 
 def run_launcher(argv: list[str] | None = None) -> None:
     args = _parse_launcher_args(argv)
-    hub = SessionHub(max_sessions=args.max_sessions, worker_timeout=max(1, args.timeout))
+    hub = SessionHub(
+        max_sessions=args.max_sessions,
+        worker_timeout=max(1, args.timeout),
+        logs=args.logs,
+    )
     app = create_app(hub)
     display_host = "localhost" if args.host in ("0.0.0.0", "::") else args.host
     url = f"http://{display_host}:{args.port}/"
