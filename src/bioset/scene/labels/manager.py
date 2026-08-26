@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import queue
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -98,6 +99,9 @@ class LabelSceneManager:
 
     _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bioset_labels")
 
+    # Proxies hold geometry, so only a few viewports' worth are kept.
+    PROXY_CACHE_SIZE = 6
+
     def __init__(self, renderer, render_window=None):
         self.renderer = renderer
         self.render_window = render_window or (
@@ -110,6 +114,11 @@ class LabelSceneManager:
         self._visible = True
         self._gesturing = False
         self._owned_props: List[object] = []
+        self._proxy_cache: "OrderedDict[tuple, object]" = OrderedDict()
+        # Set by _fail, drained by the UI so a silent give-up becomes a message.
+        self.last_error: Optional[str] = None
+        # Set on a successful build, drained by the UI. Says what was placed.
+        self.last_report: Optional[dict] = None
         self._result_queue: queue.Queue = queue.Queue()
 
     # ── build ──────────────────────────────────────────────
@@ -128,6 +137,28 @@ class LabelSceneManager:
             dict(name_to_channel_idx), singles, colocs, inters,
             dict(colors or {}))
 
+    def _proxy_for(self, name: str, polydata):
+        """Cached dilated/smoothed/decimated proxy for one channel's surface.
+
+        Building one costs a few hundred milliseconds per channel, and every
+        Label press over the same tiles would otherwise pay it again. Keyed on
+        the geometry's own size so a changed viewport misses and a repeat
+        press hits.
+        """
+        key = (name, polydata.GetNumberOfPoints(), polydata.GetNumberOfCells())
+        hit = self._proxy_cache.get(key)
+        if hit is not None:
+            self._proxy_cache.move_to_end(key)
+            return hit
+        pr = build_proxy_surface(polydata, COLOC_PROXY_DILATION,
+                                 COLOC_PROXY_SMOOTH)
+        if COLOC_PROXY_DECIMATE > 0.0:
+            pr = decimate_polydata(pr, COLOC_PROXY_DECIMATE)
+        self._proxy_cache[key] = pr
+        while len(self._proxy_cache) > self.PROXY_CACHE_SIZE:
+            self._proxy_cache.popitem(last=False)
+        return pr
+
     def _preprocess(self, mesh_mgr, loader, roi_vox, name_to_idx,
                     singles, colocs, inters, colors):
         """Worker: geometry and site detection. No GL, no actors."""
@@ -139,8 +170,8 @@ class LabelSceneManager:
                 if pd is not None and pd.GetNumberOfPoints() > 0:
                     surfaces[name] = pd
             if not surfaces:
-                print("[labels] no surfaces in the viewport — nothing to label")
-                self._result_queue.put(None)
+                self._fail("No surface geometry is loaded for the channels in "
+                           "view — the tiles may still be streaming.")
                 return
 
             channels: List[Channel] = []
@@ -167,13 +198,8 @@ class LabelSceneManager:
             # hundreds of milliseconds. The proxy is only ever sampled at
             # scaffold resolution, so decimating it is free in quality.
             raw_pd = list(surfaces.values())
-            proxies = []
-            for pd in raw_pd:
-                pr = build_proxy_surface(pd, COLOC_PROXY_DILATION,
-                                         COLOC_PROXY_SMOOTH)
-                if COLOC_PROXY_DECIMATE > 0.0:
-                    pr = decimate_polydata(pr, COLOC_PROXY_DECIMATE)
-                proxies.append(pr)
+            proxies = [self._proxy_for(name, surfaces[name])
+                       for name in surfaces]
             soup = MeshSoup(proxies, occluders=raw_pd)
 
             # 2. colocalization sites, from the r=0 intersection field
@@ -237,9 +263,19 @@ class LabelSceneManager:
             })
         except Exception as e:
             import traceback
-            print(f"[labels] preprocessing failed: {e}")
             traceback.print_exc()
-            self._result_queue.put(None)
+            self._fail(f"Label placement failed: {e}")
+
+    def _fail(self, reason: str):
+        """Give up with a reason the UI can show.
+
+        The app runs with stdout redirected to devnull unless --logs is
+        passed, so a print here reaches nobody. `last_error` is drained by the
+        caller and put in the chat panel instead.
+        """
+        print(f"[labels] {reason}")
+        self.last_error = reason
+        self._result_queue.put(None)
 
     def check_and_apply_setup(self) -> bool:
         """Main thread: build the actors. True when a new set just landed."""
@@ -250,6 +286,12 @@ class LabelSceneManager:
         self.clear()
         if not result:
             return False
+
+        # A fresh build places NOW, whatever the camera was doing while it ran.
+        # `_gesturing` makes update() a no-op, and a gesture starting during
+        # the (multi-second) LLM round trip would otherwise leave the labels
+        # built but never placed — indistinguishable from labelling failing.
+        self._gesturing = False
 
         before = self._prop_ids()
         self._channels = result["channels"]
@@ -270,11 +312,38 @@ class LabelSceneManager:
 
         self._owned_props = [p for p in self._props() if id(p) not in before]
         self._preprocessed = True
+        if not self._channels and not result["coloc_sites"]:
+            self.last_error = (
+                "Nothing to label: no components or colocalization sites were "
+                "found for these markers in this view.")
         n_comp = sum(len(c.components) for c in self._channels)
         print(f"[labels] ready in {result['ms']:.0f} ms: {len(self._channels)} "
               f"channel(s), {n_comp} component(s), "
               f"{len(result['coloc_sites'])} conforming site(s)")
         self.update(force=True)
+
+        # A one-line account of what was actually placed, for the UI to show.
+        # Everything upstream of drawing can succeed while nothing reaches the
+        # screen, and with stdout at devnull there is otherwise no way to tell
+        # the two apart from inside the app.
+        try:
+            size = self.render_window.GetSize() if self.render_window else (0, 0)
+        except Exception:
+            size = (0, 0)
+        # `shown` vs `components` is the decisive split: it separates "nothing
+        # was built" from "labels were built and then culled off-screen by the
+        # solver", which look identical from the outside.
+        self.last_report = {
+            "channels": len(self._channels),
+            "components": n_comp,
+            "shown": getattr(self._layout, "shown_count", 0),
+            "hidden": getattr(self._layout, "hidden_count", 0),
+            "coloc_sites": len(result["coloc_sites"]),
+            "coloc_shown": getattr(self._conformer, "shown_count", 0),
+            "props_added": len(self._owned_props),
+            "window": tuple(size),
+            "ms": round(result["ms"]),
+        }
         return True
 
     # ── per-frame ──────────────────────────────────────────

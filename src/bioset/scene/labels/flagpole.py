@@ -48,10 +48,25 @@ from vtk.util.numpy_support import vtk_to_numpy
 # ==========================================================================
 
 
-# Raised from 24 because a 2x2 grid holds roughly four times the components.
-MAX_COMPONENTS_PER_CHANNEL: Optional[int] = 48
+# ── Component filtering, sized for THIS dataset ────────────────────────────
+# Every world-unit constant in this file was tuned for cells 60-100 world
+# units across (INTEGRATION.md 6.5). bioset's are ~17x smaller, so the ones
+# that scale with cell size are re-derived here rather than inherited.
+#
+# Measured on a 2x2 mis_v3 viewport, raising the cell floor walks the median
+# component from a mesh shard up to a plausible nucleus:
+#
+#     min cells   kept   median diagonal
+#            12     86           3.1 um     shards
+#            80     21           9.4 um     nuclei
+#           300      8          12.8 um     only the largest
+#
+# A melanoma nucleus is ~8-15 um across, so 80 is where components start being
+# cells. It also cuts the label count to something a screen can carry, which
+# is the same lever from the other direction.
+MAX_COMPONENTS_PER_CHANNEL: Optional[int] = 24
 MIN_COMPONENT_AREA_FRACTION = 0.001
-MIN_COMPONENT_CELLS = 12
+MIN_COMPONENT_CELLS = 80
 
 # Tile assembly. Tiles count as "already positioned" when column 0 geometry
 # lies entirely before column 1 geometry along the column axis (and likewise for
@@ -128,12 +143,13 @@ LEADER_WIDTH = 1.5
 # is far too coarse to resolve which cells are actually adjacent.
 INTERACTION_FONT_SIZE = 14
 INTERACTION_LABEL_COLOR = (1.0, 1.0, 1.0)
-# Cell-scale proximity. One bin is 8 world units on this data, and two bins put
-# the median true surface gap at 12 units.
+# Cell-scale proximity. Bins are 2.24 um here (16 voxels), so two bins is a
+# ~4.5 um reach — about half a nucleus, which is the scale adjacency means at.
 INTERACTION_RADIUS_BINS = 2
 INTERACTION_MERGE_BINS = 3
 INTERACTION_MIN_BINS = 3
-INTERACTION_MIN_SEPARATION = 110.0
+# ~1.4x a nucleus, scaled from the reference's 110 against its ~80-unit cells.
+INTERACTION_MIN_SEPARATION = 14.0
 MAX_INTERACTION_SITES = 18
 # Interaction sites are the point of the view, so they outrank per-cell labels
 # when the screen gets tight.
@@ -157,12 +173,17 @@ COLOC_FONT_SIZE = 14
 COLOC_LABEL_COLOR = (1.0, 1.0, 1.0)
 COLOC_MIN_VALUE = 2          # heatmap value a bin needs to join a region
 COLOC_MIN_BINS = 2           # drop single-bin specks
-MAX_COLOC_SITES = 40
+# Backstop on site count, and it earns its keep here: a conformer refit costs
+# per site (measured 22-27 ms for 4 sites on rotation, and rotation is the only
+# camera move that triggers one). Lowering the separation below admits more
+# sites, so this is the lever if rotation starts to drag.
+MAX_COLOC_SITES = 12
 # Heatmap regions within this many bins of each other are treated as one site,
 # so a dense cluster earns a single label instead of a stack of them.
 COLOC_MERGE_BINS = 3
-# And no two labels are anchored closer than this in world units.
-COLOC_MIN_SEPARATION = 110.0
+# And no two labels are anchored closer than this in world units — ~1.4x a
+# nucleus, scaled from the reference's 110 against its ~80-unit cells.
+COLOC_MIN_SEPARATION = 14.0
 
 # Scaffold resolution for the conforming patch. Sampling at this density is
 # itself a low-pass on the surface, which is most of what keeps text readable.
@@ -184,11 +205,14 @@ COLOC_MIN_HIT_FRACTION = 0.35
 COLOC_LIFT_FRACTION = 0.35
 # Local geometry is gathered this far beyond the prism. Fitting still uses only
 # the flagged bins, but clearance needs the neighbors that can occlude the text.
-COLOC_SOUP_MARGIN = 110.0
+# Must cover the label footprint, so it scales with label height, not the cell.
+COLOC_SOUP_MARGIN = 14.0
 # Labels are fitted to a dilated, smoothed copy of the meshes rather than the
 # raw surface. Smoothing is what makes full conformance legible, and the
 # dilation lifts the text clear of the geometry it describes.
-COLOC_PROXY_DILATION = 8.0
+# ~0.1x a nucleus: at the inherited 8.0 the proxy was inflated by more than a
+# whole cell, which erases the surface it is supposed to approximate.
+COLOC_PROXY_DILATION = 1.0
 COLOC_PROXY_SMOOTH = 30
 # The proxy is only ever sampled at scaffold resolution, so fitting against a
 # tenth of its triangles costs nothing in quality and roughly quarters the
@@ -201,7 +225,10 @@ COLOC_PROXY_DECIMATE = 0.9
 # instead, which stays legible at any zoom but dwarfs the cells when zoomed out.
 # Breathing room in pixels between a colocation label and any flat callout.
 COLOC_OBSTACLE_PAD_PX = 6.0
-COLOC_LABEL_HEIGHT = 28.0
+# ~0.35x a nucleus, the same ratio the reference used against its own cells
+# (28 against ~80). Inherited unscaled this was 28 um — SIX times a mis_v3
+# nucleus, so a single label covered the structure it was naming.
+COLOC_LABEL_HEIGHT = 3.5
 # How much the label shrinks in world units as you zoom in. 0 keeps a fixed
 # world size, so the text grows on screen exactly like the tissue does and soon
 # swamps it. 1 keeps a fixed screen size, which stops it reading as something
@@ -216,8 +243,10 @@ COLOC_TARGET_PX_HEIGHT = 0.0
 # instead of 33. Covers resizes, clicks that never dragged, and the tail
 # of a spin.
 REFIT_MIN_CAMERA_CHANGE_DEG = 0.4
-COLOC_MIN_LABEL_HEIGHT = 14.0
-COLOC_MAX_LABEL_HEIGHT = 110.0
+# Bounds on the zoom-compensated height, scaled with everything else: half a
+# nucleus at the low end, ~1.4 nuclei at the high end.
+COLOC_MIN_LABEL_HEIGHT = 1.8
+COLOC_MAX_LABEL_HEIGHT = 14.0
 
 
 
