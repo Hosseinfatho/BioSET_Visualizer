@@ -214,6 +214,11 @@ def init_state(state):
     # Channels whose mesh surfaces the user has opted into. Empty by default:
     # the manifest holds thousands of tiles, so surfaces are never implicit.
     state.setdefault("surface_enabled_channels", [])
+    # Labelling is a zoomed-in operation: it names individual cells and their
+    # contacts, which only means anything when a few mesh tiles fill the view.
+    # `sync_label_availability` recomputes this on camera settle.
+    state.setdefault("label_button_enabled", False)
+    state.setdefault("label_tile_count", 0)
     # UpSet Plot filtering
     state.setdefault("upset_selected_channels", [])  # Channels to include in UpSet
     state.setdefault("upset_search", "")

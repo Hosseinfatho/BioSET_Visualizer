@@ -168,7 +168,7 @@ def floating_chatbot_section(state, ctrl):
                         vuetify.VIcon("mdi-send", small=True)
 
                 # ── Action buttons ────────────────────────────────────────────
-                with html.Div(classes="d-flex align-center mt-2"):
+                with html.Div(classes="d-flex align-center flex-wrap mt-2"):
                     # Explain — describe the current view, no question asked
                     vuetify.VBtn(
                         "Explain",
@@ -179,14 +179,22 @@ def floating_chatbot_section(state, ctrl):
                         disabled=("chatbot_loading",),
                         classes="mr-1",
                     )
-                    # Label — grounded in the viewport
+                    # Label — only once zoomed in to a few surface tiles.
+                    # Disabled rather than hidden, with the reason in the
+                    # tooltip, so the control does not vanish mysteriously.
                     vuetify.VBtn(
                         "Label",
                         click=ctrl.chatbot_label,
                         x_small=True,
                         outlined=True,
                         color="white",
-                        disabled=("chatbot_loading",),
+                        disabled=("chatbot_loading || !label_button_enabled",),
+                        title=("label_button_enabled"
+                               " ? 'Label the surfaces in view'"
+                               " : (label_tile_count"
+                               "    ? 'Zoom in to label — ' + label_tile_count"
+                               "      + ' surface tiles in view, needs 16 or fewer'"
+                               "    : 'Enable a channel surface and zoom in to label')",),
                         classes="mr-1",
                     )
                     # Suggest Channels — grounded in the viewport
@@ -199,21 +207,32 @@ def floating_chatbot_section(state, ctrl):
                         disabled=("chatbot_loading",),
                         classes="mr-1",
                     )
-                    # Anchor — filled when on, outlined when off; only after labels exist
+
+                # ── Label controls, own row ───────────────────────────────────
+                # Only present once labels exist, and on their own line: five
+                # controls on the action row overflowed the panel width.
+                with html.Div(
+                        v_if="chatbot_labels_generated",
+                        classes="d-flex align-center mt-2",
+                ):
+                    vuetify.VIcon("mdi-label-outline", x_small=True,
+                                  color="grey lighten-1", classes="mr-1")
+                    html.Span("Labels",
+                              classes="text-caption grey--text mr-2")
+                    # Anchor — filled when on, outlined when off.
                     vuetify.VBtn(
                         "Anchor",
-                        v_if="chatbot_labels_generated",
                         click="anchor_labels = !anchor_labels",
                         x_small=True,
-                        color=("anchor_labels ? 'white' : 'white'",),
+                        color="white",
                         light=("anchor_labels",),
                         depressed=("anchor_labels",),
                         outlined=("!anchor_labels",),
+                        title="Pin labels in place while the camera moves",
                         classes="mr-1",
                     )
-                    # Eye — show/hide labels in scene (only when labels exist)
+                    # Eye — show/hide labels in the scene.
                     with vuetify.VBtn(
-                            v_if="chatbot_labels_generated",
                             icon=True, x_small=True,
                             click=ctrl.toggle_labels,
                             title="Show / hide labels",
