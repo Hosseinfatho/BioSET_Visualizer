@@ -1795,23 +1795,6 @@ def register_callbacks(ctrl, state, view, streamer=None):
                     break
         return markers
 
-    def _surface_markers() -> list[str]:
-        """Markers for the channels whose SURFACE is switched on.
-
-        `surface_enabled_channels` is a separate toggle from
-        `active_channels`: a channel can be volume-rendered with no surface,
-        or carry a surface without being an active volume channel. Labels are
-        drawn on surfaces, so the label task has to be asked about those.
-        """
-        markers = []
-        for ch_id in (state.surface_enabled_channels or []):
-            for ch in (state.channels or []):
-                if ch["id"] == ch_id:
-                    color = ch.get("color", "#FFFFFF").upper()
-                    markers.append(f"{ch['name']}:{color}")
-                    break
-        return markers
-
     def _viewport_channel_stats() -> dict | None:
         """Statistics for what is ON SCREEN, in the schema the agent expects.
 
@@ -1971,16 +1954,18 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if channel_stats is None:
             return
 
-        # Markers for the channels whose SURFACES are on, not the active
-        # volume channels. A label can only be placed on geometry, so asking
-        # the agent to name markers with no surface produces labels that
-        # cannot be drawn \u2014 which looked exactly like labelling being broken.
-        markers = _surface_markers()
+        # Ask about the channels that HAVE geometry in the manifest, whether
+        # or not their surfaces are being drawn. A label still needs geometry
+        # to sit on, so a marker with no tiles anywhere would produce a label
+        # that cannot be placed.
+        labelable = _labelable_channels()
+        markers = [m for m in _build_markers() if m.split(":")[0] in labelable]
         if not markers:
             state.chatbot_messages = state.chatbot_messages + [
                 {"role": "error",
-                 "content": "No surfaces are switched on. Enable a channel's "
-                            "surface, then Label."}
+                 "content": "None of the active channels have surface geometry "
+                            "in the mesh manifest, so there is nothing to "
+                            "label."}
             ]
             return
 
@@ -2336,6 +2321,28 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if v:
             v.update()
 
+    def _labelable_channels():
+        """{marker name: manifest channel idx} for the ACTIVE channels.
+
+        Active, not surface-enabled. The manifest knows where every channel's
+        tiles are whether or not their surface is being drawn, and the label
+        pass reads that geometry on demand — so displaying a surface is not a
+        precondition for naming what is in it. Keyed off the channels the user
+        selected, which is also what the agent is asked about.
+        """
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr is None or not mesh_mgr.is_available:
+            return {}
+        out = {}
+        for ch_id in (state.active_channels or []):
+            ch = next((c for c in (state.channels or []) if c["id"] == ch_id), None)
+            if ch is None:
+                continue
+            idx = _mesh_channel_index(mesh_mgr, ch_id)
+            if idx is not None:
+                out[ch["name"]] = idx
+        return out
+
     def _label_zoom_state():
         """(allowed, n_tiles, roi_vox) for the CURRENT view.
 
@@ -2347,7 +2354,10 @@ def register_callbacks(ctrl, state, view, streamer=None):
         from bioset.scene.labels.sites import labels_available
         mesh_mgr = _refs.get("mesh_manager")
         _, roi = _camera_level_and_roi(streamer, _refs.get("heatmap_lod"))
-        allowed, n = labels_available(mesh_mgr, roi)
+        # Count tiles for the channels labelling would cover, not for the ones
+        # whose surfaces happen to be drawn.
+        chans = list(_labelable_channels().values())
+        allowed, n = labels_available(mesh_mgr, roi, channels=chans or None)
         return allowed, n, roi
 
     # The gate is polled on this interval rather than driven by events.
@@ -2396,29 +2406,16 @@ def register_callbacks(ctrl, state, view, streamer=None):
             print(f"[callbacks] Not labelling: {n_tiles} tiles in view")
             return
 
-        # Channels whose SURFACE is on — not `active_channels`.
-        #
-        # The two are independent: `surface_enabled_channels` is its own
-        # toggle, so a channel can be rendered as a volume with no surface, or
-        # carry a surface without being an active volume channel. Labels
-        # describe surfaces, and `welded_surface` reads the loaded mesh
-        # actors, so building this list from the volume channels found no
-        # geometry whenever the two sets differed — and produced no labels at
-        # all while the button sat enabled, because the zoom gate counts
-        # surface tiles and was quite happy.
-        name_to_idx, colors = {}, {}
-        for ch_id in (state.surface_enabled_channels or []):
-            ch = next((c for c in (state.channels or []) if c["id"] == ch_id), None)
-            if ch is None:
-                continue
-            idx = _mesh_channel_index(mesh_mgr, ch_id)
-            if idx is None:
-                continue
-            name_to_idx[ch["name"]] = idx
-            colors[ch["name"]] = _hex_to_rgb01(ch.get("color", "#FFFFFF"))
+        # The channels labelling covers: active ones that have geometry in the
+        # manifest, whether or not their surfaces are being drawn. The tiles
+        # are read on demand, so a surface being switched off is no longer a
+        # reason to have nothing to label.
+        name_to_idx = _labelable_channels()
+        colors = {ch["name"]: _hex_to_rgb01(ch.get("color", "#FFFFFF"))
+                  for ch in (state.channels or []) if ch["name"] in name_to_idx}
         if not name_to_idx:
-            msg = ("No surfaces are switched on. Enable a channel's surface, "
-                   "then Label.")
+            msg = ("None of the active channels have surface geometry in the "
+                   "mesh manifest, so there is nothing to place labels on.")
             print(f"[callbacks] {msg}")
             state.chatbot_messages = state.chatbot_messages + [
                 {"role": "error", "content": msg}

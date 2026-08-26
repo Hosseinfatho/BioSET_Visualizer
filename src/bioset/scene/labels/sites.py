@@ -27,11 +27,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 # Labels are only offered when the view is down to a manageable patch of
-# tissue. A tile is 512 voxels ~ 72 um square, so 16 of them is a ~290 um
-# field: wide enough to hold a recognisable structure and its neighbours,
-# still close enough that individual surfaces are worth pointing at. Four
-# tiles (~144 um) turned out to be tighter than anyone actually works at.
-MAX_LABEL_TILES = 16
+# tissue. A tile is 512 voxels ~ 72 um square, so 64 of them is a ~580 um
+# field. The successive limits here (4, then 16, then this) were each tighter
+# than people actually work at; the real constraint is not distance but how
+# much geometry a labelling pass has to read and solve, and that is bounded
+# separately by MAX_COMPONENTS_PER_CHANNEL and MAX_COLOC_SITES.
+#
+# Reading 64 tiles' geometry costs ~67 ms on the worker (measured), so the
+# cost of a wider gate is small and paid once per Label press.
+MAX_LABEL_TILES = 64
 
 # Half a voxel. Welding is what makes a cell straddling a tile seam ONE
 # connected component instead of two, i.e. one label instead of a duplicate
@@ -44,35 +48,54 @@ WELD_TOLERANCE_VOX = 0.5
 SITE_CELL_VOX = 16
 
 
-def viewport_tile_keys(mesh_mgr, roi_vox) -> set:
-    """Distinct (tile_y, tile_x) positions the viewport touches.
+def viewport_tiles(mesh_mgr, roi_vox, channels=None):
+    """Manifest tiles intersecting the viewport, for `channels`.
 
-    Position, not tile: the same footprint carries one tile per enabled
-    channel, and the gate is about how much GROUND is in view, not how many
-    channels are on.
+    Reads the MANIFEST, not the scene. Whether a surface is switched on is a
+    display choice; the geometry exists either way, and the manifest already
+    says which tiles cover which ground. Requiring the surface to be visible
+    only meant you had to turn it on to find out what was there.
     """
     if mesh_mgr is None or roi_vox is None:
-        return set()
+        return []
     try:
-        tiles = mesh_mgr.visible_tiles(tuple(roi_vox))
+        chans = list(channels) if channels is not None else None
+        return mesh_mgr.visible_tiles(tuple(roi_vox), channels=chans)
     except Exception:
-        return set()
-    return {(t.tile_y, t.tile_x) for t in tiles}
+        return []
 
 
-def labels_available(mesh_mgr, roi_vox, max_tiles: int = MAX_LABEL_TILES):
-    """(allowed, n_tiles) — is the view zoomed in far enough to label?"""
-    keys = viewport_tile_keys(mesh_mgr, roi_vox)
-    n = len(keys)
+def viewport_tile_keys(mesh_mgr, roi_vox, channels=None) -> set:
+    """Distinct (tile_y, tile_x) positions the viewport touches.
+
+    Position, not tile: the same footprint carries one tile per channel, and
+    the gate is about how much GROUND is in view, not how many channels are on.
+    """
+    return {(t.tile_y, t.tile_x)
+            for t in viewport_tiles(mesh_mgr, roi_vox, channels)}
+
+
+def labels_available(mesh_mgr, roi_vox, max_tiles: int = MAX_LABEL_TILES,
+                     channels=None):
+    """(allowed, n_tiles) — is the view close enough in to label?"""
+    n = len(viewport_tile_keys(mesh_mgr, roi_vox, channels))
     return (0 < n <= max_tiles), n
 
 
 def welded_surface(mesh_mgr, channel_idx: int, roi_vox=None):
-    """One welded vtkPolyData over a channel's loaded tiles in the viewport.
+    """One welded vtkPolyData over a channel's tiles in the viewport.
 
-    `MeshManager.get_channel_polydata` appends its tiles but does not merge
-    points, so a nucleus crossing a seam stays two connected components and
-    earns two labels. Welding at half a voxel joins them.
+    Geometry comes from the MANIFEST and is read on demand, so labelling works
+    on a channel whose surface is switched off. Displaying a surface is a
+    display choice; the tiles exist regardless, and measured on mis_v3 reading
+    them costs ~67 ms for a 48-tile view — worker-thread work, not a reason to
+    make the user turn surfaces on first.
+
+    A loaded tile already in the scene is reused rather than re-read.
+
+    Welding matters: `vtkAppendPolyData` alone leaves a nucleus straddling a
+    seam as two connected components, so it earns two labels. Half a voxel
+    joins them (INTEGRATION.md section 2.1).
     """
     from vtkmodules.vtkFiltersCore import vtkAppendPolyData
     from .flagpole import weld
@@ -80,16 +103,20 @@ def welded_surface(mesh_mgr, channel_idx: int, roi_vox=None):
     if mesh_mgr is None:
         return None
     ci = int(channel_idx)
-    want = viewport_tile_keys(mesh_mgr, roi_vox) if roi_vox is not None else None
+    tiles = viewport_tiles(mesh_mgr, roi_vox, channels=[ci])
+    if not tiles:
+        return None
 
+    live = getattr(mesh_mgr, "_actors", {})
     parts = []
-    for key, actor in getattr(mesh_mgr, "_actors", {}).items():
-        if key[0] != ci:
-            continue
-        if want is not None and (key[1], key[2]) not in want:
-            continue
-        mapper = actor.GetMapper()
-        pd = mapper.GetInput() if mapper is not None else None
+    for tile in tiles:
+        pd = None
+        actor = live.get((ci, tile.tile_y, tile.tile_x))
+        if actor is not None:
+            mapper = actor.GetMapper()
+            pd = mapper.GetInput() if mapper is not None else None
+        if pd is None:
+            pd = mesh_mgr.load_tile_polydata(tile)
         if pd is not None and pd.GetNumberOfPoints() > 0:
             parts.append(pd)
     if not parts:

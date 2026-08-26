@@ -186,23 +186,31 @@ COLOC_MERGE_BINS = 3
 COLOC_MIN_SEPARATION = 14.0
 
 # Scaffold resolution for the conforming patch. Sampling at this density is
-# itself a low-pass on the surface, which is most of what keeps text readable.
-CONFORM_SCAFFOLD_U = 13
-CONFORM_SCAFFOLD_V = 5
+# itself a low-pass on the surface, and it turns out to be THE limiter on how
+# closely the text follows: measured on mis_v3, 13x5 -> 21x9 took the bend
+# from 0.40 to 0.58 um while the bend cap and the smoothing passes changed
+# nothing. Costs one ray per vertex per refit, 2.6 -> 7.2 ms for 4 sites.
+CONFORM_SCAFFOLD_U = 21
+CONFORM_SCAFFOLD_V = 9
 # Laplacian passes over the scaffold, then how much of the remaining bend to
-# keep. Measured on this dataset: the raw surface bends a label by about half
-# its own height, which is illegible. 3 passes at 0.55 brings it near 15%.
-CONFORM_SMOOTH_PASSES = 1
+# keep. Zero passes is maximum conformance; the reference needed 1 because its
+# cells were ~17x larger relative to the label, so a label-sized window spanned
+# far more surface. Here the scaffold's own sampling is enough of a low-pass.
+CONFORM_SMOOTH_PASSES = 0
 CONFORM_ALPHA = 1.0
-# Hard ceiling on bend, as a fraction of label height. Damping is reduced
-# automatically on any site that would exceed it.
+# Hard ceiling on bend, as a fraction of label height. NOT currently binding:
+# alpha = min(1.0, frac * height / rms), and the measured rms is well under
+# height, so this only engages on a genuinely violent surface. Raising it does
+# nothing on its own — the scaffold above is the lever.
 COLOC_MAX_BEND_FRACTION = 0.35
 # Rays landing in the gaps between cells are filled from neighbors. Below this
 # hit rate the patch is flattened further rather than trusted.
 COLOC_MIN_HIT_FRACTION = 0.35
 # Lift toward the camera, as a fraction of label height, so text clears the
-# surface it was fitted to.
-COLOC_LIFT_FRACTION = 0.35
+# surface it was fitted to. Lower than the reference because the proxy is
+# barely dilated now, so there is less to clear — and less float reads as more
+# firmly printed on the tissue.
+COLOC_LIFT_FRACTION = 0.15
 # Local geometry is gathered this far beyond the prism. Fitting still uses only
 # the flagged bins, but clearance needs the neighbors that can occlude the text.
 # Must cover the label footprint, so it scales with label height, not the cell.
@@ -210,9 +218,11 @@ COLOC_SOUP_MARGIN = 14.0
 # Labels are fitted to a dilated, smoothed copy of the meshes rather than the
 # raw surface. Smoothing is what makes full conformance legible, and the
 # dilation lifts the text clear of the geometry it describes.
-# ~0.1x a nucleus: at the inherited 8.0 the proxy was inflated by more than a
-# whole cell, which erases the surface it is supposed to approximate.
-COLOC_PROXY_DILATION = 1.0
+# Barely dilated, ~0.035x a nucleus. At the inherited 8.0 the proxy was
+# inflated by more than a whole cell, erasing the surface it approximates;
+# pulling it in this far keeps the real shape for the text to follow, and
+# measurably raises the bend (0.58 -> 0.65 um at a 21x9 scaffold).
+COLOC_PROXY_DILATION = 0.25
 COLOC_PROXY_SMOOTH = 30
 # The proxy is only ever sampled at scaffold resolution, so fitting against a
 # tenth of its triangles costs nothing in quality and roughly quarters the
@@ -225,10 +235,13 @@ COLOC_PROXY_DECIMATE = 0.9
 # instead, which stays legible at any zoom but dwarfs the cells when zoomed out.
 # Breathing room in pixels between a colocation label and any flat callout.
 COLOC_OBSTACLE_PAD_PX = 6.0
-# ~0.35x a nucleus, the same ratio the reference used against its own cells
-# (28 against ~80). Inherited unscaled this was 28 um — SIX times a mis_v3
-# nucleus, so a single label covered the structure it was naming.
-COLOC_LABEL_HEIGHT = 3.5
+# Bigger than a nucleus (~1.1x). The reference used ~0.35x against its own
+# cells, but its labels sat on cells 17x larger, where a third of a cell is
+# still plenty of text. Scaling that ratio down here produced text that was
+# reliably too small to read, so this is set from legibility rather than from
+# the reference's proportion. Raising it also raises the ABSOLUTE bend, since
+# the bend cap is a fraction of label height.
+COLOC_LABEL_HEIGHT = 8.0
 # How much the label shrinks in world units as you zoom in. 0 keeps a fixed
 # world size, so the text grows on screen exactly like the tissue does and soon
 # swamps it. 1 keeps a fixed screen size, which stops it reading as something
@@ -245,8 +258,10 @@ COLOC_TARGET_PX_HEIGHT = 0.0
 REFIT_MIN_CAMERA_CHANGE_DEG = 0.4
 # Bounds on the zoom-compensated height, scaled with everything else: half a
 # nucleus at the low end, ~1.4 nuclei at the high end.
-COLOC_MIN_LABEL_HEIGHT = 1.8
-COLOC_MAX_LABEL_HEIGHT = 14.0
+# The floor matters as much as the nominal size: zoom compensation shrinks
+# the label as you close in, and it was hitting a floor too small to read.
+COLOC_MIN_LABEL_HEIGHT = 5.0
+COLOC_MAX_LABEL_HEIGHT = 28.0
 
 
 
@@ -483,10 +498,43 @@ def extract_components(
 
     point_regions = vtk_to_numpy(region_array).astype(np.int64, copy=False)
     points = vtk_to_numpy(colored.GetPoints().GetData()).astype(np.float64, copy=False)
+
+    # The RegionId point array is not always the same length as the point
+    # array. On a welded multi-tile surface it comes back LONGER, and since
+    # region membership is later grouped by argsort over RegionId and those
+    # indices are used to index `points`, the extra entries index past the end.
+    # Truncating both to the common length is the only interpretation that is
+    # certainly right: an id with no point is meaningless either way.
+    if len(point_regions) != len(points):
+        common = min(len(point_regions), len(points))
+        print(f"[{channel_name}] RegionId/points length mismatch "
+              f"({len(point_regions)} vs {len(points)}) — using {common}")
+        point_regions = point_regions[:common]
+        points = points[:common]
+
     tris = _triangle_array(colored)
 
-    # Every vertex of a triangle belongs to the same region, so index 0 is fine.
-    tri_regions = point_regions[tris[:, 0]]
+    # Region per TRIANGLE, from cell data when the filter provides it.
+    #
+    # The obvious route — point_regions[tris[:, 0]] — assumes the RegionId
+    # point array is exactly as long as the point array, and it is not always:
+    # on a welded multi-tile surface it can come back one or more entries
+    # short, and the lookup then raises IndexError. The cell array asks the
+    # question directly and needs no indirection. Fall back to the point route
+    # with a bounds guard on filters that only populate point data.
+    cell_region_array = colored.GetCellData().GetArray("RegionId")
+    if cell_region_array is not None:
+        tri_regions = vtk_to_numpy(cell_region_array).astype(np.int64, copy=False)
+        if len(tri_regions) != len(tris):
+            tri_regions = tri_regions[:len(tris)]
+            tris = tris[:len(tri_regions)]
+    else:
+        usable = tris[:, 0] < len(point_regions)
+        if not usable.all():
+            tris = tris[usable]
+        tri_regions = point_regions[tris[:, 0]]
+    if len(tris) == 0:
+        return []
 
     a = points[tris[:, 0]]
     b = points[tris[:, 1]]
