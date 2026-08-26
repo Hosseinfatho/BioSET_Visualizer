@@ -1926,19 +1926,46 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.chatbot_loading = False
 
     def chatbot_label():
-        """Run a /label call using active markers + tile stats + screenshot."""
+        """Run a /label call for the surfaces currently in view.
+
+        Offered only when zoomed in far enough that a handful of mesh tiles
+        fill the view. The button is disabled otherwise; this re-checks
+        because the camera can move between enabling and clicking.
+        """
         if not state.chatbot_authenticated:
             print("[callbacks] Cannot label - Biomni not initialised")
+            return
+
+        allowed, n_tiles, _ = _label_zoom_state()
+        if not allowed:
+            from bioset.scene.labels.sites import MAX_LABEL_TILES
+            state.chatbot_messages = state.chatbot_messages + [{
+                "role": "error",
+                "content": (f"Zoom in to label \u2014 {n_tiles} surface tiles are "
+                            f"in view and labelling needs at most "
+                            f"{MAX_LABEL_TILES}."
+                            if n_tiles else
+                            "No surfaces in view. Enable a channel's surface "
+                            "and zoom in to label."),
+            }]
             return
 
         channel_stats = _require_viewport_stats()
         if channel_stats is None:
             return
 
-        markers = _build_markers()
+        # Ask about the channels that HAVE geometry in the manifest, whether
+        # or not their surfaces are being drawn. A label still needs geometry
+        # to sit on, so a marker with no tiles anywhere would produce a label
+        # that cannot be placed.
+        labelable = _labelable_channels()
+        markers = [m for m in _build_markers() if m.split(":")[0] in labelable]
         if not markers:
             state.chatbot_messages = state.chatbot_messages + [
-                {"role": "error", "content": "No active channels to label."}
+                {"role": "error",
+                 "content": "None of the active channels have surface geometry "
+                            "in the mesh manifest, so there is nothing to "
+                            "label."}
             ]
             return
 
@@ -2279,65 +2306,181 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.chatbot_input = ""
 
     def toggle_labels():
-        """Show or hide label actors in the scene."""
+        """Show or hide label actors in the scene.
+
+        Visibility only — NOT `clear()`, which tears the layout down and marks
+        the manager unpreprocessed. Hiding that way meant the labels could
+        never come back without a full ~1 s rebuild, so the eye toggle was a
+        one-way trip.
+        """
         state.show_labels = not state.show_labels
         label_mgr = _refs.get("label_manager")
-        if not state.show_labels:
-            if label_mgr:
-                label_mgr.clear()
-            v = _refs.get("view")
-            if v:
-                v.update()
-        else:
-            if label_mgr:
-                refresh_labels()
+        if label_mgr:
+            label_mgr.set_visible(state.show_labels)
+        v = _refs.get("view")
+        if v:
+            v.update()
+
+    def _labelable_channels():
+        """{marker name: manifest channel idx} for the ACTIVE channels.
+
+        Active, not surface-enabled. The manifest knows where every channel's
+        tiles are whether or not their surface is being drawn, and the label
+        pass reads that geometry on demand — so displaying a surface is not a
+        precondition for naming what is in it. Keyed off the channels the user
+        selected, which is also what the agent is asked about.
+        """
+        mesh_mgr = _refs.get("mesh_manager")
+        if mesh_mgr is None or not mesh_mgr.is_available:
+            return {}
+        out = {}
+        for ch_id in (state.active_channels or []):
+            ch = next((c for c in (state.channels or []) if c["id"] == ch_id), None)
+            if ch is None:
+                continue
+            idx = _mesh_channel_index(mesh_mgr, ch_id)
+            if idx is not None:
+                out[ch["name"]] = idx
+        return out
+
+    def _label_zoom_state():
+        """(allowed, n_tiles, roi_vox) for the CURRENT view.
+
+        Labels are only offered once the view is down to a few mesh tiles.
+        Naming individual cells and their contacts only means something at
+        that scale; zoomed out, each surface is a few pixels and the label
+        set explodes.
+        """
+        from bioset.scene.labels.sites import labels_available
+        mesh_mgr = _refs.get("mesh_manager")
+        _, roi = _camera_level_and_roi(streamer, _refs.get("heatmap_lod"))
+        # Count tiles for the channels labelling would cover, not for the ones
+        # whose surfaces happen to be drawn.
+        chans = list(_labelable_channels().values())
+        allowed, n = labels_available(mesh_mgr, roi, channels=chans or None)
+        return allowed, n, roi
+
+    # The gate is polled on this interval rather than driven by events.
+    # It depends on the camera, on which surface channels are enabled, and on
+    # which tiles have finished streaming — three separate sources, two of
+    # which fire no interaction event at all. Chasing them individually is how
+    # the button ends up stuck; a cheap poll cannot miss any of them.
+    LABEL_GATE_INTERVAL = 0.25
+    _label_gate_next = [0.0]
+
+    def sync_label_availability(force: bool = False):
+        """Publish the zoom gate to the UI.
+
+        Cheap: a vectorised tile test plus one ROI projection.
+        """
+        now = time.monotonic()
+        if not force and now < _label_gate_next[0]:
+            return
+        _label_gate_next[0] = now + LABEL_GATE_INTERVAL
+        allowed, n, _ = _label_zoom_state()
+        if bool(state.label_button_enabled) != allowed:
+            state.label_button_enabled = allowed
+            print(f"[callbacks] Label button {'enabled' if allowed else 'disabled'} "
+                  f"({n} surface tile(s) in view)")
+        if state.label_tile_count != n:
+            state.label_tile_count = n
+
+    def _hex_to_rgb01(value: str):
+        v = (value or "#FFFFFF").lstrip("#")
+        if len(v) != 6:
+            return (1.0, 1.0, 1.0)
+        return tuple(int(v[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
 
     def _apply_mesh_labels(raw_labels: dict, overall: list):
-        """Create/restart LabelSceneManager with the new labels from Biomni /label."""
+        """Build labels for the surfaces currently in view."""
         from bioset.scene.labels import LabelSceneManager
         renderer = _refs.get("renderer")
         mesh_mgr = _refs.get("mesh_manager")
+        loader = _refs.get("analysis_loader")
         if renderer is None or mesh_mgr is None or not mesh_mgr.is_available:
-            print("[callbacks] Cannot apply labels: missing renderer or mesh_manager")
+            print("[callbacks] Cannot apply labels: missing renderer or meshes")
             return
 
-        polydata_by_name = {}
-        for ch_id in (state.active_channels or []):
-            ch_name = next((ch["name"] for ch in state.channels if ch["id"] == ch_id), None)
-            if ch_name is None:
-                continue
-            manifest_idx = mesh_mgr.channel_idx_for_name(ch_name)
-            if manifest_idx is None:
-                continue
-            pd = mesh_mgr.get_channel_polydata(manifest_idx)
-            if pd is not None:
-                polydata_by_name[ch_name] = pd
+        allowed, n_tiles, roi = _label_zoom_state()
+        if not allowed:
+            print(f"[callbacks] Not labelling: {n_tiles} tiles in view")
+            return
 
-        if not polydata_by_name:
-            print("[callbacks] No mesh polydata available for label placement")
+        # The channels labelling covers: active ones that have geometry in the
+        # manifest, whether or not their surfaces are being drawn. The tiles
+        # are read on demand, so a surface being switched off is no longer a
+        # reason to have nothing to label.
+        name_to_idx = _labelable_channels()
+        colors = {ch["name"]: _hex_to_rgb01(ch.get("color", "#FFFFFF"))
+                  for ch in (state.channels or []) if ch["name"] in name_to_idx}
+        if not name_to_idx:
+            msg = ("None of the active channels have surface geometry in the "
+                   "mesh manifest, so there is nothing to place labels on.")
+            print(f"[callbacks] {msg}")
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "error", "content": msg}
+            ]
             return
 
         label_mgr = _refs.get("label_manager")
         if label_mgr is None:
-            label_mgr = LabelSceneManager(renderer)
+            label_mgr = LabelSceneManager(renderer, _refs.get("render_window"))
             _refs["label_manager"] = label_mgr
         else:
             label_mgr.clear()
 
-        label_mgr.start_preprocessing(polydata_by_name, raw_labels, overall)
-        print(f"[callbacks] Label preprocessing started for {list(polydata_by_name.keys())}")
+        label_mgr.start_preprocessing(
+            mesh_mgr, loader, roi, name_to_idx, raw_labels, overall, colors)
+        print(f"[callbacks] Labelling {list(name_to_idx)} over {n_tiles} tile(s)")
 
     def check_label_setup():
-        """Poll for completed label preprocessing; call from the app poll loop."""
+        """Poll-loop tick for labels: finished builds, and the settle timer.
+
+        The settle lives here rather than in an asyncio task started from the
+        VTK callback. That version called `asyncio.get_running_loop()` from
+        inside an interactor callback and ran the settle INLINE whenever it
+        raised — so on any build where no loop was visible there, the debounce
+        silently did not exist and every mouse-wheel tick paid a full re-solve.
+        A deadline the poll loop drains cannot fail that way, and it also gets
+        the work off the interactor callback.
+        """
+        # Both of these run FIRST and unconditionally. The gate has to work
+        # before any labels exist — gating it behind a label manager made the
+        # button un-enablable, since the manager is only created by pressing
+        # the button it was disabling.
+        sync_label_availability()
+        _drain_label_settle()
+
         label_mgr = _refs.get("label_manager")
         if label_mgr is None:
             return
-        if label_mgr.check_and_apply_setup():
-            # Preprocessing just finished — do an initial placement pass
-            if label_mgr.update():
-                view = _refs.get("view")
-                if view:
-                    view.update()
+        applied = label_mgr.check_and_apply_setup()
+        # Surface any give-up reason in the chat. Without this the pipeline
+        # fails silently: the app redirects stdout to devnull unless --logs is
+        # passed, so the prints reach nobody.
+        err = getattr(label_mgr, "last_error", None)
+        if err:
+            label_mgr.last_error = None
+            state.chatbot_messages = state.chatbot_messages + [
+                {"role": "error", "content": err}
+            ]
+        rep = getattr(label_mgr, "last_report", None)
+        if rep:
+            label_mgr.last_report = None
+            state.chatbot_messages = state.chatbot_messages + [{
+                "role": "assistant",
+                "content": (
+                    f"Labels: {rep['shown']}/{rep['components']} callouts "
+                    f"shown across {rep['channels']} channel(s), "
+                    f"{rep['coloc_shown']}/{rep['coloc_sites']} surface "
+                    f"labels shown, {rep['props_added']} actors, viewport "
+                    f"{rep['window'][0]}x{rep['window'][1]}, {rep['ms']} ms."),
+            }]
+        if applied:
+            # check_and_apply_setup already ran the first placement.
+            view = _refs.get("view")
+            if view:
+                view.update()
 
     def refresh_labels():
         """Force label recompute and redraw for the current camera position."""
@@ -2347,58 +2490,117 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if v:
                 v.update()
 
+    # Deferred this long after the LAST interaction event before anything is
+    # recomputed. VTK's trackball fires a full Start/End pair for EVERY
+    # mouse-wheel tick, where an entire rotate drag fires exactly one — so
+    # without this, one scroll gesture pays a complete re-solve per click.
+    LABEL_SETTLE_SECONDS = 0.18
+
+    # `due` is a monotonic deadline, or None when nothing is pending. Set by
+    # EndInteractionEvent, drained by the poll loop.
+    _label_settle = {"due": None, "interactor": None, "pose": None}
+
+    # Relative camera move that counts as "the view changed": 0.5% of the
+    # distance to the focal point, so the threshold scales with zoom.
+    _LABEL_POSE_EPS = 0.005
+
+    def _camera_pose(cam):
+        p, f, u = cam.GetPosition(), cam.GetFocalPoint(), cam.GetViewUp()
+        return (p, f, u, cam.GetViewAngle(), cam.GetParallelScale())
+
+    def _pose_moved(a, b):
+        if a is None:
+            return True
+        (pa, fa, ua, va, sa), (pb, fb, ub, vb, sb) = a, b
+        scale = max(1e-9, sum((pb[i] - fb[i]) ** 2 for i in range(3)) ** 0.5)
+        tol = scale * _LABEL_POSE_EPS
+        for x, y in ((pa, pb), (fa, fb)):
+            if any(abs(x[i] - y[i]) > tol for i in range(3)):
+                return True
+        if any(abs(ua[i] - ub[i]) > 1e-4 for i in range(3)):
+            return True
+        return abs(va - vb) > 1e-4 or abs(sa - sb) > tol
+
+    def _drain_label_settle():
+        """Run a pending settle once its deadline has passed."""
+        due = _label_settle["due"]
+        if due is None or time.monotonic() < due:
+            return
+        _label_settle["due"] = None
+
+        try:
+            # A settle means the camera definitely moved, so bypass the poll
+            # throttle and answer with the pose the user actually stopped at.
+            sync_label_availability(force=True)
+        except Exception as e:
+            print(f"[callbacks] label gate refresh failed: {e}")
+
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is None:
+            return
+        if state.anchor_labels or not state.show_labels:
+            # Pinned or hidden, so nothing to re-place — but the gesture flag
+            # must still be cleared. Leaving it set makes every later update()
+            # a silent no-op, and the labels never come back at all.
+            label_mgr.end_gesture(resolve=False)
+            return
+
+        pose = None
+        obj = _label_settle["interactor"]
+        try:
+            pose = _camera_pose(obj.GetRenderWindow().GetRenderers()
+                                .GetFirstRenderer().GetActiveCamera())
+        except Exception:
+            pass
+        if pose is not None and not _pose_moved(_label_settle["pose"], pose):
+            # Back where it started: show the callouts again but skip the
+            # re-solve, since their answer has not changed.
+            label_mgr.end_gesture(resolve=False)
+        else:
+            _label_settle["pose"] = pose
+            label_mgr.end_gesture()
+
+        v = _refs.get("view")
+        if v:
+            try:
+                v.update()
+            except Exception:
+                pass
+
     def setup_label_interaction_observer(interactor):
-        """Refresh labels when the camera actually moves.
+        """Two-mode label handling, per INTEGRATION.md section 4.
 
-        `label_manager.update()` clears every label actor and re-runs
-        hierarchical placement from scratch, which is the most expensive thing
-        on the main thread per interaction. It used to run on every
-        EndInteractionEvent — including the ones the streamer synthesises and
-        the ones that end a drag which barely moved the camera. Gate it on a
-        real change in camera pose so a nudge, a zoom that settles back, or a
-        synthetic event costs nothing.
+        DURING a gesture nothing is recomputed: flat callouts are hidden
+        (they are screen-space, so they are wrong the moment the camera
+        moves) while conformed patches stay up, being world-space geometry
+        that remains correct under any camera at zero CPU cost.
+
+        ON SETTLE the layout re-solves once. Both handlers here are trivial —
+        the actual work happens in `_drain_label_settle`, driven by the poll
+        loop — because a mouse wheel fires a full Start/End pair PER TICK and
+        anything expensive in these callbacks is paid per click.
+
+        Measured at a 4x4-tile viewport: drawing labels costs 0.3 ms/frame, a
+        layout re-solve 2 ms, and a conformer refit 0 ms on pan or zoom (its
+        own guard skips those) rising to 22-27 ms on rotation. So the cost is
+        entirely in how OFTEN a settle runs, which is what the deadline fixes.
         """
-        _last_pose = [None]
-        # Relative move that counts as "the view changed": 0.5% of the camera's
-        # distance to its focal point, so the threshold scales with zoom.
-        REL_EPS = 0.005
-
-        def _pose(cam):
-            p, f, u = cam.GetPosition(), cam.GetFocalPoint(), cam.GetViewUp()
-            return (p, f, u, cam.GetViewAngle(), cam.GetParallelScale())
-
-        def _moved(a, b):
-            if a is None:
-                return True
-            (pa, fa, ua, va, sa), (pb, fb, ub, vb, sb) = a, b
-            scale = max(1e-9, sum((pb[i] - fb[i]) ** 2 for i in range(3)) ** 0.5)
-            tol = scale * REL_EPS
-            for x, y in ((pa, pb), (fa, fb)):
-                if any(abs(x[i] - y[i]) > tol for i in range(3)):
-                    return True
-            if any(abs(ua[i] - ub[i]) > 1e-4 for i in range(3)):
-                return True
-            return abs(va - vb) > 1e-4 or abs(sa - sb) > tol
+        def _on_start_interaction(obj, event):
+            _label_settle["interactor"] = obj
+            label_mgr = _refs.get("label_manager")
+            if label_mgr is not None:
+                label_mgr.begin_gesture()
 
         def _on_end_interaction(obj, event):
-            if state.anchor_labels or not state.show_labels:
-                return  # pinned or hidden — nothing to place
-            label_mgr = _refs.get("label_manager")
-            if label_mgr is None:
-                return
-            try:
-                pose = _pose(obj.GetRenderWindow().GetRenderers()
-                             .GetFirstRenderer().GetActiveCamera())
-            except Exception:
-                pose = None
-            if pose is not None:
-                if not _moved(_last_pose[0], pose):
-                    return
-                _last_pose[0] = pose
-            refresh_labels()
+            # Push the deadline out. Every further event in the gesture just
+            # pushes it again, so only the last one is ever acted on.
+            _label_settle["interactor"] = obj
+            _label_settle["due"] = time.monotonic() + LABEL_SETTLE_SECONDS
 
+        interactor.AddObserver("StartInteractionEvent", _on_start_interaction)
         interactor.AddObserver("EndInteractionEvent", _on_end_interaction)
-        print("[callbacks] Label EndInteractionEvent observer registered (pose-gated)")
+        print("[callbacks] Label interaction observers registered "
+              f"(gesture mode + {LABEL_SETTLE_SECONDS}s poll-loop settle)")
 
     def capture_screenshot():
         """Capture current VTK view as base64-encoded JPEG, capped under 5 MB."""
@@ -2522,6 +2724,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_suggest_bookmark = chatbot_suggest_bookmark
     ctrl.chatbot_suggest = chatbot_suggest
     ctrl.chatbot_explain = chatbot_explain
+    ctrl.sync_label_availability = sync_label_availability
     ctrl.chatbot_explain_upset = chatbot_explain_upset
     ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear
