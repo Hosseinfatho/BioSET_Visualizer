@@ -1727,7 +1727,58 @@ def register_bookmark_callbacks(ctrl, state, _refs):
         if _refs.get("view"):
             _refs["view"].update()
 
+    def bookmark_reset_state():
+        """Blank every bookmark list, selection and cache.
+
+        The panel's contents are plain state, so they survive anything that does
+        not explicitly clear them — Clear Data closed the dialogs and popups but
+        left the lists populated, so reopening the panel with no dataset loaded
+        still showed the last dataset's categories and thumbnails.
+
+        The in-memory snapshot cache goes too. It is keyed by (dataset, title),
+        so it would not serve the wrong dataset's data, but it holds full
+        snapshots for a dataset that is no longer open.
+        """
+        _snapshot_cache.clear()
+        state.bookmark_categories = []
+        state.bookmark_snapshot_names = []
+        state.bookmark_list_items = []
+        state.bookmark_selected_category = "Uncategorized"
+        state.bookmark_selected_name = "Name"
+        state.bookmark_display_snapshot = None
+        state.bookmark_current_view_index = 0
+        state.bookmark_flags_visible = False
+        state.bookmark_flags_data = []
+        state.bookmark_flag_popup = None
+        state.bookmark_flag_popup_html = ""
+        state.ov_bookmark_categories = []
+        state.ov_bookmark_snapshot_names = []
+        state.ov_bookmark_selected_category = "Uncategorized"
+        state.ov_bookmark_selected_name = ""
+        state.ov_bookmark_flags_visible = False
+        state.ov_bookmark_flags_data = []
+
+    def bookmark_reload_for_dataset():
+        """Re-read the panel from whichever dataset is open now.
+
+        Reset first: a dataset with no bookmarks of its own must come up empty
+        rather than keeping whatever the previous one left behind. Refreshing
+        without the reset is what made an unbookmarked dataset show MIS's
+        categories.
+        """
+        bookmark_reset_state()
+        if not getattr(state, "data_loaded", False):
+            return
+        try:
+            bookmark_refresh_categories()
+            bookmark_refresh_names()
+            bookmark_refresh_list()
+        except Exception as e:
+            print(f"[bookmark] reload for dataset failed: {e}")
+
     # Attach to ctrl
+    ctrl.bookmark_reset_state = bookmark_reset_state
+    ctrl.bookmark_reload_for_dataset = bookmark_reload_for_dataset
     ctrl.bookmark_refresh_names = bookmark_refresh_names
     ctrl.bookmark_refresh_categories = bookmark_refresh_categories
     ctrl.bookmark_refresh_list = bookmark_refresh_list

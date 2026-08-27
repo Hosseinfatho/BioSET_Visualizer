@@ -35,6 +35,34 @@ def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
     from bioset.ui.utils.scale_bar import compute_scale_bar
 
+    def _bookmark_dataset_id_for_current() -> str:
+        """Which recordings folder the loaded dataset's bookmarks live in.
+
+        The dataset's NAME from datasets.json when the loaded zarr matches a
+        preset, so the folders on disk read `recordings/MIS/`, `recordings/STIC/`
+        and can be curated, moved between machines, or committed by hand. An
+        md5 of the URL would work equally well for the code and be useless to
+        a person looking at the directory.
+
+        Matched on the zarr URL rather than on `state.dataset_preset`, because
+        a dataset opened from the command line or a config file never sets the
+        preset field but is the same dataset. Anything with no matching preset
+        falls back to a short hash of its URL, which at least keeps it separate
+        from every other dataset.
+        """
+        url = (getattr(state, "zarr_url", "") or "").strip()
+        if not url:
+            return "default"
+        try:
+            from bioset.datasets import load_dataset_presets
+            norm = url.replace("\\", "/").rstrip("/").lower()
+            for preset in load_dataset_presets():
+                if (preset.zarr_url or "").replace("\\", "/").rstrip("/").lower() == norm:
+                    return preset.name
+        except Exception as e:
+            print(f"[callbacks] dataset preset lookup failed: {e}")
+        return hashlib.md5(url.encode()).hexdigest()[:12]
+
     def _hex_to_rgb_tuple(color_hex: str):
         """Convert '#RRGGBB' to (r, g, b) floats in [0,1]."""
         color_hex = color_hex.lstrip("#")
@@ -336,12 +364,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.visible_channel_ids = [
                 ch["id"] for ch in channels[:state.default_num_channels]]
             state.data_loaded = True
-            # Per-dataset folder for bookmark recordings (one folder per dataset link)
-            try:
-                url = getattr(state, "zarr_url", "") or ""
-                state.bookmark_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
-            except Exception:
-                state.bookmark_dataset_id = "default"
+            # Per-dataset folder for bookmark recordings, so opening VGP1 shows
+            # VGP1's bookmarks and not the ones saved against MIS.
+            state.bookmark_dataset_id = _bookmark_dataset_id_for_current()
             
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
@@ -421,6 +446,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.heatmap_tile_count = 0
         
         state.right_drawer_open = False
+
+        # Point bookmarks back at nothing BEFORE emptying the panel. Clearing
+        # the lists while this still said "MIS" left every later refresh — the
+        # panel reopening, the save form, a flag redraw — free to repopulate
+        # from MIS's folder, so the bookmarks came straight back.
+        state.bookmark_dataset_id = "default"
+        if hasattr(ctrl, "bookmark_reset_state"):
+            ctrl.bookmark_reset_state()
 
         # Close bookmark UI (column, forms, popups) when data is cleared
         # Hide the bookmark side panel
@@ -2738,7 +2771,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             report_data.append(chat)
 
         if state.export_bookmarks:
-            bookmark_content = load_all_bookmarks("src/bioset/bookmark/recordings")
+            # This dataset's recordings only. The path used to be the flat
+            # recordings root, which now holds one folder per dataset, so a
+            # report would otherwise carry every dataset's bookmarks.
+            from bioset.bookmark.snapshot_io import _recordings_dir
+            bookmark_content = load_all_bookmarks(
+                str(_recordings_dir(getattr(state, "bookmark_dataset_id", None)
+                                    or "default")))
             bookmarks = Bookmarks(bookmark_content)
             report_data.append(bookmarks)
 

@@ -715,6 +715,17 @@ def register_state_change_handlers(state, ctrl):
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
 
+    @state.change("bookmark_dataset_id")
+    def on_bookmark_dataset_id_change(bookmark_dataset_id, **kwargs):
+        """Repopulate the panel whenever the open dataset changes.
+
+        The refresh used to run only when the panel was OPENED, so switching
+        datasets with it already open left the previous dataset's categories and
+        thumbnails on screen — and Clear Data left them there too.
+        """
+        if hasattr(ctrl, "bookmark_reload_for_dataset"):
+            ctrl.bookmark_reload_for_dataset()
+
     @state.change("bookmark_open")
     def on_bookmark_open_change(bookmark_open, **kwargs):
         if bookmark_open:
