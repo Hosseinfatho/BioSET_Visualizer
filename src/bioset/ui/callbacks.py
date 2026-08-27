@@ -1590,6 +1590,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if mesh_mgr and channel_id in state.active_channels:
             mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
 
+        recolor_labels(channel_id, color_hex)
+
     def on_channel_color_change(channel_id, color_value):
         """Handle color change from the color picker."""
         print(f"[callbacks] Raw color_value: {color_value}, type: {type(color_value)}")
@@ -1641,6 +1643,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 new_channels.append({**ch})  
         state.channels = new_channels
         
+        recolor_labels(channel_id, color_hex)
+
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
             streamer._channel_colors[channel_id] = streamer._hex_to_rgb(color_hex)
@@ -2321,6 +2325,50 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if v:
             v.update()
 
+    def clear_labels():
+        """Remove every label and close the label row.
+
+        The row is bound to `chatbot_labels_generated`, so clearing that both
+        collapses it and puts the panel back to its pre-Label state. Unlike the
+        eye toggle this really does tear the layout down — that is the point —
+        but the manager itself is kept, so its proxy cache survives and a fresh
+        Label press over the same tiles skips the expensive rebuild.
+        """
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is not None:
+            try:
+                label_mgr.clear()
+            except Exception as e:
+                print(f"[callbacks] clearing labels failed: {e}")
+        state.chatbot_labels_generated = False
+        state.show_labels = True
+        state.anchor_labels = False
+        v = _refs.get("view")
+        if v:
+            v.update()
+
+    def recolor_labels(channel_id, color_hex):
+        """Keep a channel's labels in step with its colour.
+
+        The colour is rasterized into the label texture, so nothing updates on
+        its own — without this the labels keep the colour the channel had when
+        Label was pressed.
+        """
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is None:
+            return
+        ch = next((c for c in (state.channels or []) if c["id"] == channel_id),
+                  None)
+        if ch is None:
+            return
+        try:
+            if label_mgr.set_channel_color(ch["name"], _hex_to_rgb01(color_hex)):
+                v = _refs.get("view")
+                if v:
+                    v.update()
+        except Exception as e:
+            print(f"[callbacks] recolouring labels failed: {e}")
+
     def _labelable_channels():
         """{marker name: manifest channel idx} for the ACTIVE channels.
 
@@ -2454,6 +2502,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
         label_mgr = _refs.get("label_manager")
         if label_mgr is None:
             return
+
+        # The render window resizes underneath us: interactive_ratio=0.4 shrinks
+        # it to 40% while the user interacts and the still render restores it,
+        # and the settle timer can easily land in between. Flat callouts are
+        # placed in display pixels, so a solve at the wrong size strands every
+        # label in the lower-left corner of the real viewport. Cheap to check
+        # (a size compare), so it runs every tick.
+        if label_mgr.resolve_if_resized():
+            v = _refs.get("view")
+            if v:
+                try:
+                    v.update()
+                except Exception:
+                    pass
+
         applied = label_mgr.check_and_apply_setup()
         # Surface any give-up reason in the chat. Without this the pipeline
         # fails silently: the app redirects stdout to devnull unless --logs is
@@ -2729,6 +2792,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear
     ctrl.toggle_labels = toggle_labels
+    ctrl.clear_labels = clear_labels
+    ctrl.recolor_labels = recolor_labels
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.set_mesh_streamer = set_mesh_streamer
     ctrl.set_contours = set_contours

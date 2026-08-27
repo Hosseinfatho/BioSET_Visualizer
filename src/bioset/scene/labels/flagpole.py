@@ -33,8 +33,11 @@ Notes carried over from INTEGRATION.md that are load-bearing here:
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -64,7 +67,17 @@ from vtk.util.numpy_support import vtk_to_numpy
 # A melanoma nucleus is ~8-15 um across, so 80 is where components start being
 # cells. It also cuts the label count to something a screen can carry, which
 # is the same lever from the other direction.
-MAX_COMPONENTS_PER_CHANNEL: Optional[int] = 24
+# Ranked by area at EXTRACT time, before the camera is known, so this is a
+# ceiling on what can EVER be labelled rather than on what is shown. At 24 it
+# was the binding constraint: a 4x4 view yields 109 MART1 and 103 SOX10
+# components past the quality filter, so ~78% of labelable cells could never
+# receive a label however far you zoomed into them.
+#
+# Per-frame cost is bounded elsewhere — FlagpoleLayout drops anchors outside
+# the viewport before solving, and its n^2 overlap pass runs only on what
+# survives (0.36 ms at 150, 2.5 ms at 400). Zoomed out this changes nothing
+# visible: the extra components project off-screen or lose their collision.
+MAX_COMPONENTS_PER_CHANNEL: Optional[int] = 150
 MIN_COMPONENT_AREA_FRACTION = 0.001
 MIN_COMPONENT_CELLS = 80
 
@@ -130,6 +143,32 @@ INTERACTIVE_OPAQUE = True
 # Label/leader appearance.
 LABEL_BACKGROUND = (0.025, 0.028, 0.038)
 LABEL_BACKGROUND_OPACITY = 0.84
+
+# Typeface for the flat callouts. Either a family name, resolved against the
+# repo's assets/fonts and the system font directories, or an absolute path to a
+# .ttf/.otf. Anything that does not resolve to a file on disk falls back to
+# VTK's built-in Arial, with one line on stdout saying so.
+#
+# The check matters: vtkTextProperty.SetFontFile does NOT fail on a bad path.
+# It silently renders Arial, so a typo would look like the setting being
+# ignored rather than like an error. `_resolve_font_file` therefore only hands
+# VTK a path it has already stat'd.
+#
+# This reaches the flat callouts ONLY. The surface-conforming colocalization
+# text is built by vtkVectorText, which exposes no font API at all — it has one
+# hardcoded stroke font — so changing it there would mean converting TTF
+# outlines to polygons ourselves.
+# Empty means VTK's built-in Arial, which is what labels are drawn in.
+# Merriweather was tried here and read poorly at label sizes — a text face with
+# that much contrast turns mushy in a 28 px plate — so the default is back to
+# the sans. The lookup below is kept because swapping the face is now a one-line
+# change: put a name here, or set BIOSET_LABEL_FONT, and drop the .ttf in
+# assets/fonts/ or install it.
+LABEL_FONT = os.environ.get("BIOSET_LABEL_FONT", "")
+
+# Labels are drawn bold. With a font FILE, VTK renders the file as it is and
+# ignores SetBold, so a bold face has to be picked by filename instead.
+_FONT_WEIGHT_ORDER = ("bold", "semibold", "regular", "")
 LEADER_WIDTH = 1.5
 
 
@@ -141,8 +180,29 @@ LEADER_WIDTH = 1.5
 # Where the two markers are close neighbors but do not overlap. Detected from
 # the single-channel occupancy maps rather than the dilated-overlap map, which
 # is far too coarse to resolve which cells are actually adjacent.
-INTERACTION_FONT_SIZE = 14
-INTERACTION_LABEL_COLOR = (1.0, 1.0, 1.0)
+# Much larger than SINGLE_MARKER_FONT_SIZE, not a point or two — an interaction
+# label names the thing the view is FOR, and there are only ever a handful of
+# them against a hundred-odd per-cell labels. Measured on a 4x4 mis_v3 viewport
+# at 1600x1000: going 14 -> 24 costs about two single-marker placements out of
+# 109, and none of its own, because interaction labels already outrank per-cell
+# ones (INTERACTION_PRIORITY) and carry a longer leash to get clear of them.
+# Wrapping to two lines was tried and is worse — it costs five more per-cell
+# labels for a taller box without making the glyphs any bigger.
+SINGLE_MARKER_FONT_SIZE = 15
+INTERACTION_FONT_SIZE = 24
+# Interaction labels are the visual INVERSE of every other label: black text on
+# a white plate, in caps. A single-marker label is drawn in its own channel's
+# colour, and a channel that happens to be white produced white-on-dark text
+# that read as the same kind of thing as a contact site. Recolouring the text
+# alone could never fix that — the two would still differ only by hue, and one
+# of the hues in play IS white. Inverting the whole plate makes the difference
+# structural instead.
+INTERACTION_LABEL_COLOR = (0.0, 0.0, 0.0)
+INTERACTION_LABEL_BACKGROUND = (1.0, 1.0, 1.0)
+# Higher than the dark plate's 0.84: black text needs the white behind it to be
+# near-opaque, or the tissue shows through and the contrast collapses.
+INTERACTION_LABEL_BACKGROUND_OPACITY = 0.96
+INTERACTION_LABEL_UPPERCASE = True
 # Cell-scale proximity. Bins are 2.24 um here (16 voxels), so two bins is a
 # ~4.5 um reach — about half a nucleus, which is the scale adjacency means at.
 INTERACTION_RADIUS_BINS = 2
@@ -173,11 +233,22 @@ COLOC_FONT_SIZE = 14
 COLOC_LABEL_COLOR = (1.0, 1.0, 1.0)
 COLOC_MIN_VALUE = 2          # heatmap value a bin needs to join a region
 COLOC_MIN_BINS = 2           # drop single-bin specks
-# Backstop on site count, and it earns its keep here: a conformer refit costs
-# per site (measured 22-27 ms for 4 sites on rotation, and rotation is the only
-# camera move that triggers one). Lowering the separation below admits more
-# sites, so this is the lever if rotation starts to drag.
-MAX_COLOC_SITES = 12
+# Backstop on site count. At 12 this was the ONLY thing limiting how many
+# conforming labels appeared: measured on mis_v3, a 4x4 viewport yields 15
+# sites and a 6x6 yields 20, and every one of them passes the value, bin-count
+# and separation filters — so a third to a half were being discarded by this
+# number alone.
+#
+# The per-site refit cost turned out to be much smaller than the fixed
+# overhead, which is what made 12 look necessary. Measured refit on rotation
+# (the only camera move that triggers one), at 1600x1000:
+#
+#     4x4:  cap 12 -> 60 ms,  cap 24 -> 61 ms   (only 15 sites exist)
+#     6x6:  cap 12 -> 45 ms,  cap 20 -> 68 ms,  cap 24 -> 69 ms
+#
+# So 24 shows everything available anywhere inside the zoom gate for ~24 ms on
+# the settle at the widest view. This is still the lever if rotation drags.
+MAX_COLOC_SITES = 24
 # Heatmap regions within this many bins of each other are treated as one site,
 # so a dense cluster earns a single label instead of a stack of them.
 COLOC_MERGE_BINS = 3
@@ -450,6 +521,11 @@ class Channel:
     # sites sit right beside colocalizations, so they need a longer leash to
     # get clear of those large blocks.
     max_label_distance_px: float = MAX_LABEL_DISTANCE_PX
+    # Plate behind the text. None means the shared dark plate; interaction
+    # labels override it to white so they read as a different KIND of label
+    # rather than another colour of the same one.
+    background_color: Optional[Tuple[float, float, float]] = None
+    background_opacity: Optional[float] = None
     components: List[Component] = field(default_factory=list)
 
 
@@ -609,15 +685,91 @@ def extract_components(
 # -----------------------------------------------------------------------------
 
 
+def font_search_dirs() -> List[Path]:
+    """Where a named font may live, nearest first."""
+    dirs = [Path(__file__).resolve().parents[4] / "assets" / "fonts"]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:                                   # per-user installs on Windows
+        dirs.append(Path(local) / "Microsoft" / "Windows" / "Fonts")
+    win = os.environ.get("SystemRoot") or "C:\\Windows"
+    dirs.append(Path(win) / "Fonts")
+    dirs += [Path("/usr/share/fonts"), Path("/usr/local/share/fonts"),
+             Path.home() / ".fonts", Path("/Library/Fonts"),
+             Path.home() / "Library" / "Fonts"]
+    return dirs
+
+
+@lru_cache(maxsize=8)
+def _resolve_font_file(name: str) -> Optional[str]:
+    """Absolute path to `name`'s font file, or None if it is not installed.
+
+    Returns only a path that exists. VTK treats a missing font file as "use
+    Arial" without complaining, so handing it an unchecked path turns a missing
+    font into a silently ignored setting.
+    """
+    if not name:
+        return None
+    direct = Path(name).expanduser()
+    if direct.suffix.lower() in (".ttf", ".otf") and direct.is_file():
+        return str(direct)
+
+    key = name.replace(" ", "").replace("-", "").lower()
+    best: Optional[Tuple[int, str]] = None
+    for d in font_search_dirs():
+        try:
+            if not d.is_dir():
+                continue
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for f in entries:
+            if f.suffix.lower() not in (".ttf", ".otf"):
+                continue
+            stem = f.stem.replace(" ", "").replace("-", "").replace("_", "").lower()
+            if not stem.startswith(key):
+                continue
+            # Prefer a bold face, and never an italic one.
+            if "italic" in stem or "oblique" in stem:
+                continue
+            rest = stem[len(key):]
+            rank = next((i for i, w in enumerate(_FONT_WEIGHT_ORDER)
+                         if w and w in rest), len(_FONT_WEIGHT_ORDER) - 1)
+            if best is None or rank < best[0]:
+                best = (rank, str(f))
+    return best[1] if best else None
+
+
+_font_warned = set()
+
+
+def _apply_font(tprop: vtk.vtkTextProperty, name: str):
+    """Point the text property at `name`, or leave VTK's default in place."""
+    path = _resolve_font_file(name)
+    if path:
+        tprop.SetFontFamily(vtk.VTK_FONT_FILE)
+        tprop.SetFontFile(path)
+    if name and name not in _font_warned:
+        _font_warned.add(name)
+        print(f"[labels] font '{name}': "
+              + (f"using {path}" if path else
+                 "not found on this machine — falling back to Arial. Install "
+                 "it, or drop the .ttf in assets/fonts/, or set "
+                 "BIOSET_LABEL_FONT."))
+
+
 def _make_text_property(channel: Channel) -> vtk.vtkTextProperty:
     tprop = vtk.vtkTextProperty()
     tprop.SetFontSize(channel.font_size)
     tprop.SetBold(True)
+    _apply_font(tprop, LABEL_FONT)
     tprop.SetColor(*channel.label_color)
     tprop.SetJustificationToCentered()
     tprop.SetVerticalJustificationToCentered()
-    tprop.SetBackgroundColor(*LABEL_BACKGROUND)
-    tprop.SetBackgroundOpacity(LABEL_BACKGROUND_OPACITY)
+    bg = channel.background_color or LABEL_BACKGROUND
+    opacity = (LABEL_BACKGROUND_OPACITY if channel.background_opacity is None
+               else channel.background_opacity)
+    tprop.SetBackgroundColor(*bg)
+    tprop.SetBackgroundOpacity(opacity)
     tprop.FrameOn()
     tprop.SetFrameColor(*channel.label_color)
     tprop.SetFrameWidth(1)
@@ -1095,12 +1247,49 @@ class FlagpoleLayout:
         self.last_layout_ms = 0.0
         self.shown_count = 0
         self.hidden_count = 0
+        # Window size the current label positions belong to. None until solved.
+        self.solved_size: Optional[Tuple[int, int]] = None
 
     def set_channel_visible(self, name: str, visible: bool):
         for store in (self.label_layers, self.leader_layers):
             layer = store.get(name)
             if layer is not None:
                 layer.actor.SetVisibility(bool(visible))
+
+    def set_channel_color(self, name: str, color) -> Optional[Tuple]:
+        """Redraw one channel's labels in a new colour.
+
+        The colour is baked into a rasterized texture at build time — one
+        image per channel, reused by every label — so it cannot be tweaked in
+        place. The string has to be re-rendered, which means a new layer and a
+        new actor.
+
+        Returns (old_actor, new_actor) so the caller can keep whatever prop
+        bookkeeping it does in step; None when the channel is unknown or the
+        colour is already what was asked for.
+        """
+        ch = next((c for c in self.channels if c.name == name), None)
+        layer = self.label_layers.get(name)
+        if ch is None or layer is None:
+            return None
+        color = tuple(float(v) for v in color)
+        if tuple(float(v) for v in ch.label_color) == color:
+            return None
+
+        old_actor = layer.actor
+        visible = bool(old_actor.GetVisibility())
+        ch.label_color = color
+        dpi = (int(self.render_window.GetDPI())
+               if self.render_window.GetDPI() > 0 else 72)
+        new_layer = make_label_layer(self.renderer, ch, dpi)
+        new_layer.actor.SetVisibility(visible)
+        self.renderer.RemoveViewProp(old_actor)
+        self.label_layers[name] = new_layer
+        # Positions live in the layer that was just thrown away, so the labels
+        # are nowhere until the next solve. Force one rather than leaving the
+        # channel blank until the camera happens to move.
+        self.update(force=True)
+        return old_actor, new_layer.actor
 
     def refresh_active(self):
         """Rebuild the per-component active mask after suppression changes."""
@@ -1402,6 +1591,11 @@ class FlagpoleLayout:
         width, height = self.render_window.GetSize()
         if width < 80 or height < 80:
             return
+        # Every position below is in DISPLAY PIXELS, so a solve is only valid
+        # for the window size it was computed against. Recorded so the caller
+        # can notice the window changed underneath it and re-solve — see
+        # LabelSceneManager.resolve_if_resized.
+        self.solved_size = (width, height)
 
         camera = self.renderer.GetActiveCamera()
         camera_pos = np.asarray(camera.GetPosition(), dtype=np.float64)
@@ -2129,7 +2323,8 @@ class ConformingLabelLayer:
     def __init__(self, renderer: vtk.vtkRenderer, count: int, text: str,
                  color, font_size: int, dpi: int,
                  wrap_aspect: float = COLOC_WRAP_ASPECT,
-                 line_spacing: float = COLOC_LINE_SPACING):
+                 line_spacing: float = COLOC_LINE_SPACING,
+                 overlay_renderer: Optional[vtk.vtkRenderer] = None):
         self.count = count
         self.text = text
         self.nu = CONFORM_SCAFFOLD_U
@@ -2195,7 +2390,18 @@ class ConformingLabelLayer:
         prop.SetDiffuse(0.0)
         prop.BackfaceCullingOff()
         prop.SetOpacity(1.0)
-        renderer.AddActor(self.actor)
+        # Drawn by the OVERLAY renderer when there is one. These patches sit
+        # on a surface inside the tissue, and in the main renderer the volume
+        # ray caster composites everything in front of them — which is most of
+        # the block — so the text came out washed into the volume. The overlay
+        # is a later layer sharing the same camera, so registration is
+        # identical and the labels simply survive.
+        #
+        # Nothing is lost by skipping the depth test against the meshes: the
+        # conformer already slides each patch forward past every surface point
+        # it sampled (see COLOC_LIFT_FRACTION and _occluder_depth), so mesh
+        # occlusion is resolved analytically rather than by the depth buffer.
+        (overlay_renderer or renderer).AddActor(self.actor)
 
         self._np = vtk_to_numpy(self.points.GetData())
         self.hide_all()
@@ -2254,8 +2460,10 @@ class ColocConformer:
         text: str = "colocalization",
         wrap_aspect: float = COLOC_WRAP_ASPECT,
         line_spacing: float = COLOC_LINE_SPACING,
+        overlay_renderer: Optional[vtk.vtkRenderer] = None,
     ):
         self.renderer = renderer
+        self.overlay_renderer = overlay_renderer
         self.render_window = render_window
         self.sites = sites
         self.soup = soup
@@ -2263,6 +2471,7 @@ class ColocConformer:
         self.layer = ConformingLabelLayer(
             renderer, len(sites), text, COLOC_LABEL_COLOR, COLOC_FONT_SIZE, dpi,
             wrap_aspect=wrap_aspect, line_spacing=line_spacing,
+            overlay_renderer=overlay_renderer,
         )
         if len(self.layer.lines) > 1:
             print(f"[coloc] label wrapped to {len(self.layer.lines)} lines: "
@@ -2294,12 +2503,19 @@ class ColocConformer:
 
     def _current_view(self):
         cam = self.renderer.GetActiveCamera()
+        pos = np.asarray(cam.GetPosition(), dtype=np.float64)
+        focal = np.asarray(cam.GetFocalPoint(), dtype=np.float64)
         return (
-            np.asarray(cam.GetPosition(), dtype=np.float64),
+            pos,
             normalize(np.asarray(cam.GetDirectionOfProjection()), (0, 0, -1)),
             normalize(np.asarray(cam.GetViewUp()), (0, 1, 0)),
             float(cam.GetParallelScale()),
             tuple(self.render_window.GetSize()),
+            # Distance to the focal point. Under PERSPECTIVE projection this is
+            # the only quantity a dolly zoom changes: the parallel scale is a
+            # constant, and the view/up directions do not rotate. Without it in
+            # the tuple, a zoom could not be detected at all.
+            float(np.linalg.norm(pos - focal)),
         )
 
     def _camera_unchanged(self) -> bool:
@@ -2310,7 +2526,7 @@ class ColocConformer:
         The recorded state is written by update(), so a forced refit arms the
         guard too rather than leaving the next call to redo the same work.
         """
-        pos, view, up, scale, size = self._current_view()
+        pos, view, up, scale, size, dist = self._current_view()
         last = self._last_view
         if last is None or last[4] != size:
             return False
@@ -2320,8 +2536,23 @@ class ColocConformer:
         tol = math.cos(math.radians(REFIT_MIN_CAMERA_CHANGE_DEG))
         if float(np.dot(last[1], view)) < tol or float(np.dot(last[2], up)) < tol:
             return False
+
+        # A dolly zoom moves the camera along its own axis without rotating it
+        # and without touching the parallel scale, so under perspective the
+        # focal distance is the ONLY thing that registers it. Label size is
+        # derived from this distance (see `_world_per_pixel` and
+        # COLOC_ZOOM_COMPENSATION), so ignoring it left the text at a stale
+        # size on stale geometry — visibly out of register with the surface.
+        if abs(dist - last[5]) > 1e-3 * max(dist, 1e-6):
+            return False
+
+        # Tolerance scales with distance to the FOCAL POINT, not with distance
+        # from the world origin. Origin-relative was 2-6x too loose here, and
+        # worst zoomed in — the camera could move ~2 um, a third of a nucleus,
+        # and still count as unchanged. `_pose_moved` in ui/callbacks.py has
+        # always measured it this way.
         moved = float(np.linalg.norm(pos - last[0]))
-        span = max(float(np.linalg.norm(pos)), 1.0)
+        span = max(dist, 1e-6)
         return moved <= 0.002 * span
 
     def _world_per_pixel(self, distance: float) -> float:
