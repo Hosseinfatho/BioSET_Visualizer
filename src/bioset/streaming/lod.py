@@ -88,6 +88,27 @@ def derive_distance_rules(world_diagonal: float, max_component: int):
     return tuple(rules)
 
 
+def resolve_coarsest_component(spec: int, top: int) -> int:
+    """Absolute component index for a level written relative to the COARSEST end.
+
+    ``-1`` is the coarsest level the store has, ``-2`` one level finer than it,
+    ``-3`` two finer. A non-negative value is taken as a literal component index
+    instead. Writing it this way means the setting keeps its meaning on a store
+    with a different pyramid depth.
+
+    Always clamped into ``[0, top]``. A single-level store has ``top == 0`` and
+    so no second-coarsest level to reach for; everything resolves to 0 and the
+    idea quietly does not apply.
+
+    Note this counts from the opposite end of the pyramid to
+    ``min_component``/``choose_component``, which work up from the finest level.
+    """
+    top = max(0, int(top))
+    spec = int(spec)
+    level = (top + 1 + spec) if spec < 0 else spec
+    return max(0, min(level, top))
+
+
 def choose_component(distance: float, rules, *, min_component: int, max_component: int) -> int:
     chosen = max_component
     for thresh, comp in rules:

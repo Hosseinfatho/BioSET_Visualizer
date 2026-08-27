@@ -227,6 +227,37 @@ class VolumeConfig:
     min_component: int = 0
     max_component: int = 6
 
+    # ── The interactive placeholder ────────────────────────────────────────
+    # While you interact, each channel's texture is swapped for a whole-volume
+    # "base" image so the volume is never empty and motion stays cheap. This
+    # picks which pyramid level that base is built at, counted from the
+    # COARSEST end so it means the same thing on any pyramid depth:
+    #
+    #   -1   the coarsest level available     (what this used to do)
+    #   -2   one level finer                  <- default
+    #   -3   two levels finer
+    #
+    # A non-negative value is read as a literal component index.
+    #
+    # Default -2 because the coarsest level is often too coarse to keep your
+    # bearings in: on mis_v3 it is 3 x 86 x 170 voxels — three z-slices — and
+    # dropping to it loses all sense of where you were. One level finer is 8x
+    # the data and still only 0.7 MB per channel against the 512 MB pinned
+    # low-res budget below, so the cost is noise.
+    #
+    # This does NOT affect how far out the camera-driven LOD goes: fully zoomed
+    # out still renders at max_component. Only the loading placeholder changes.
+    #
+    # Resolved into `base_component` by
+    # VolumeStreamer.configure_lod_from_source, which knows the real depth.
+    interactive_base_component: int = -2
+
+    # Resolved absolute index for the placeholder. Written at load time; do not
+    # set it by hand. Defaults to the coarsest level rather than 0 — an
+    # unresolved 0 would build a whole-volume base image at FULL resolution,
+    # which is 22 GB per channel on mis_v3.
+    base_component: int = 6
+
     # LOD zoom thresholds in world units (camera dist from vol)
     distance_rules: Sequence[Tuple[float, int]] = (
         (2500.0, 6),
