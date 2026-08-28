@@ -39,6 +39,7 @@ from .flagpole import (
     INTERACTION_LABEL_BACKGROUND, INTERACTION_LABEL_BACKGROUND_OPACITY,
     INTERACTION_LABEL_COLOR, INTERACTION_LABEL_UPPERCASE,
     INTERACTION_MIN_BINS, INTERACTION_MIN_SEPARATION, INTERACTION_PRIORITY,
+    SINGLE_MARKER_MAX_SHOWN, SINGLE_MARKER_MIN_SCREEN_PX, SINGLE_MARKER_PRIORITY,
     INTERACTION_RADIUS_BINS, MAX_COLOC_SITES, MAX_COMPONENTS_PER_CHANNEL,
     MAX_INTERACTION_SITES, COLOC_PROXY_DECIMATE, COLOC_PROXY_DILATION,
     COLOC_PROXY_SMOOTH, Channel, ColocConformer, FlagpoleLayout, MeshSoup,
@@ -229,9 +230,17 @@ class LabelSceneManager:
                 comps = extract_components(key, pd, MAX_COMPONENTS_PER_CHANNEL)
                 if not comps:
                     continue
+                # Per-cell labels are the background layer. They are gated
+                # on how big their component is ON SCREEN, so their density
+                # follows the zoom instead of dumping a hundred callouts over
+                # the tissue the moment labelling is switched on, and they rank
+                # below every colocalization and contact site.
                 ch = Channel(name=key, display_text=text, polydata=pd,
                              label_color=colors.get(key, (1.0, 1.0, 1.0)),
-                             font_size=SINGLE_MARKER_FONT_SIZE)
+                             font_size=SINGLE_MARKER_FONT_SIZE,
+                             priority_weight=SINGLE_MARKER_PRIORITY,
+                             min_screen_px=SINGLE_MARKER_MIN_SCREEN_PX,
+                             max_shown=SINGLE_MARKER_MAX_SHOWN)
                 ch.components = comps
                 channels.append(ch)
 
@@ -307,7 +316,8 @@ class LabelSceneManager:
                                  INTERACTION_LABEL_BACKGROUND_OPACITY),
                              font_size=INTERACTION_FONT_SIZE,
                              priority_weight=INTERACTION_PRIORITY,
-                             max_label_distance_px=INTERACTION_LEASH_PX)
+                             max_label_distance_px=INTERACTION_LEASH_PX,
+                             orient_to_data=True)
                 ch.components = comps
                 channels.append(ch)
 

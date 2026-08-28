@@ -1,0 +1,210 @@
+{
+  "id": "7d2e68cb-2ced-430c-9bbd-c3170500039c",
+  "title": "HLA-E Signal Tissue Margin",
+  "category": "Innate_Immunity",
+  "created": "2026-08-27T20:49:59Z",
+  "updated": "2026-08-27T20:50:08Z",
+  "notes": "STING bordering Hoechst nucleated TP53 cells with HLA-E signal",
+  "description": "STING bordering Hoechst nucleated TP53 cells with HLA-E signal",
+  "camera": {
+    "position": [
+      1196.5836241662184,
+      775.359132574547,
+      202.79083569089954
+    ],
+    "focalPoint": [
+      1196.5836241662184,
+      775.359132574547,
+      14.14
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FFFFFF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 1,
+      "name": "HLA-E",
+      "color": "#0000FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 2,
+      "name": "STING",
+      "color": "#00FF00",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 3,
+      "name": "TP53",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 2752,
+    "height": 1000
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          1196.5836241662184,
+          775.359132574547,
+          202.79083569089954
+        ],
+        "focalPoint": [
+          1196.5836241662184,
+          775.359132574547,
+          14.14
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "STING bordering Hoechst nucleated TP53 cells with HLA-E signal",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FFFFFF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 1,
+          "name": "HLA-E",
+          "color": "#0000FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 2,
+          "name": "STING",
+          "color": "#00FF00",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 3,
+          "name": "TP53",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 2752,
+        "height": 1000
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 3712,
+          "x1": 4864,
+          "y0": 2432,
+          "y1": 3072
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Label: Hoechst, HLA-E, STING, TP53"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"HLA-E\": [\n      \"non-classical MHC-I\"\n    ],\n    \"HLA-E+STING\": [\n      \"innate sensing with immune evasion\"\n    ],\n    \"HLA-E/STING\": [\n      \"MHC-I\\u2013STING activation interface\"\n    ],\n    \"HLA-E/TP53\": [\n      \"immune surveillance\\u2013damage zone\"\n    ],\n    \"Hoechst\": [\n      \"nuclear compartment\"\n    ],\n    \"STING\": [\n      \"innate immune sensor\"\n    ],\n    \"STING+TP53\": [\n      \"DNA damage\\u2013innate immunity axis\"\n    ],\n    \"TP53\": [\n      \"DNA damage response\"\n    ]\n  },\n  \"overall\": [\n    \"cGAS-STING innate immune microenvironment\"\n  ]\n}"
+    },
+    {
+      "role": "assistant",
+      "content": "Labels: 56/586 callouts shown across 6 channel(s), 1/3 surface labels shown, 13 actors, viewport 2752x1000, 16985 ms."
+    },
+    {
+      "role": "user",
+      "content": "Label: Hoechst, HLA-E, STING, TP53"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"HLA-E\": [\n      \"non-classical MHC-I\"\n    ],\n    \"HLA-E+Hoechst\": [\n      \"nuclear HLA-E expression\"\n    ],\n    \"HLA-E/STING\": [\n      \"antigen presentation\\u2013STING niche\"\n    ],\n    \"HLA-E/TP53\": [\n      \"immune evasion\\u2013suppressor zone\"\n    ],\n    \"Hoechst\": [\n      \"nuclear compartment\"\n    ],\n    \"STING\": [\n      \"innate immune sensing\"\n    ],\n    \"STING/TP53\": [\n      \"DNA damage\\u2013innate sensing interface\"\n    ],\n    \"TP53\": [\n      \"tumor suppressor activity\"\n    ]\n  },\n  \"overall\": [\n    \"innate immune sensing microenvironment\"\n  ]\n}"
+    },
+    {
+      "role": "assistant",
+      "content": "Labels: 62/567 callouts shown across 7 channel(s), 1/1 surface labels shown, 15 actors, viewport 2752x1000, 23753 ms."
+    },
+    {
+      "role": "user",
+      "content": "Suggest channels to add alongside: Hoechst, HLA-E, STING, TP53"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"suggestions\": [\n    {\n      \"channel\": \"cGAS\",\n      \"priority\": \"high\",\n      \"reason\": \"completes cGAS-STING axis upstream of STING activation\"\n    },\n    {\n      \"channel\": \"pTBK1\",\n      \"priority\": \"high\",\n      \"reason\": \"reveals STING downstream signaling through TBK1 phosphorylation\"\n    },\n    {\n      \"channel\": \"pH2AX\",\n      \"priority\": \"high\",\n      \"reason\": \"identifies DNA double-strand breaks driving TP53 and STING activation\"\n    },\n    {\n      \"channel\": \"IRF3\",\n      \"priority\": \"medium\",\n      \"reason\": \"shows interferon-regulatory factor downstream of STING-TBK1\"\n    },\n    {\n      \"channel\": \"NFkB\",\n      \"priority\": \"medium\",\n      \"reason\": \"reveals inflammatory NF-\\u03baB arm of STING signaling\"\n    },\n    {\n      \"channel\": \"MX1\",\n      \"priority\": \"medium\",\n      \"reason\": \"marks interferon-stimulated gene response as STING pathway readout\"\n    }\n  ]\n}"
+    },
+    {
+      "role": "user",
+      "content": "Suggest bookmark text"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    }
+  ],
+  "chat_history_updated": "2026-08-27T20:50:08Z",
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 3712,
+      "x1": 4864,
+      "y0": 2432,
+      "y1": 3072
+    }
+  }
+}

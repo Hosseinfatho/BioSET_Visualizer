@@ -1,0 +1,158 @@
+{
+  "id": "57a2b514-1300-4f6c-864c-9ea7d80a0524",
+  "title": "DNA damage",
+  "category": "tumor_region",
+  "created": "2026-08-28T13:59:20Z",
+  "updated": "2026-08-28T13:59:44Z",
+  "notes": "",
+  "description": "",
+  "camera": {
+    "position": [
+      614.3083819557547,
+      702.1510955554793,
+      606.2071360244505
+    ],
+    "focalPoint": [
+      614.3083819557547,
+      702.1510955554793,
+      14.139999999999999
+    ],
+    "viewUp": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "channels": [
+    {
+      "id": 0,
+      "name": "Hoechst",
+      "color": "#FF00FF",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 14,
+      "name": "Ki67",
+      "color": "#00FF00",
+      "range": [
+        90.0,
+        100.0
+      ]
+    },
+    {
+      "id": 17,
+      "name": "pH2AX",
+      "color": "#FFFFFF",
+      "range": [
+        49.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    14,
+    0,
+    17
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 2048,
+    "height": 1001
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          614.3083819557547,
+          702.1510955554793,
+          606.2071360244505
+        ],
+        "focalPoint": [
+          614.3083819557547,
+          702.1510955554793,
+          14.139999999999999
+        ],
+        "viewUp": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "notes": "",
+      "comments": [],
+      "channels": [
+        {
+          "id": 0,
+          "name": "Hoechst",
+          "color": "#FF00FF",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 14,
+          "name": "Ki67",
+          "color": "#00FF00",
+          "range": [
+            90.0,
+            100.0
+          ]
+        },
+        {
+          "id": 17,
+          "name": "pH2AX",
+          "color": "#FFFFFF",
+          "range": [
+            49.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        14,
+        0,
+        17
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 2048,
+        "height": 1001
+      },
+      "optional_LOD": {
+        "component": 2,
+        "roi": {
+          "x0": 384,
+          "x1": 1792,
+          "y0": 896,
+          "y1": 1664
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "can you list the cytoplasmic markers"
+    },
+    {
+      "role": "assistant",
+      "content": "Among the channels in this dataset, the cytoplasmic markers are: STING (cytoplasmic innate immune adaptor), cGAS (cytoplasmic DNA sensor), GZMB (granzyme B, cytotoxic granule protein), PanCK (pan-cytokeratin, cytoplasmic intermediate filament), b-actin (cytoskeletal actin), Tubulin (cytoskeletal microtubule component), pTBK1 (phosphorylated TBK1, cytoplasmic kinase in the STING pathway), MX1 (interferon-induced cytoplasmic GTPase), CD68 (lysosomal/cytoplasmic macrophage marker), and CD163 (cytoplasmic/membrane scavenger receptor on macrophages). Several markers in this panel have mixed nuclear-cytoplasmic localization depending on activation state, including NFkB (cytoplasmic when inactive, nuclear when activated), IRF3 (similarly shuttles to the nucleus upon phosphorylation), and pSTAT3 (cytoplasmic before nuclear translocation). Surface receptors such as CD4, CD8a, CD3d, PD1, PDL1, LAG3, TIM3, CD20, CD31, CD40, CD103, CD11c, NKG2D, HLA-E, HLA A, HLA DR, and CD45RO are membrane-associated rather than strictly cytoplasmic, while Hoechst, TP53, Ki67, pH2AX, FOXP3, TCF1/TCF7, Lamin AC, and BANF1 are primarily nuclear."
+    }
+  ],
+  "chat_history_updated": "2026-08-28T13:59:44Z",
+  "optional_LOD": {
+    "component": 2,
+    "roi": {
+      "x0": 384,
+      "x1": 1792,
+      "y0": 896,
+      "y1": 1664
+    }
+  }
+}

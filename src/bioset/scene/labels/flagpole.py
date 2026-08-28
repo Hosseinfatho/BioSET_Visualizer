@@ -212,9 +212,52 @@ INTERACTION_MIN_BINS = 3
 INTERACTION_MIN_SEPARATION = 14.0
 MAX_INTERACTION_SITES = 18
 # Interaction sites are the point of the view, so they outrank per-cell labels
-# when the screen gets tight.
-INTERACTION_PRIORITY = 2.5
+# when the screen gets tight. Raised well clear of the single-marker band: with
+# per-cell priority now capped below 1.0 and this at 4.0, no per-cell label can
+# ever outrank a contact site however large its component is.
+INTERACTION_PRIORITY = 4.0
 INTERACTION_LEASH_PX = 260.0
+# A component whose second principal extent is more than this fraction of its
+# first is treated as round, and its label left horizontal. Orienting a label
+# to a direction that is barely there makes it jitter as the camera moves.
+AXIS_ROUNDNESS_LIMIT = 0.75
+# Oriented labels are SCALED into this much tilt, not clipped at it. Clipping
+# piled a majority of them onto the limit exactly (measured: 4 distinct angles
+# across 10 labels at one camera), which reads as mechanical rather than as
+# following anything. Scaling keeps every label distinct and still bounded:
+# past this much tilt the text is hard to read and fights the horizontal
+# layout around it.
+MAX_LABEL_TILT_DEG = 40.0
+
+# ── How many single-marker labels the screen earns ─────────────────────────
+# A per-cell label is only worth drawing when its component is big enough on
+# screen to be worth naming. Gating on PROJECTED SIZE rather than a fixed count
+# is what makes the density follow the zoom on its own: far out, only the
+# largest components clear the bar; as you zoom in, more and more do, with no
+# schedule to tune and nothing that has to know the pyramid depth.
+#
+# Measured on a 4x4 mis_v3 viewport at 1600x1000, the projected size of the
+# MART1 components actually in view:
+#
+#     zoom   in view   p50   p90   max   >=40px  >=60px
+#        1       109    19    43    74       17       1
+#        2        92    39    85   147       44      30
+#        4        22    76   175   206       22      16
+#
+# 55 px sits just under the largest handful at full zoom-out and is comfortably
+# exceeded by most components two steps in, which is the behaviour asked for:
+# only the biggest get named when the whole field is in view, and more earn a
+# label as you come in. Below this the label is wider than the thing it names.
+SINGLE_MARKER_MIN_SCREEN_PX = 55.0
+# Hard ceiling on per-cell labels actually drawn, whatever the zoom. The size
+# gate alone can still admit a hundred at very high zoom on dense tissue; this
+# keeps the screen readable, and it keeps the strongest components by taking
+# them in priority (area) order.
+SINGLE_MARKER_MAX_SHOWN = 14
+# Per-cell labels are a background layer, not the point of the view: their
+# priority band sits entirely below INTERACTION_PRIORITY so a contact site or a
+# colocalization always wins a contested spot.
+SINGLE_MARKER_PRIORITY = 1.0
 
 HIDDEN_PX = -10000.0
 
@@ -261,8 +304,13 @@ COLOC_MIN_SEPARATION = 14.0
 # closely the text follows: measured on mis_v3, 13x5 -> 21x9 took the bend
 # from 0.40 to 0.58 um while the bend cap and the smoothing passes changed
 # nothing. Costs one ray per vertex per refit, 2.6 -> 7.2 ms for 4 sites.
-CONFORM_SCAFFOLD_U = 21
-CONFORM_SCAFFOLD_V = 9
+# Raised from 21x9: measured on a 2x2 mis_v3 viewport, the bend (RMS departure
+# of the deformed glyph vertices from their own best-fit plane) goes
+# 0.70 -> 0.92 um, and lowering the proxy smoothing below adds a little more.
+# 33x13 was also tried and does not beat this while costing half again as much
+# per refit, so this is the knee.
+CONFORM_SCAFFOLD_U = 27
+CONFORM_SCAFFOLD_V = 11
 # Laplacian passes over the scaffold, then how much of the remaining bend to
 # keep. Zero passes is maximum conformance; the reference needed 1 because its
 # cells were ~17x larger relative to the label, so a label-sized window spanned
@@ -274,6 +322,7 @@ CONFORM_ALPHA = 1.0
 # height, so this only engages on a genuinely violent surface. Raising it does
 # nothing on its own — the scaffold above is the lever.
 COLOC_MAX_BEND_FRACTION = 0.35
+
 # Rays landing in the gaps between cells are filled from neighbors. Below this
 # hit rate the patch is flattened further rather than trusted.
 COLOC_MIN_HIT_FRACTION = 0.35
@@ -294,7 +343,11 @@ COLOC_SOUP_MARGIN = 14.0
 # pulling it in this far keeps the real shape for the text to follow, and
 # measurably raises the bend (0.58 -> 0.65 um at a 21x9 scaffold).
 COLOC_PROXY_DILATION = 0.25
-COLOC_PROXY_SMOOTH = 30
+# Lowered from 30. Those passes flatten the proxy the text is fitted to, which
+# is the surface detail we want the label to pick up; at the denser scaffold
+# above, dropping them measurably raises the bend (0.83 -> 0.94 um). Not taken
+# to zero: some smoothing is what keeps the glyphs from going jagged.
+COLOC_PROXY_SMOOTH = 10
 # The proxy is only ever sampled at scaffold resolution, so fitting against a
 # tenth of its triangles costs nothing in quality and roughly quarters the
 # refit. Measured: bend is unchanged, refit drops from 163 ms to 35 ms.
@@ -348,6 +401,42 @@ def bounds_diagonal(bounds: Sequence[float]) -> float:
             + (bounds[5] - bounds[4]) ** 2
         )
     )
+
+
+def _principal_axis_endpoints(components) -> np.ndarray:
+    """Two world points spanning each component's long axis, shaped (N, 2, 3).
+
+    The axis is the first principal direction of the component's surface
+    samples; the endpoints are its extremes among those samples. An interaction
+    site is a contact between two populations, so this direction is the
+    interface itself — which is what a label describing it should run along
+    rather than sitting horizontal regardless of the geometry.
+
+    Degenerate components (too few samples, or genuinely round) fall back to
+    two coincident points, which the caller reads as "no preferred direction".
+    """
+    out = np.zeros((len(components), 2, 3), dtype=np.float64)
+    for i, c in enumerate(components):
+        pts = np.asarray(getattr(c, "candidate_points", None), dtype=np.float64)
+        if pts is None or pts.ndim != 2 or len(pts) < 3:
+            out[i, 0] = out[i, 1] = np.asarray(c.center, dtype=np.float64)
+            continue
+        centre = pts.mean(axis=0)
+        rel = pts - centre
+        try:
+            _, sv, vt = np.linalg.svd(rel, full_matrices=False)
+        except np.linalg.LinAlgError:
+            out[i, 0] = out[i, 1] = centre
+            continue
+        # Round enough that any axis would be arbitrary: leave it unoriented
+        # rather than let numerical noise pick a direction that then flickers.
+        if len(sv) < 2 or sv[0] <= 1e-9 or (sv[1] / sv[0]) > AXIS_ROUNDNESS_LIMIT:
+            out[i, 0] = out[i, 1] = centre
+            continue
+        t = rel @ vt[0]
+        out[i, 0] = centre + vt[0] * float(t.min())
+        out[i, 1] = centre + vt[0] * float(t.max())
+    return out
 
 
 def normalize(v: np.ndarray, fallback=(0.0, 0.0, 1.0)) -> np.ndarray:
@@ -526,6 +615,17 @@ class Channel:
     # rather than another colour of the same one.
     background_color: Optional[Tuple[float, float, float]] = None
     background_opacity: Optional[float] = None
+    # Smallest projected component size, in pixels, that earns a label. 0
+    # disables the gate. Per-cell channels set it so their density follows the
+    # zoom; interaction and colocalization labels are never gated this way —
+    # they name a site, not a blob, and there are only ever a handful.
+    min_screen_px: float = 0.0
+    # Ceiling on how many of this channel's labels may be drawn at once. None
+    # for no limit.
+    max_shown: Optional[int] = None
+    # Screen-space rotation for this channel's labels, in radians, one per
+    # component. None keeps them horizontal.
+    orient_to_data: bool = False
     components: List[Component] = field(default_factory=list)
 
 
@@ -897,23 +997,43 @@ class TexturedLabelLayer:
         self._np[base + 2] = (right, top, 0.0)
         self._np[base + 3] = (left, top, 0.0)
 
-    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray):
-        """Vectorized bulk placement for a whole channel."""
+    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray,
+                      angles: Optional[np.ndarray] = None):
+        """Vectorized bulk placement for a whole channel.
+
+        `angles` rotates each quad about its own centre, in radians, so a label
+        can follow the direction of the thing it names instead of sitting
+        stubbornly horizontal. None keeps every quad axis-aligned, which is the
+        cheaper path and what per-cell labels use.
+        """
         if len(indices) == 0:
             return
         base = 4 * np.asarray(indices, dtype=np.int64)
-        left = xs - self._half_w
-        right = xs + self._half_w
-        bottom = ys - self._half_h
-        top = ys + self._half_h
-        self._np[base + 0, 0] = left
-        self._np[base + 0, 1] = bottom
-        self._np[base + 1, 0] = right
-        self._np[base + 1, 1] = bottom
-        self._np[base + 2, 0] = right
-        self._np[base + 2, 1] = top
-        self._np[base + 3, 0] = left
-        self._np[base + 3, 1] = top
+        if angles is None:
+            left = xs - self._half_w
+            right = xs + self._half_w
+            bottom = ys - self._half_h
+            top = ys + self._half_h
+            self._np[base + 0, 0] = left
+            self._np[base + 0, 1] = bottom
+            self._np[base + 1, 0] = right
+            self._np[base + 1, 1] = bottom
+            self._np[base + 2, 0] = right
+            self._np[base + 2, 1] = top
+            self._np[base + 3, 0] = left
+            self._np[base + 3, 1] = top
+        else:
+            # Corner offsets in the label's own frame, in the same order the
+            # texture coordinates were built with, then rotated per label.
+            ox = np.array([-1.0, 1.0, 1.0, -1.0]) * self._half_w
+            oy = np.array([-1.0, -1.0, 1.0, 1.0]) * self._half_h
+            c = np.cos(angles)[:, None]
+            s = np.sin(angles)[:, None]
+            rx = ox[None, :] * c - oy[None, :] * s
+            ry = ox[None, :] * s + oy[None, :] * c
+            for k in range(4):
+                self._np[base + k, 0] = xs + rx[:, k]
+                self._np[base + k, 1] = ys + ry[:, k]
         self._np[np.concatenate([base, base + 1, base + 2, base + 3]), 2] = 0.0
 
     def hide(self, index: int):
@@ -992,7 +1112,11 @@ class MapperLabelLayer:
     def set_position(self, index: int, x: float, y: float):
         self._np[index] = (x, y, 0.0)
 
-    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray):
+    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray,
+                      angles=None):
+        # `angles` accepted and ignored: this path draws through VTK's label
+        # mappers, which place upright text and offer no rotation. Taking the
+        # argument keeps it interchangeable with the textured path.
         if len(indices) == 0:
             return
         idx = np.asarray(indices, dtype=np.int64)
@@ -1200,6 +1324,9 @@ class FlagpoleLayout:
 
         # Per-channel static arrays. Built once, reused every frame.
         self._channel_priority: Dict[str, np.ndarray] = {}
+        self._channel_diag: Dict[str, np.ndarray] = {}
+        self._channel_axis: Dict[str, Optional[np.ndarray]] = {}
+        self._channel_min_px: Dict[str, np.ndarray] = {}
         self._channel_indices: Dict[str, np.ndarray] = {}
         self._channel_fallback_angle: Dict[str, np.ndarray] = {}
         self._channel_leash: Dict[str, np.ndarray] = {}
@@ -1224,6 +1351,24 @@ class FlagpoleLayout:
             )
             self._channel_leash[ch.name] = np.full(
                 len(ch.components), float(ch.max_label_distance_px), dtype=np.float64
+            )
+            # World diagonal per component, so the solver can work out how big
+            # each one is ON SCREEN for the size gate.
+            self._channel_diag[ch.name] = np.array(
+                [float(getattr(c, "diagonal", 0.0)) for c in ch.components],
+                dtype=np.float64,
+            )
+            self._channel_min_px[ch.name] = np.full(
+                len(ch.components), float(ch.min_screen_px), dtype=np.float64
+            )
+            # Two world points spanning each component's long axis. Projected
+            # every pass, they give the direction the component runs in ON
+            # SCREEN, which is what an oriented label follows. Two points
+            # rather than a per-frame PCA: the axis is a property of the
+            # geometry, only its projection changes with the camera.
+            self._channel_axis[ch.name] = (
+                _principal_axis_endpoints(ch.components)
+                if ch.orient_to_data else None
             )
             self._channel_fallback_angle[ch.name] = np.array(
                 [
@@ -1532,6 +1677,78 @@ class FlagpoleLayout:
 
         return x, y
 
+    def _screen_angles(self, ch, selector, names, width, height):
+        """Screen-space tilt for this channel's labels, or None to stay level.
+
+        The component's long axis is projected and its screen direction taken
+        directly, so the label follows the geometry as the camera turns. Folded
+        into (-90, 90] so text never reads upside down, then clamped: a label
+        past MAX_LABEL_TILT_DEG is hard to read and fights the horizontal
+        layout around it.
+        """
+        axis = self._channel_axis.get(ch.name)
+        if axis is None or not len(axis):
+            return None
+        # `selector` indexes the surviving labels; map back to this channel's
+        # own component order to pick the right axis rows.
+        own = np.nonzero(names == ch.name)[0]
+        rank = np.searchsorted(own, np.nonzero(selector)[0])
+        ends = axis[rank]
+        p0x, p0y, _z0, ok0 = self._project(ends[:, 0, :], width, height)
+        p1x, p1y, _z1, ok1 = self._project(ends[:, 1, :], width, height)
+        dx, dy = p1x - p0x, p1y - p0y
+        length = np.hypot(dx, dy)
+        ang = np.arctan2(dy, dx)
+        # Fold into (-90, 90]: a label at 170 deg is the same line as one at
+        # -10 deg, but only one of them is readable.
+        ang = (ang + 0.5 * math.pi) % math.pi - 0.5 * math.pi
+        # Scale the full +/-90 range into +/-MAX rather than clipping, so
+        # labels stay distinguishable instead of stacking on the limit.
+        ang = ang * (MAX_LABEL_TILT_DEG / 90.0)
+        # Too short to have a direction on screen, or an endpoint behind the
+        # camera: leave those level rather than orienting them to noise.
+        ang[(length < 1.0) | ~(ok0 & ok1)] = 0.0
+        return ang
+
+    def _world_per_pixel(self, depth: np.ndarray, height: int) -> np.ndarray:
+        """World units spanned by one pixel, per component, at its own depth.
+
+        Under perspective this grows with distance, which is precisely why the
+        size gate follows the zoom: the same component covers more pixels as
+        the camera comes in. Under parallel projection it is constant.
+        """
+        cam = self.renderer.GetActiveCamera()
+        h = max(int(height), 1)
+        if cam.GetParallelProjection():
+            return np.full(len(depth), 2.0 * cam.GetParallelScale() / h)
+        half = math.radians(0.5 * float(cam.GetViewAngle()))
+        return 2.0 * np.maximum(depth, 1e-6) * math.tan(half) / h
+
+    @staticmethod
+    def _apply_channel_caps(keep, names, caps, screen_px):
+        """Trim each channel to its own ceiling, keeping the biggest on screen.
+
+        Runs after collision resolution so the cap counts labels that would
+        actually be DRAWN, not candidates — capping earlier would spend the
+        allowance on labels the solver then discards anyway.
+
+        Ranked by projected size rather than by the solver's priority so the
+        survivors are the components a viewer would pick out themselves.
+        """
+        if len(keep) == 0:
+            return keep
+        out = keep.copy()
+        for name in np.unique(names):
+            sel = np.nonzero((names == name) & out)[0]
+            if len(sel) == 0:
+                continue
+            cap = int(caps[sel[0]])
+            if cap < 0 or len(sel) <= cap:
+                continue
+            order = sel[np.argsort(-screen_px[sel])]
+            out[order[cap:]] = False
+        return out
+
     @staticmethod
     def _select_visible(x, y, w, h, priority):
         """Greedy acceptance by priority using one precomputed overlap matrix."""
@@ -1616,6 +1833,9 @@ class FlagpoleLayout:
         priority_chunks = []
         width_chunks = []
         height_chunks = []
+        diag_chunks = []
+        min_px_chunks = []
+        cap_chunks = []
         angle_chunks = []
         active_chunks = []
         leash_chunks = []
@@ -1635,6 +1855,11 @@ class FlagpoleLayout:
             channel_of.append(np.full(count, ch.name, dtype=object))
             label_index_chunks.append(self._channel_indices[ch.name])
             priority_chunks.append(self._channel_priority[ch.name])
+            diag_chunks.append(self._channel_diag[ch.name])
+            min_px_chunks.append(self._channel_min_px[ch.name])
+            cap_chunks.append(np.full(
+                count, -1 if ch.max_shown is None else int(ch.max_shown),
+                dtype=np.int64))
             width_chunks.append(np.full(count, layer.width, dtype=np.float64))
             height_chunks.append(np.full(count, layer.height, dtype=np.float64))
             angle_chunks.append(self._channel_fallback_angle[ch.name])
@@ -1651,17 +1876,36 @@ class FlagpoleLayout:
         names = np.concatenate(channel_of, axis=0)
         label_indices = np.concatenate(label_index_chunks, axis=0)
         priority = np.concatenate(priority_chunks, axis=0)
+        diag = np.concatenate(diag_chunks, axis=0)
+        min_px = np.concatenate(min_px_chunks, axis=0)
+        caps = np.concatenate(cap_chunks, axis=0)
         w = np.concatenate(width_chunks, axis=0)
         h = np.concatenate(height_chunks, axis=0)
         angles = np.concatenate(angle_chunks, axis=0)
         active = np.concatenate(active_chunks, axis=0)
         leash = np.concatenate(leash_chunks, axis=0)
 
-        ax, ay, _depth, in_front = self._project(world, width, height)
+        ax, ay, _ndc_z, in_front = self._project(world, width, height)
+
+        # How big is each component ON SCREEN? A per-cell label is only worth
+        # drawing once the thing it names is big enough to be worth naming, and
+        # gating on that is what makes label density follow the zoom by itself
+        # rather than from a hand-tuned schedule.
+        #
+        # Depth along the view axis, NOT the third value _project returns —
+        # that one is normalized device z, which lives in [-1, 1] and would
+        # make every component look enormous, passing the gate always.
+        camera_dir = normalize(
+            np.asarray(camera.GetDirectionOfProjection()), (0.0, 0.0, -1.0))
+        depth = (world - camera_pos[None, :]) @ camera_dir
+        screen_px = diag / np.maximum(
+            self._world_per_pixel(depth, height), 1e-9)
+        big_enough = (min_px <= 0.0) | (screen_px >= min_px)
 
         on_screen = (
             active
             & in_front
+            & big_enough
             & (ax >= -allowance_x)
             & (ax <= width + allowance_x)
             & (ay >= -allowance_y)
@@ -1681,6 +1925,8 @@ class FlagpoleLayout:
 
         ax = ax[keep_idx]
         ay = ay[keep_idx]
+        screen_px = screen_px[keep_idx]
+        caps = caps[keep_idx]
         names = names[keep_idx]
         label_indices = label_indices[keep_idx]
         priority = priority[keep_idx]
@@ -1699,6 +1945,7 @@ class FlagpoleLayout:
 
         keep = self._select_visible(x, y, w, h, priority)
         keep &= ~self._blocked_by_obstacle(x, y, w, h)
+        keep = self._apply_channel_caps(keep, names, caps, screen_px)
         ex, ey = self._leader_endpoints(x, y, w, h, ax, ay)
         keep &= ~self._leader_blocked(ax, ay, ex, ey)
 
@@ -1707,7 +1954,9 @@ class FlagpoleLayout:
             if not selector.any():
                 continue
             idx = label_indices[selector]
-            self.label_layers[ch.name].set_positions(idx, x[selector], y[selector])
+            angles = self._screen_angles(ch, selector, names, width, height)
+            self.label_layers[ch.name].set_positions(
+                idx, x[selector], y[selector], angles)
             self.leader_layers[ch.name].set_segments(
                 idx, ax[selector], ay[selector], ex[selector], ey[selector]
             )
@@ -2659,6 +2908,16 @@ class ColocConformer:
             span = max(site.prism[1] - site.prism[0], site.prism[3] - site.prism[2])
 
             # Scaffold, laid out camera-facing in the plane through the seed.
+            #
+            # Tilting these axes toward the surface's own tangent plane was
+            # tried, to make the conformance more visible. It does not work on
+            # this geometry: these are blobby isosurfaces, and the angle between
+            # a surface normal and the view axis measures a median of 73 deg
+            # (only 5% of triangles lie within 30 deg of facing the camera).
+            # Text laid flat on a surface that steep is edge-on and unreadable,
+            # so any alignment strong enough to see is too strong to read.
+            # Camera-facing is the right choice here; bend is the lever that
+            # actually conveys the surface, and the scaffold density sets it.
             pts = (
                 site.seed[None, None, :]
                 + (self._uu * w_world)[..., None] * right[None, None, :]
