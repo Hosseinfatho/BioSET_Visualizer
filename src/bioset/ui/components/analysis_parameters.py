@@ -30,24 +30,13 @@ def analysis_parameters_section(state, ctrl):
                     v_show=("analysis_params_open", False),
                     classes="mt-1",
             ):
-                # Dilation Header: label + current radius + exact/computed chip.
-                # Radii at the preprocessed detents are answered exactly from the
-                # tally; anything else is computed from the EDT field.
-                with vuetify.VListItem(classes="mt-2 text-left ml-4"):
-                    html.Span("Dilation radius", classes="text-caption grey--text font-weight-bold")
-                    html.Span(
-                        "{{ Number(current_dilation).toFixed(2) }} \u03BCm",
-                        classes="text-caption ml-2",
-                        style="color: white;",
-                    )
-                    vuetify.VChip(
-                        v_text="analysis_dilation_amounts.some(d => Math.abs(d - current_dilation) < 0.001) ? 'exact' : 'computed'",
-                        x_small=True,
-                        classes="ml-2",
-                        color=("analysis_dilation_amounts.some(d => Math.abs(d - current_dilation) < 0.001) ? 'green darken-3' : 'amber darken-4'",),
-                        text_color="white",
-                    )
-
+                # The "Dilation radius 1.32 um [exact]" header used to sit here.
+                # Removed as a poor use of a narrow panel: the slider's thumb
+                # label already shows the radius while you drag it, and the
+                # exact-vs-computed distinction it carried is still on screen \u2014
+                # the detent ticks and their labels turn green exactly when the
+                # current radius sits on a preprocessed detent, which is the
+                # same condition the chip tested.
                 with vuetify.VListItem(class_="nav-item nav-item--nested"):
                     with vuetify.VListItemContent(classes="pb-0"):
                         # Continuous radius slider with magnetic detents.

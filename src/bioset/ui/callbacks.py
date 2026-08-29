@@ -183,6 +183,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
         """Set the main VTK renderer reference (used by label scene manager)."""
         _refs["renderer"] = renderer
 
+    def sync_contour_manual_level():
+        """Pin the contour detail ramp to the manual level, or release it.
+
+        Contour mode reads the hierarchy level nowhere else — its field is
+        always level 0 on purpose — so without this the manual selector did
+        nothing at all in contour mode.
+        """
+        contours = _refs.get("contours")
+        if contours is None or not hasattr(contours, "set_manual_level"):
+            return
+        manual = getattr(state, "heatmap_auto_level", "auto") != "auto"
+        contours.set_manual_level(
+            int(state.current_hierarchy_level) if manual else None)
+        v = _refs.get("view")
+        if v:
+            try:
+                v.update()
+            except Exception:
+                pass
+
     def set_heatmap_lod_auto_mode(enabled: bool):
         """Set heatmap LOD auto mode (controlled by UI toggle)."""
         heatmap_lod = _refs.get("heatmap_lod")
@@ -2839,6 +2859,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
+    ctrl.sync_contour_manual_level = sync_contour_manual_level
     ctrl.set_viewport_plots = set_viewport_plots
     ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
     ctrl.trigger("clear_analysis")(clear_analysis)

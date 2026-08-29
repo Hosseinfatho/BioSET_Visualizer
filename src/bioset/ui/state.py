@@ -565,6 +565,8 @@ def register_state_change_handlers(state, ctrl):
         is_auto = heatmap_auto_level == "auto"
         if hasattr(ctrl, 'set_heatmap_lod_auto_mode'):
             ctrl.set_heatmap_lod_auto_mode(is_auto)
+        if hasattr(ctrl, 'sync_contour_manual_level'):
+            ctrl.sync_contour_manual_level()
         # Switching to manual: immediately re-query at the current level
         if not is_auto and hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
@@ -582,6 +584,10 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
+        # Contour mode keeps its field at level 0, so the level only reaches it
+        # through the detail ramp — and only if we say so here.
+        if hasattr(ctrl, 'sync_contour_manual_level'):
+            ctrl.sync_contour_manual_level()
 
     @state.change("upset_data")
     def on_upset_data_change(upset_data, **kwargs):
