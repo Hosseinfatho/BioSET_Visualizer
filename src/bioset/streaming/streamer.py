@@ -23,6 +23,7 @@ from .lod import (
     choose_component,
     compute_visible_xy_roi_vox,
     derive_distance_rules,
+    resolve_coarsest_component,
     scale_roi_to_component,
 )
 from .profiling import StageTimer, fmt_bytes, log as plog
@@ -301,6 +302,15 @@ class VolumeStreamer:
             levels = self.zsrc.level_count()
         except Exception as e:
             print(f"[stream] Could not detect pyramid depth, keeping defaults: {e}")
+            # Still resolve the placeholder level, against the configured depth.
+            # Leaving it at its default would silently ignore
+            # cfg.interactive_base_component on any store we cannot inspect,
+            # which looks exactly like the setting not working.
+            self.cfg = self.cfg.__class__(**{
+                **self.cfg.__dict__,
+                "base_component": resolve_coarsest_component(
+                    self.cfg.interactive_base_component, self.cfg.max_component),
+            })
             return
 
         max_component = max(0, levels - 1)
@@ -311,6 +321,12 @@ class VolumeStreamer:
             # cfg.min_component=1 to cap the finest LOD and keep high zoom snappy.
             "min_component": max(0, min(self.cfg.min_component, max_component)),
             "max_component": max_component,
+            # Which level the interactive placeholder is built at. Kept separate
+            # from max_component on purpose: the camera-driven LOD still goes
+            # all the way out to the coarsest level, only the texture shown
+            # while data loads is held one level finer.
+            "base_component": resolve_coarsest_component(
+                self.cfg.interactive_base_component, max_component),
             # Start coarse: the first frame should be cheap, LOD refines after.
             "start_component": max_component,
         }
@@ -496,7 +512,7 @@ class VolumeStreamer:
             # main thread), which also builds its transfer function and covers the
             # whole volume (never empty). Then refine to the current viewport
             # asynchronously (progressive, centre-out) alongside the others.
-            coarse = self.cfg.max_component
+            coarse = self.cfg.base_component
             _, ydim, xdim = self._dims_for_component(coarse)
             self._load_and_display_channel(
                 channel_id, coarse, ROI(0, xdim, 0, ydim), reset_camera=False)
@@ -1622,7 +1638,7 @@ class VolumeStreamer:
         img = self._base_images.get(ch)
         if img is not None:
             return img
-        comp = self.cfg.max_component
+        comp = self.cfg.base_component
         try:
             _, ydim, xdim = self._dims_for_component(comp)
             arr = self._load_channel_data(comp, ch, ROI(0, xdim, 0, ydim))
@@ -2059,9 +2075,15 @@ class VolumeStreamer:
         return g
 
     def _cache_for(self, comp: int) -> ChunkCache:
-        """Coarsest-level tiles live in the pinned low-res cache (never evicted by
-        fine-tile churn); every finer level uses the main byte-budget LRU."""
-        return self._lowres_cache if comp >= self.cfg.max_component else self._chunk_cache
+        """Low-res tiles live in the pinned cache (never evicted by fine-tile
+        churn); every finer level uses the main byte-budget LRU.
+
+        "Low-res" is everything at or coarser than the placeholder level, so both
+        it and the true coarsest level stay pinned — the coarsest is still what
+        `_seed_from_coarser` guarantees hole coverage from, and what a fully
+        zoomed-out view renders."""
+        return (self._lowres_cache if comp >= self.cfg.base_component
+                else self._chunk_cache)
 
     def _read_tile(self, comp: int, ch: int, cyi: int, cxi: int, grid: ChunkGrid) -> np.ndarray:
         """Fetch one tile's full-z column (one remote request) and cache it.
@@ -2090,7 +2112,7 @@ class VolumeStreamer:
         viewport (zoom-out to the edges, or a newly added channel) without a
         blocking fetch on the interaction path."""
         try:
-            comp = self.cfg.max_component
+            comp = self.cfg.base_component
             grid = self._grid(comp)
             full = ROI(0, grid.X, 0, grid.Y)
             for (cyi, cxi) in grid.covering_tiles(full):

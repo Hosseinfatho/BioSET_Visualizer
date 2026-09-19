@@ -35,7 +35,11 @@ from . import sites as _sites
 from .flagpole import (
     COLOC_MERGE_BINS, COLOC_MIN_BINS, COLOC_MIN_SEPARATION, COLOC_MIN_VALUE,
     COLOC_WRAP_ASPECT, INTERACTION_LEASH_PX, INTERACTION_MERGE_BINS,
+    INTERACTION_FONT_SIZE, SINGLE_MARKER_FONT_SIZE,
+    INTERACTION_LABEL_BACKGROUND, INTERACTION_LABEL_BACKGROUND_OPACITY,
+    INTERACTION_LABEL_COLOR, INTERACTION_LABEL_UPPERCASE,
     INTERACTION_MIN_BINS, INTERACTION_MIN_SEPARATION, INTERACTION_PRIORITY,
+    SINGLE_MARKER_MAX_SHOWN, SINGLE_MARKER_MIN_SCREEN_PX, SINGLE_MARKER_PRIORITY,
     INTERACTION_RADIUS_BINS, MAX_COLOC_SITES, MAX_COMPONENTS_PER_CHANNEL,
     MAX_INTERACTION_SITES, COLOC_PROXY_DECIMATE, COLOC_PROXY_DILATION,
     COLOC_PROXY_SMOOTH, Channel, ColocConformer, FlagpoleLayout, MeshSoup,
@@ -102,10 +106,13 @@ class LabelSceneManager:
     # Proxies hold geometry, so only a few viewports' worth are kept.
     PROXY_CACHE_SIZE = 6
 
-    def __init__(self, renderer, render_window=None):
+    def __init__(self, renderer, render_window=None, overlay_renderer=None):
         self.renderer = renderer
         self.render_window = render_window or (
             renderer.GetRenderWindow() if renderer else None)
+        self.overlay_renderer = (overlay_renderer
+                                 if overlay_renderer is not None
+                                 else self._find_overlay_renderer())
 
         self._layout: Optional[FlagpoleLayout] = None
         self._conformer: Optional[ColocConformer] = None
@@ -120,6 +127,45 @@ class LabelSceneManager:
         # Set on a successful build, drained by the UI. Says what was placed.
         self.last_report: Optional[dict] = None
         self._result_queue: queue.Queue = queue.Queue()
+
+    def _find_overlay_renderer(self):
+        """Frontmost renderer sharing our camera, or None.
+
+        The app stacks three renderers on one camera: heatmap fill at layer 0,
+        the volume at layer 1, the heatmap outline at layer 2. Conforming label
+        patches sit on a surface INSIDE the tissue, so in the volume's own
+        renderer the ray caster composites the block in front of them and the
+        text washes out. Layer 2 already exists to draw in front of the volume,
+        and shares the camera, so putting the patches there keeps registration
+        exact and makes them visible.
+
+        Found rather than plumbed: "the frontmost layer on this camera" is
+        well defined from the render window, and threading a new argument
+        through the scene builder and the callback layer to say the same thing
+        would be more to keep in step. Falls back to None — meaning "use the
+        main renderer" — whenever there is no later layer, as in the tests.
+        """
+        rw, ren = self.render_window, self.renderer
+        if rw is None or ren is None:
+            return None
+        try:
+            cam = ren.GetActiveCamera()
+            best, best_layer = None, ren.GetLayer()
+            coll = rw.GetRenderers()
+            coll.InitTraversal()
+            for _ in range(coll.GetNumberOfItems()):
+                r = coll.GetNextItem()
+                if r is None or r is ren:
+                    continue
+                # Same camera only: a different camera would put the labels
+                # somewhere else entirely.
+                if r.GetActiveCamera() is not cam:
+                    continue
+                if r.GetLayer() > best_layer:
+                    best, best_layer = r, r.GetLayer()
+            return best
+        except Exception:
+            return None
 
     # ── build ──────────────────────────────────────────────
 
@@ -184,9 +230,17 @@ class LabelSceneManager:
                 comps = extract_components(key, pd, MAX_COMPONENTS_PER_CHANNEL)
                 if not comps:
                     continue
+                # Per-cell labels are the background layer. They are gated
+                # on how big their component is ON SCREEN, so their density
+                # follows the zoom instead of dumping a hundred callouts over
+                # the tissue the moment labelling is switched on, and they rank
+                # below every colocalization and contact site.
                 ch = Channel(name=key, display_text=text, polydata=pd,
                              label_color=colors.get(key, (1.0, 1.0, 1.0)),
-                             font_size=15)
+                             font_size=SINGLE_MARKER_FONT_SIZE,
+                             priority_weight=SINGLE_MARKER_PRIORITY,
+                             min_screen_px=SINGLE_MARKER_MIN_SCREEN_PX,
+                             max_shown=SINGLE_MARKER_MAX_SHOWN)
                 ch.components = comps
                 channels.append(ch)
 
@@ -246,11 +300,24 @@ class LabelSceneManager:
                 print(f"[labels] interaction '{key}': {len(comps)} site(s)")
                 if not comps:
                     continue
-                ch = Channel(name=key, display_text=text,
+                # Black on white, in caps — the inverse of every other label.
+                # Single-marker labels take their channel's colour, so one on a
+                # white channel used to be indistinguishable from a contact
+                # site. Inverting the plate makes the two different kinds of
+                # thing at a glance rather than different shades.
+                ch = Channel(name=key,
+                             display_text=(text.upper()
+                                           if INTERACTION_LABEL_UPPERCASE
+                                           else text),
                              polydata=_empty_polydata(),
-                             label_color=(1.0, 1.0, 1.0), font_size=14,
+                             label_color=INTERACTION_LABEL_COLOR,
+                             background_color=INTERACTION_LABEL_BACKGROUND,
+                             background_opacity=(
+                                 INTERACTION_LABEL_BACKGROUND_OPACITY),
+                             font_size=INTERACTION_FONT_SIZE,
                              priority_weight=INTERACTION_PRIORITY,
-                             max_label_distance_px=INTERACTION_LEASH_PX)
+                             max_label_distance_px=INTERACTION_LEASH_PX,
+                             orient_to_data=True)
                 ch.components = comps
                 channels.append(ch)
 
@@ -302,7 +369,8 @@ class LabelSceneManager:
             self._conformer = ColocConformer(
                 self.renderer, self.render_window, result["coloc_sites"],
                 result["soup"], text=result["coloc_text"] or "colocalization",
-                wrap_aspect=COLOC_WRAP_ASPECT)
+                wrap_aspect=COLOC_WRAP_ASPECT,
+                overlay_renderer=self.overlay_renderer)
             # A per-cell label inside a colocalization patch is redundant with
             # the text already lying on that surface.
             try:
@@ -366,6 +434,64 @@ class LabelSceneManager:
             placed = True
         return placed
 
+    def set_channel_color(self, name: str, rgb) -> bool:
+        """Recolour one marker's labels to follow its channel colour.
+
+        Only single-marker labels track a channel colour. A coloc or
+        interaction key names two markers, so there is no single colour to
+        follow, and interaction labels are deliberately black-on-white to mark
+        them as a different KIND of label — recolouring those would undo the
+        one thing that distinguishes them.
+        """
+        if self._layout is None or not name or "/" in name or "+" in name:
+            return False
+        swap = self._layout.set_channel_color(name, rgb)
+        if swap is None:
+            return False
+        old_actor, new_actor = swap
+        # `clear()` removes exactly the props recorded here, so the retired
+        # actor has to come off the list and its replacement go on — otherwise
+        # clearing would leave the new label layer on screen forever.
+        self._owned_props = [p for p in self._owned_props if p is not old_actor]
+        self._owned_props.append(new_actor)
+        return True
+
+    def resolve_if_resized(self) -> bool:
+        """Re-solve if the render window changed size since the last solve.
+
+        Flat callouts are placed in DISPLAY PIXELS, so a solve is only valid
+        for the window size it was computed against. The window is not stable:
+        `VtkRemoteView` is configured with `interactive_ratio=0.4`, and
+        trame-vtk implements that by calling `SetSize(original * 0.4)` on the
+        render window while the user interacts, restoring it on the still
+        render.
+
+        The settle fires on a 0.18 s timer after EndInteractionEvent, which can
+        easily beat the client's still-render round trip — so the solve lands
+        while the window is still at 40%, and then the window grows back with
+        nothing re-running the layout. Measured: every label ends up inside the
+        lower-left 40% of the viewport (median 0.19W, 0.18H), and the shown
+        count halves (100 -> 47), because label rectangles are a fixed pixel
+        size and are therefore 2.5x larger relative to a 40% viewport, so the
+        collision pass drops far more of them. Both of those are what a user
+        sees as "the labels went to the bottom-left and got sparse".
+
+        A genuine browser resize has exactly the same effect, and this covers
+        that too. Driven by the 10 Hz poll loop, so a stale layout survives at
+        most one tick.
+        """
+        if self._layout is None or self.render_window is None:
+            return False
+        if not self._preprocessed or not self._visible or self._gesturing:
+            return False
+        try:
+            size = tuple(self.render_window.GetSize())
+        except Exception:
+            return False
+        if size == self._layout.solved_size or min(size) < 80:
+            return False
+        return self.update(force=True)
+
     def begin_gesture(self):
         """Camera is moving: stop paying for labels until it settles.
 
@@ -408,11 +534,18 @@ class LabelSceneManager:
             self._conformer.set_visible(self._visible)
 
     def _props(self):
-        """Every prop currently in the renderer, 2D included."""
+        """Every prop in the renderers we draw into, 2D included.
+
+        Both of them: flat callouts go in the main renderer, conforming patches
+        in the overlay. Ownership is taken by diffing this around construction,
+        so a renderer missing here is a label actor that clear() would never
+        remove.
+        """
         out = []
-        if self.renderer is None:
-            return out
-        for coll in (self.renderer.GetViewProps(),):
+        for ren in (self.renderer, self.overlay_renderer):
+            if ren is None:
+                continue
+            coll = ren.GetViewProps()
             coll.InitTraversal()
             for _ in range(coll.GetNumberOfItems()):
                 out.append(coll.GetNextProp())
@@ -429,10 +562,15 @@ class LabelSceneManager:
         taken by diffing the renderer's props around construction.
         """
         for prop in self._owned_props:
-            try:
-                self.renderer.RemoveViewProp(prop)
-            except Exception:
-                pass
+            # Try both: removing a prop a renderer does not hold is a no-op,
+            # and which one owns it depends on the label kind.
+            for ren in (self.renderer, self.overlay_renderer):
+                if ren is None:
+                    continue
+                try:
+                    ren.RemoveViewProp(prop)
+                except Exception:
+                    pass
         self._owned_props = []
         self._layout = None
         self._conformer = None

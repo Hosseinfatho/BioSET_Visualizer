@@ -110,6 +110,16 @@ class ViewportPlotComputer:
         self._active_channels: List[str] = []   # active channel names (for filtering viewport results)
         # Channels ticked in the UpSet dialog. None = no restriction.
         self._selected_channels = None
+        # Curve keys ticked in the dilation dialog; None means no
+        # restriction. Held separately from the raw result so a filter
+        # change can be applied without re-running the viewport query.
+        self._dilation_keys = None
+        self._dilation_raw: dict = {}
+        # Channels ticked in the BAR dialog, and the last raw bar result. Held
+        # apart from the UpSet selection above: they are two separate dialogs,
+        # and the bar arrays were previously gated by the UpSet one.
+        self._bar_selected = None
+        self._bar_raw: list = []
         self._dilation: float = 0.0
         self._min_channels: int = 2
         self._enabled: bool = False
@@ -160,6 +170,72 @@ class ViewportPlotComputer:
         by the 3D view's active channels, so the dialog's checkboxes were inert
         in Local scope."""
         self._selected_channels = None if names is None else list(names)
+
+    def update_dilation_selection(self, keys):
+        """Curve keys ticked in the dilation dialog; None means no restriction.
+
+        The viewport curves were previously published unfiltered, so the dialog
+        — and the single/multiple view mode, whose options the selection is
+        drawn from — did nothing at all in Local scope: the global array was
+        filtered and the viewport one was not.
+        """
+        self._dilation_keys = None if keys is None else set(keys)
+
+    def update_bar_selected_channels(self, names):
+        """Channels ticked in the BAR dialog; None means no restriction.
+
+        The bar's own dialog previously never reached the viewport arrays at
+        all — they were filtered by the UpSet dialog's selection, so in Local
+        scope the bar's checkboxes were inert and the UpSet's silently moved
+        the bar.
+        """
+        self._bar_selected = None if names is None else set(names)
+
+    def apply_bar_filter(self, state) -> bool:
+        """Re-publish both bar arrays under the current selection.
+
+        Mirrors the global rule exactly: the "All" array is the dialog's
+        selection, and the "Selected" array is that intersected with the
+        channels active in the 3D view. Works off the cached result so ticking
+        a box does not re-run the viewport query.
+        """
+        if not self._bar_raw:
+            return False
+        allowed = self._bar_selected
+        chosen = [item for item in self._bar_raw
+                  if allowed is None or item[0] in allowed]
+        active = set(self._active_channels)
+        if allowed is not None:
+            active &= allowed
+        state.bar_data_viewport = chosen
+        state.bar_data_viewport_selected = [
+            item for item in chosen if item[0] in active
+        ] if active else []
+        try:
+            state.dirty("bar_data_viewport", "bar_data_viewport_selected")
+        except Exception:
+            pass
+        return True
+
+    def apply_dilation_filter(self, state) -> bool:
+        """Re-publish the viewport curves under the current selection.
+
+        Separate from `check_and_apply` so ticking a box re-filters the cached
+        result immediately, instead of waiting for — and paying for — another
+        viewport query. Returns True if anything was written.
+        """
+        if not self._dilation_raw:
+            return False
+        keys = self._dilation_keys
+        state.dilation_data_viewport = (
+            dict(self._dilation_raw) if keys is None
+            else {k: v for k, v in self._dilation_raw.items() if k in keys}
+        )
+        try:
+            state.dirty("dilation_data_viewport")
+        except Exception:
+            pass
+        return True
 
     def update_needed_plots(self, need_bar: bool, need_upset: bool, need_dilation: bool):
         """Set which plot types need viewport computation."""
@@ -239,23 +315,28 @@ class ViewportPlotComputer:
         if result is None:
             return False
 
-        # Full viewport data (all channels)
-        state.bar_data_viewport = result.bar_data
         state.upset_data_viewport = result.upset_data
-        state.dilation_data_viewport = result.dilation_data
+        # Cache the raw bar rows so a dialog change re-filters them without
+        # another query, then publish through the bar's own selection.
+        self._bar_raw = result.bar_data
+        self.apply_bar_filter(state)
+        # Keep the unfiltered curves so a dialog change can re-filter them
+        # without another query, then publish through the same selection the
+        # global array is filtered by.
+        self._dilation_raw = result.dilation_data
+        self.apply_dilation_filter(state)
 
-        # The dialog's exclusion is applied inside get_viewport_metrics now, so
-        # `result.upset_data` already contains only ticked channels. What is left
-        # here is the "Selected" channel mode's inclusion rule: keep combinations
-        # involving at least one channel active in the 3D view.
+        # UpSet only. The dialog's exclusion is applied inside
+        # get_viewport_metrics, so `result.upset_data` already contains only
+        # ticked channels. What is left here is the "Selected" channel mode's
+        # inclusion rule: keep combinations involving at least one channel
+        # active in the 3D view. The bar arrays are NOT derived from this — they
+        # have their own dialog, applied in apply_bar_filter above.
         allowed = None if self._selected_channels is None else set(self._selected_channels)
         touching = set(self._active_channels)
         if allowed is not None:
             touching &= allowed
 
-        state.bar_data_viewport_selected = [
-            item for item in result.bar_data if item[0] in touching
-        ] if touching else []
         state.upset_data_viewport_selected = [
             item for item in result.upset_data
             if touching.intersection(item["channels"])
@@ -268,8 +349,12 @@ class ViewportPlotComputer:
             )
         except Exception:
             pass
-        print(f"[viewport_plots] Applied to state: bar={len(result.bar_data)}, "
-              f"upset={len(result.upset_data)}, dilation={len(result.dilation_data)}, "
+        # Counts as PUBLISHED, not as computed: the bar and dilation arrays are
+        # filtered by their dialogs on the way out, so logging the raw result
+        # would not match what is on screen.
+        print(f"[viewport_plots] Applied to state: bar={len(state.bar_data_viewport)}, "
+              f"upset={len(result.upset_data)}, "
+              f"dilation={len(state.dilation_data_viewport)}, "
               f"bar_selected={len(state.bar_data_viewport_selected)}, "
               f"upset_selected={len(state.upset_data_viewport_selected)}")
         return True

@@ -132,6 +132,13 @@ class Bookmarks(PDFSection):
 def load_all_bookmarks(base_path: str) -> list[BookmarkContent]:
     bookmarks = []
 
+    # Recordings are per-dataset now, so this folder simply does not exist for
+    # a dataset nobody has bookmarked yet. That is an empty report section, not
+    # an error that should sink the whole export.
+    if not os.path.isdir(base_path):
+        print(f"[report] no bookmarks for this dataset ({base_path})")
+        return bookmarks
+
     with os.scandir(base_path) as dir_content:
         for el in dir_content:
             if not el.is_dir():

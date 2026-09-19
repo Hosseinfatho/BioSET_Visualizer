@@ -15,9 +15,28 @@ RECORDINGS_BASE = BOOKMARK_ROOT / "recordings"
 DEFAULT_DATASET = "default"
 
 
+def dataset_folder(dataset_id: str = DEFAULT_DATASET) -> str:
+    """Directory name for one dataset's recordings.
+
+    Sanitized the same way category folders are, so a dataset called
+    "MIS v3 / run 2" cannot escape the recordings tree or collide with a path
+    separator.
+    """
+    s = (dataset_id or DEFAULT_DATASET).strip() or DEFAULT_DATASET
+    s = re.sub(r'[^\w\s\-]', '', s)
+    s = re.sub(r'[\s\-]+', '_', s).strip('_')
+    return (s[:60] or DEFAULT_DATASET)
+
+
 def _recordings_dir(dataset_id: str = DEFAULT_DATASET) -> Path:
-    """Folder for recordings: bookmark/recordings/."""
-    return RECORDINGS_BASE
+    """Folder for one dataset's recordings: bookmark/recordings/<dataset>/.
+
+    Every caller already threaded `dataset_id` through, but this function used
+    to ignore it and return the flat base — so every dataset read and wrote the
+    same folder, and whichever one you opened showed the bookmarks saved
+    against MIS. The parameter was always meant to land here.
+    """
+    return RECORDINGS_BASE / dataset_folder(dataset_id)
 
 
 def screenshot_dir(dataset_id: str = DEFAULT_DATASET) -> Path:

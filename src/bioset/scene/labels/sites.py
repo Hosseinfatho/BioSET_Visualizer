@@ -27,15 +27,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 # Labels are only offered when the view is down to a manageable patch of
-# tissue. A tile is 512 voxels ~ 72 um square, so 64 of them is a ~580 um
-# field. The successive limits here (4, then 16, then this) were each tighter
-# than people actually work at; the real constraint is not distance but how
-# much geometry a labelling pass has to read and solve, and that is bounded
-# separately by MAX_COMPONENTS_PER_CHANNEL and MAX_COLOC_SITES.
+# tissue. A tile is 512 voxels ~ 72 um square, so 36 of them is a 6x6, ~430 um
+# field. The successive limits here (4, then 16, then 64) were each tried
+# against how people actually work; 64 turned out to be further back than
+# labels are useful at, so this is one step in from it.
 #
-# Reading 64 tiles' geometry costs ~67 ms on the worker (measured), so the
-# cost of a wider gate is small and paid once per Label press.
-MAX_LABEL_TILES = 64
+# The real constraint is not distance but how much geometry a labelling pass
+# has to read and solve, and that is bounded separately by
+# MAX_COMPONENTS_PER_CHANNEL and MAX_COLOC_SITES. Reading 64 tiles' geometry
+# costs ~67 ms on the worker (measured), so the gate width is cheap either way
+# and is set by legibility rather than by cost.
+MAX_LABEL_TILES = 36
 
 # Half a voxel. Welding is what makes a cell straddling a tile seam ONE
 # connected component instead of two, i.e. one label instead of a duplicate

@@ -242,3 +242,14 @@ def floating_chatbot_section(state, ctrl):
                             "{{ show_labels ? 'mdi-eye' : 'mdi-eye-off' }}",
                             x_small=True, color="grey lighten-1",
                         )
+                    # Cross — discard the labels and close this row. Distinct
+                    # from the eye, which only hides them: this one throws the
+                    # placement away and needs a fresh Label press to come back.
+                    vuetify.VSpacer()
+                    with vuetify.VBtn(
+                            icon=True, x_small=True,
+                            click=ctrl.clear_labels,
+                            title="Remove all labels",
+                    ):
+                        vuetify.VIcon("mdi-close", x_small=True,
+                                      color="grey lighten-1")

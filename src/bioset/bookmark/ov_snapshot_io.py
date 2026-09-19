@@ -11,9 +11,9 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .snapshot_io import DEFAULT_DATASET, RECORDINGS_BASE, _recordings_dir
+
 BOOKMARK_ROOT = Path(__file__).resolve().parent
-RECORDINGS_BASE = BOOKMARK_ROOT / "recordings"
-DEFAULT_DATASET = "default"
 
 
 def _ov_safe_folder_name(category: str) -> str:
@@ -25,8 +25,13 @@ def _ov_safe_folder_name(category: str) -> str:
 
 
 def ov__recordings_dir(dataset_id: str = DEFAULT_DATASET) -> Path:
-    """Base folder for recordings (same as main bookmark; OV files are ov_*.json inside category folders)."""
-    return RECORDINGS_BASE
+    """One dataset's recordings folder.
+
+    Optimal View snapshots live beside the ordinary ones as ov_*.json inside
+    the category folders, so they scope by dataset the same way and must use
+    the same directory rule — see snapshot_io._recordings_dir.
+    """
+    return _recordings_dir(dataset_id)
 
 
 def ov__safe_filename(name: str) -> str:

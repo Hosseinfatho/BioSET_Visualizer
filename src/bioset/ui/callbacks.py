@@ -35,6 +35,34 @@ def register_callbacks(ctrl, state, view, streamer=None):
     """Register all controller methods."""
     from bioset.ui.utils.scale_bar import compute_scale_bar
 
+    def _bookmark_dataset_id_for_current() -> str:
+        """Which recordings folder the loaded dataset's bookmarks live in.
+
+        The dataset's NAME from datasets.json when the loaded zarr matches a
+        preset, so the folders on disk read `recordings/MIS/`, `recordings/STIC/`
+        and can be curated, moved between machines, or committed by hand. An
+        md5 of the URL would work equally well for the code and be useless to
+        a person looking at the directory.
+
+        Matched on the zarr URL rather than on `state.dataset_preset`, because
+        a dataset opened from the command line or a config file never sets the
+        preset field but is the same dataset. Anything with no matching preset
+        falls back to a short hash of its URL, which at least keeps it separate
+        from every other dataset.
+        """
+        url = (getattr(state, "zarr_url", "") or "").strip()
+        if not url:
+            return "default"
+        try:
+            from bioset.datasets import load_dataset_presets
+            norm = url.replace("\\", "/").rstrip("/").lower()
+            for preset in load_dataset_presets():
+                if (preset.zarr_url or "").replace("\\", "/").rstrip("/").lower() == norm:
+                    return preset.name
+        except Exception as e:
+            print(f"[callbacks] dataset preset lookup failed: {e}")
+        return hashlib.md5(url.encode()).hexdigest()[:12]
+
     def _hex_to_rgb_tuple(color_hex: str):
         """Convert '#RRGGBB' to (r, g, b) floats in [0,1]."""
         color_hex = color_hex.lstrip("#")
@@ -154,6 +182,26 @@ def register_callbacks(ctrl, state, view, streamer=None):
     def set_renderer(renderer):
         """Set the main VTK renderer reference (used by label scene manager)."""
         _refs["renderer"] = renderer
+
+    def sync_contour_manual_level():
+        """Pin the contour detail ramp to the manual level, or release it.
+
+        Contour mode reads the hierarchy level nowhere else — its field is
+        always level 0 on purpose — so without this the manual selector did
+        nothing at all in contour mode.
+        """
+        contours = _refs.get("contours")
+        if contours is None or not hasattr(contours, "set_manual_level"):
+            return
+        manual = getattr(state, "heatmap_auto_level", "auto") != "auto"
+        contours.set_manual_level(
+            int(state.current_hierarchy_level) if manual else None)
+        v = _refs.get("view")
+        if v:
+            try:
+                v.update()
+            except Exception:
+                pass
 
     def set_heatmap_lod_auto_mode(enabled: bool):
         """Set heatmap LOD auto mode (controlled by UI toggle)."""
@@ -336,12 +384,9 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.visible_channel_ids = [
                 ch["id"] for ch in channels[:state.default_num_channels]]
             state.data_loaded = True
-            # Per-dataset folder for bookmark recordings (one folder per dataset link)
-            try:
-                url = getattr(state, "zarr_url", "") or ""
-                state.bookmark_dataset_id = hashlib.md5(url.encode()).hexdigest()[:12] if url else "default"
-            except Exception:
-                state.bookmark_dataset_id = "default"
+            # Per-dataset folder for bookmark recordings, so opening VGP1 shows
+            # VGP1's bookmarks and not the ones saved against MIS.
+            state.bookmark_dataset_id = _bookmark_dataset_id_for_current()
             
             print(f"[callbacks] Loaded {len(channels)} channels")
             print(f"[callbacks] Physical size: ({state.physical_size_x}, {state.physical_size_y}, {state.physical_size_z})")
@@ -421,6 +466,14 @@ def register_callbacks(ctrl, state, view, streamer=None):
         state.heatmap_tile_count = 0
         
         state.right_drawer_open = False
+
+        # Point bookmarks back at nothing BEFORE emptying the panel. Clearing
+        # the lists while this still said "MIS" left every later refresh — the
+        # panel reopening, the save form, a flag redraw — free to repopulate
+        # from MIS's folder, so the bookmarks came straight back.
+        state.bookmark_dataset_id = "default"
+        if hasattr(ctrl, "bookmark_reset_state"):
+            ctrl.bookmark_reset_state()
 
         # Close bookmark UI (column, forms, popups) when data is cleared
         # Hide the bookmark side panel
@@ -1176,6 +1229,22 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 for pt in curve:
                     print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt['iou']:>10.6f}  {pt.get('overlap_coeff', 0):>10.6f}")
 
+    def _bar_selection(loader):
+        """Channels ticked in the BAR dialog, restricted to ones that exist.
+
+        Same three-way meaning as `_upset_selection`: None when everything is
+        ticked (no restriction worth pushing), [] when nothing is — which must
+        render an empty plot rather than the unfiltered one.
+        """
+        sel = list(getattr(state, "bar_selected_channels", None) or [])
+        known = set(loader.metadata.channels if loader.metadata else [])
+        sel = [c for c in sel if c in known]
+        if not sel:
+            return []
+        if len(sel) >= len(known):
+            return None
+        return sel
+
     def _upset_selection(loader):
         """Channels ticked in the UpSet dialog, restricted to ones that exist.
 
@@ -1500,11 +1569,60 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if loader and loader.is_loaded:
                 vp.update_min_channels(_combo_size(loader))
                 vp.update_selected_channels(_upset_selection(loader))
+                # The bar has its own dialog; without this the viewport bar
+                # arrays were gated by the UpSet selection instead.
+                vp.update_bar_selected_channels(_bar_selection(loader))
+            # The dilation dialog filters the global curves; the viewport ones
+            # must go through the same selection or the dialog is inert in
+            # Local scope. The selection is already scoped to the current view
+            # mode, since its options ARE that mode's keys.
+            vp.update_dilation_selection(
+                list(getattr(state, "dilation_selected_channels", []) or []))
 
             # Trigger immediate computation with current viewport
             ranges = _compute_current_tile_ranges()
             if ranges:
                 vp.on_camera_moved(ranges[0], ranges[1])
+
+    def refilter_viewport_bar():
+        """Re-apply the bar dialog to the cached viewport rows.
+
+        Cheap on purpose, like the dilation one: a display filter should not
+        re-run the viewport query.
+        """
+        vp = _refs.get("viewport_plots")
+        loader = _refs.get("analysis_loader")
+        if vp is None or not hasattr(vp, "update_bar_selected_channels"):
+            return
+        if loader is not None and loader.is_loaded:
+            vp.update_bar_selected_channels(_bar_selection(loader))
+        if vp.apply_bar_filter(state):
+            v = _refs.get("view")
+            if v:
+                try:
+                    v.update()
+                except Exception:
+                    pass
+
+    def refilter_viewport_dilation():
+        """Re-apply the dilation dialog to the cached viewport curves.
+
+        Cheap on purpose: ticking a box must not re-run the viewport query,
+        which is the expensive part and would also make the plot flicker
+        through a recompute for a pure display filter.
+        """
+        vp = _refs.get("viewport_plots")
+        if vp is None or not hasattr(vp, "update_dilation_selection"):
+            return
+        vp.update_dilation_selection(
+            list(getattr(state, "dilation_selected_channels", []) or []))
+        if vp.apply_dilation_filter(state):
+            v = _refs.get("view")
+            if v:
+                try:
+                    v.update()
+                except Exception:
+                    pass
 
     def reset_camera():
         """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
@@ -1590,6 +1708,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if mesh_mgr and channel_id in state.active_channels:
             mesh_mgr.update_channel_color(channel_id, _hex_to_rgb_tuple(color_hex))
 
+        recolor_labels(channel_id, color_hex)
+
     def on_channel_color_change(channel_id, color_value):
         """Handle color change from the color picker."""
         print(f"[callbacks] Raw color_value: {color_value}, type: {type(color_value)}")
@@ -1641,6 +1761,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 new_channels.append({**ch})  
         state.channels = new_channels
         
+        recolor_labels(channel_id, color_hex)
+
         streamer = _refs.get("streamer")
         if streamer and channel_id in state.active_channels:
             streamer._channel_colors[channel_id] = streamer._hex_to_rgb(color_hex)
@@ -2321,6 +2443,50 @@ def register_callbacks(ctrl, state, view, streamer=None):
         if v:
             v.update()
 
+    def clear_labels():
+        """Remove every label and close the label row.
+
+        The row is bound to `chatbot_labels_generated`, so clearing that both
+        collapses it and puts the panel back to its pre-Label state. Unlike the
+        eye toggle this really does tear the layout down — that is the point —
+        but the manager itself is kept, so its proxy cache survives and a fresh
+        Label press over the same tiles skips the expensive rebuild.
+        """
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is not None:
+            try:
+                label_mgr.clear()
+            except Exception as e:
+                print(f"[callbacks] clearing labels failed: {e}")
+        state.chatbot_labels_generated = False
+        state.show_labels = True
+        state.anchor_labels = False
+        v = _refs.get("view")
+        if v:
+            v.update()
+
+    def recolor_labels(channel_id, color_hex):
+        """Keep a channel's labels in step with its colour.
+
+        The colour is rasterized into the label texture, so nothing updates on
+        its own — without this the labels keep the colour the channel had when
+        Label was pressed.
+        """
+        label_mgr = _refs.get("label_manager")
+        if label_mgr is None:
+            return
+        ch = next((c for c in (state.channels or []) if c["id"] == channel_id),
+                  None)
+        if ch is None:
+            return
+        try:
+            if label_mgr.set_channel_color(ch["name"], _hex_to_rgb01(color_hex)):
+                v = _refs.get("view")
+                if v:
+                    v.update()
+        except Exception as e:
+            print(f"[callbacks] recolouring labels failed: {e}")
+
     def _labelable_channels():
         """{marker name: manifest channel idx} for the ACTIVE channels.
 
@@ -2454,6 +2620,21 @@ def register_callbacks(ctrl, state, view, streamer=None):
         label_mgr = _refs.get("label_manager")
         if label_mgr is None:
             return
+
+        # The render window resizes underneath us: interactive_ratio=0.4 shrinks
+        # it to 40% while the user interacts and the still render restores it,
+        # and the settle timer can easily land in between. Flat callouts are
+        # placed in display pixels, so a solve at the wrong size strands every
+        # label in the lower-left corner of the real viewport. Cheap to check
+        # (a size compare), so it runs every tick.
+        if label_mgr.resolve_if_resized():
+            v = _refs.get("view")
+            if v:
+                try:
+                    v.update()
+                except Exception:
+                    pass
+
         applied = label_mgr.check_and_apply_setup()
         # Surface any give-up reason in the chat. Without this the pipeline
         # fails silently: the app redirects stdout to devnull unless --logs is
@@ -2675,7 +2856,13 @@ def register_callbacks(ctrl, state, view, streamer=None):
             report_data.append(chat)
 
         if state.export_bookmarks:
-            bookmark_content = load_all_bookmarks("src/bioset/bookmark/recordings")
+            # This dataset's recordings only. The path used to be the flat
+            # recordings root, which now holds one folder per dataset, so a
+            # report would otherwise carry every dataset's bookmarks.
+            from bioset.bookmark.snapshot_io import _recordings_dir
+            bookmark_content = load_all_bookmarks(
+                str(_recordings_dir(getattr(state, "bookmark_dataset_id", None)
+                                    or "default")))
             bookmarks = Bookmarks(bookmark_content)
             report_data.append(bookmarks)
 
@@ -2729,14 +2916,19 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.chatbot_explain_bar = chatbot_explain_bar
     ctrl.chatbot_clear = chatbot_clear
     ctrl.toggle_labels = toggle_labels
+    ctrl.clear_labels = clear_labels
+    ctrl.recolor_labels = recolor_labels
     ctrl.set_mesh_manager = set_mesh_manager
     ctrl.set_mesh_streamer = set_mesh_streamer
     ctrl.set_contours = set_contours
     ctrl.setup_right_click_picker = setup_right_click_picker
     ctrl.set_heatmap_lod = set_heatmap_lod
     ctrl.set_heatmap_lod_auto_mode = set_heatmap_lod_auto_mode
+    ctrl.sync_contour_manual_level = sync_contour_manual_level
     ctrl.set_viewport_plots = set_viewport_plots
     ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
+    ctrl.refilter_viewport_dilation = refilter_viewport_dilation
+    ctrl.refilter_viewport_bar = refilter_viewport_bar
     ctrl.trigger("clear_analysis")(clear_analysis)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer

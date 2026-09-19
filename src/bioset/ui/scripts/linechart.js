@@ -159,8 +159,14 @@ Vue.component('linechart', {
                 return;
             }
 
+            // Room for the series labels on the right. 5.4 px/char matches the
+            // 9px font they are drawn at (6.5 was sized for the old 10px), and
+            // the cap stops one long combination name from eating the plot:
+            // past a third of the width the curves have nowhere left to go, and
+            // a clipped label is a better trade than an unreadable chart.
             const maxLabelLength = d3.max(lines, d => d.displayLabel.length);
-            const marginRight = Math.max(15, maxLabelLength * 6.5);
+            const marginRight = Math.min(
+                Math.max(15, maxLabelLength * 5.4 + 8), width * 0.33);
 
             const xDomain = d3.extent(allDilations);
             if (xDomain[0] === xDomain[1]) {
@@ -257,9 +263,16 @@ Vue.component('linechart', {
                 .y(d => y(d.y));
 
             const elbows = [];
+            // Series-label placement is deferred to after the loop so the
+            // labels can be laid out against each other rather than each being
+            // dropped at its own line end, where curves that converge (which
+            // dilation curves do, they all saturate) stack them illegibly.
+            const endLabels = [];
             lines.forEach(lineObj => {
                 let color = "#FFFFFF";
-                let strokeWidth = 2;
+                // Thin. Combination curves keep a little more weight so they
+                // stay findable among the single-channel ones.
+                let strokeWidth = lineObj.isCombo ? 1.6 : 1.1;
 
                 const ch = this.channelData.find(c => c.name === lineObj.key);
                 if (ch) {
@@ -271,27 +284,30 @@ Vue.component('linechart', {
                     .attr("fill", "none")
                     .attr("stroke", color)
                     .attr("stroke-width", strokeWidth)
+                    .attr("stroke-opacity", 0.85)
                     .attr("d", lineGen);
 
                 const drawable = lineObj.points.filter(plottable);
                 if (drawable.length > 0) {
                     const lastPoint = drawable[drawable.length - 1];
-                    svg.append("text")
-                        .attr("x", x(lastPoint.x) + 5)
-                        .attr("y", y(lastPoint.y))
-                        .attr("alignment-baseline", "middle")
-                        .attr("fill", color)
-                        .style("font-size", "10px")
-                        .style("font-weight", lineObj.isCombo ? "bold" : "normal")
-                        .text(lineObj.displayLabel);
+                    endLabels.push({
+                        x: x(lastPoint.x),
+                        y: y(lastPoint.y),
+                        color: color,
+                        bold: !!lineObj.isCombo,
+                        text: lineObj.displayLabel,
+                    });
                 }
 
+                // Small dots. These mark where the samples are; at r=4 they
+                // were reading as the line itself.
                 drawable.forEach(p => {
                     svg.append("circle")
                         .attr("cx", x(p.x))
                         .attr("cy", y(p.y))
-                        .attr("r", 4)
-                        .attr("fill", color);
+                        .attr("r", 1.8)
+                        .attr("fill", color)
+                        .attr("fill-opacity", 0.9);
                 });
 
                 // Elbow collected here, drawn after the loop so the readouts
@@ -300,6 +316,58 @@ Vue.component('linechart', {
                 if (elbow) {
                     elbows.push({ x: elbow.x, y: elbow.y, color: color });
                 }
+            });
+
+            // Series labels. Each one wants to sit at its own line's end, but
+            // dilation curves converge as they saturate, so several ends land
+            // within a few pixels and the labels print on top of each other.
+            // Push them apart vertically instead: sort by preferred height,
+            // walk down enforcing a minimum gap, then walk back up to pull the
+            // block inside the plot. Each keeps a leader dot at its true end so
+            // a displaced label is still traceable to its curve.
+            const SERIES_H = 11;
+            const plotTop = marginTop;
+            const plotBottom = height - marginBottom;
+            endLabels.sort((a, b) => a.y - b.y);
+            let cursor = plotTop + 8;
+            endLabels.forEach(l => {
+                l.ly = Math.max(l.y, cursor);
+                cursor = l.ly + SERIES_H;
+            });
+            // The block can now overflow the bottom; slide the tail back up.
+            let overflow = cursor - SERIES_H - plotBottom;
+            if (overflow > 0) {
+                for (let i = endLabels.length - 1; i >= 0; i--) {
+                    endLabels[i].ly -= overflow;
+                    if (i > 0) {
+                        const gap = endLabels[i].ly - endLabels[i - 1].ly;
+                        if (gap >= SERIES_H) break;
+                        overflow = SERIES_H - gap;
+                    }
+                }
+            }
+            endLabels.forEach(l => {
+                l.ly = Math.min(Math.max(l.ly, plotTop + 8), plotBottom);
+                // Leader from the curve's actual end to a displaced label, so
+                // the connection survives the push.
+                if (Math.abs(l.ly - l.y) > 1.5) {
+                    svg.append("line")
+                        .attr("x1", l.x + 2)
+                        .attr("y1", l.y)
+                        .attr("x2", l.x + 5)
+                        .attr("y2", l.ly)
+                        .attr("stroke", l.color)
+                        .attr("stroke-width", 0.6)
+                        .attr("stroke-opacity", 0.6);
+                }
+                svg.append("text")
+                    .attr("x", l.x + 6)
+                    .attr("y", l.ly)
+                    .attr("alignment-baseline", "middle")
+                    .attr("fill", l.color)
+                    .style("font-size", "9px")
+                    .style("font-weight", l.bold ? "bold" : "normal")
+                    .text(l.text);
             });
 
             // Elbow markers. Curves in the same panel tend to bend at very

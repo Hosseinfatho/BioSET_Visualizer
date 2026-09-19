@@ -33,8 +33,11 @@ Notes carried over from INTEGRATION.md that are load-bearing here:
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -64,7 +67,17 @@ from vtk.util.numpy_support import vtk_to_numpy
 # A melanoma nucleus is ~8-15 um across, so 80 is where components start being
 # cells. It also cuts the label count to something a screen can carry, which
 # is the same lever from the other direction.
-MAX_COMPONENTS_PER_CHANNEL: Optional[int] = 24
+# Ranked by area at EXTRACT time, before the camera is known, so this is a
+# ceiling on what can EVER be labelled rather than on what is shown. At 24 it
+# was the binding constraint: a 4x4 view yields 109 MART1 and 103 SOX10
+# components past the quality filter, so ~78% of labelable cells could never
+# receive a label however far you zoomed into them.
+#
+# Per-frame cost is bounded elsewhere — FlagpoleLayout drops anchors outside
+# the viewport before solving, and its n^2 overlap pass runs only on what
+# survives (0.36 ms at 150, 2.5 ms at 400). Zoomed out this changes nothing
+# visible: the extra components project off-screen or lose their collision.
+MAX_COMPONENTS_PER_CHANNEL: Optional[int] = 150
 MIN_COMPONENT_AREA_FRACTION = 0.001
 MIN_COMPONENT_CELLS = 80
 
@@ -130,6 +143,32 @@ INTERACTIVE_OPAQUE = True
 # Label/leader appearance.
 LABEL_BACKGROUND = (0.025, 0.028, 0.038)
 LABEL_BACKGROUND_OPACITY = 0.84
+
+# Typeface for the flat callouts. Either a family name, resolved against the
+# repo's assets/fonts and the system font directories, or an absolute path to a
+# .ttf/.otf. Anything that does not resolve to a file on disk falls back to
+# VTK's built-in Arial, with one line on stdout saying so.
+#
+# The check matters: vtkTextProperty.SetFontFile does NOT fail on a bad path.
+# It silently renders Arial, so a typo would look like the setting being
+# ignored rather than like an error. `_resolve_font_file` therefore only hands
+# VTK a path it has already stat'd.
+#
+# This reaches the flat callouts ONLY. The surface-conforming colocalization
+# text is built by vtkVectorText, which exposes no font API at all — it has one
+# hardcoded stroke font — so changing it there would mean converting TTF
+# outlines to polygons ourselves.
+# Empty means VTK's built-in Arial, which is what labels are drawn in.
+# Merriweather was tried here and read poorly at label sizes — a text face with
+# that much contrast turns mushy in a 28 px plate — so the default is back to
+# the sans. The lookup below is kept because swapping the face is now a one-line
+# change: put a name here, or set BIOSET_LABEL_FONT, and drop the .ttf in
+# assets/fonts/ or install it.
+LABEL_FONT = os.environ.get("BIOSET_LABEL_FONT", "")
+
+# Labels are drawn bold. With a font FILE, VTK renders the file as it is and
+# ignores SetBold, so a bold face has to be picked by filename instead.
+_FONT_WEIGHT_ORDER = ("bold", "semibold", "regular", "")
 LEADER_WIDTH = 1.5
 
 
@@ -141,8 +180,29 @@ LEADER_WIDTH = 1.5
 # Where the two markers are close neighbors but do not overlap. Detected from
 # the single-channel occupancy maps rather than the dilated-overlap map, which
 # is far too coarse to resolve which cells are actually adjacent.
-INTERACTION_FONT_SIZE = 14
-INTERACTION_LABEL_COLOR = (1.0, 1.0, 1.0)
+# Much larger than SINGLE_MARKER_FONT_SIZE, not a point or two — an interaction
+# label names the thing the view is FOR, and there are only ever a handful of
+# them against a hundred-odd per-cell labels. Measured on a 4x4 mis_v3 viewport
+# at 1600x1000: going 14 -> 24 costs about two single-marker placements out of
+# 109, and none of its own, because interaction labels already outrank per-cell
+# ones (INTERACTION_PRIORITY) and carry a longer leash to get clear of them.
+# Wrapping to two lines was tried and is worse — it costs five more per-cell
+# labels for a taller box without making the glyphs any bigger.
+SINGLE_MARKER_FONT_SIZE = 15
+INTERACTION_FONT_SIZE = 24
+# Interaction labels are the visual INVERSE of every other label: black text on
+# a white plate, in caps. A single-marker label is drawn in its own channel's
+# colour, and a channel that happens to be white produced white-on-dark text
+# that read as the same kind of thing as a contact site. Recolouring the text
+# alone could never fix that — the two would still differ only by hue, and one
+# of the hues in play IS white. Inverting the whole plate makes the difference
+# structural instead.
+INTERACTION_LABEL_COLOR = (0.0, 0.0, 0.0)
+INTERACTION_LABEL_BACKGROUND = (1.0, 1.0, 1.0)
+# Higher than the dark plate's 0.84: black text needs the white behind it to be
+# near-opaque, or the tissue shows through and the contrast collapses.
+INTERACTION_LABEL_BACKGROUND_OPACITY = 0.96
+INTERACTION_LABEL_UPPERCASE = True
 # Cell-scale proximity. Bins are 2.24 um here (16 voxels), so two bins is a
 # ~4.5 um reach — about half a nucleus, which is the scale adjacency means at.
 INTERACTION_RADIUS_BINS = 2
@@ -152,9 +212,52 @@ INTERACTION_MIN_BINS = 3
 INTERACTION_MIN_SEPARATION = 14.0
 MAX_INTERACTION_SITES = 18
 # Interaction sites are the point of the view, so they outrank per-cell labels
-# when the screen gets tight.
-INTERACTION_PRIORITY = 2.5
+# when the screen gets tight. Raised well clear of the single-marker band: with
+# per-cell priority now capped below 1.0 and this at 4.0, no per-cell label can
+# ever outrank a contact site however large its component is.
+INTERACTION_PRIORITY = 4.0
 INTERACTION_LEASH_PX = 260.0
+# A component whose second principal extent is more than this fraction of its
+# first is treated as round, and its label left horizontal. Orienting a label
+# to a direction that is barely there makes it jitter as the camera moves.
+AXIS_ROUNDNESS_LIMIT = 0.75
+# Oriented labels are SCALED into this much tilt, not clipped at it. Clipping
+# piled a majority of them onto the limit exactly (measured: 4 distinct angles
+# across 10 labels at one camera), which reads as mechanical rather than as
+# following anything. Scaling keeps every label distinct and still bounded:
+# past this much tilt the text is hard to read and fights the horizontal
+# layout around it.
+MAX_LABEL_TILT_DEG = 40.0
+
+# ── How many single-marker labels the screen earns ─────────────────────────
+# A per-cell label is only worth drawing when its component is big enough on
+# screen to be worth naming. Gating on PROJECTED SIZE rather than a fixed count
+# is what makes the density follow the zoom on its own: far out, only the
+# largest components clear the bar; as you zoom in, more and more do, with no
+# schedule to tune and nothing that has to know the pyramid depth.
+#
+# Measured on a 4x4 mis_v3 viewport at 1600x1000, the projected size of the
+# MART1 components actually in view:
+#
+#     zoom   in view   p50   p90   max   >=40px  >=60px
+#        1       109    19    43    74       17       1
+#        2        92    39    85   147       44      30
+#        4        22    76   175   206       22      16
+#
+# 55 px sits just under the largest handful at full zoom-out and is comfortably
+# exceeded by most components two steps in, which is the behaviour asked for:
+# only the biggest get named when the whole field is in view, and more earn a
+# label as you come in. Below this the label is wider than the thing it names.
+SINGLE_MARKER_MIN_SCREEN_PX = 55.0
+# Hard ceiling on per-cell labels actually drawn, whatever the zoom. The size
+# gate alone can still admit a hundred at very high zoom on dense tissue; this
+# keeps the screen readable, and it keeps the strongest components by taking
+# them in priority (area) order.
+SINGLE_MARKER_MAX_SHOWN = 14
+# Per-cell labels are a background layer, not the point of the view: their
+# priority band sits entirely below INTERACTION_PRIORITY so a contact site or a
+# colocalization always wins a contested spot.
+SINGLE_MARKER_PRIORITY = 1.0
 
 HIDDEN_PX = -10000.0
 
@@ -173,11 +276,22 @@ COLOC_FONT_SIZE = 14
 COLOC_LABEL_COLOR = (1.0, 1.0, 1.0)
 COLOC_MIN_VALUE = 2          # heatmap value a bin needs to join a region
 COLOC_MIN_BINS = 2           # drop single-bin specks
-# Backstop on site count, and it earns its keep here: a conformer refit costs
-# per site (measured 22-27 ms for 4 sites on rotation, and rotation is the only
-# camera move that triggers one). Lowering the separation below admits more
-# sites, so this is the lever if rotation starts to drag.
-MAX_COLOC_SITES = 12
+# Backstop on site count. At 12 this was the ONLY thing limiting how many
+# conforming labels appeared: measured on mis_v3, a 4x4 viewport yields 15
+# sites and a 6x6 yields 20, and every one of them passes the value, bin-count
+# and separation filters — so a third to a half were being discarded by this
+# number alone.
+#
+# The per-site refit cost turned out to be much smaller than the fixed
+# overhead, which is what made 12 look necessary. Measured refit on rotation
+# (the only camera move that triggers one), at 1600x1000:
+#
+#     4x4:  cap 12 -> 60 ms,  cap 24 -> 61 ms   (only 15 sites exist)
+#     6x6:  cap 12 -> 45 ms,  cap 20 -> 68 ms,  cap 24 -> 69 ms
+#
+# So 24 shows everything available anywhere inside the zoom gate for ~24 ms on
+# the settle at the widest view. This is still the lever if rotation drags.
+MAX_COLOC_SITES = 24
 # Heatmap regions within this many bins of each other are treated as one site,
 # so a dense cluster earns a single label instead of a stack of them.
 COLOC_MERGE_BINS = 3
@@ -190,8 +304,13 @@ COLOC_MIN_SEPARATION = 14.0
 # closely the text follows: measured on mis_v3, 13x5 -> 21x9 took the bend
 # from 0.40 to 0.58 um while the bend cap and the smoothing passes changed
 # nothing. Costs one ray per vertex per refit, 2.6 -> 7.2 ms for 4 sites.
-CONFORM_SCAFFOLD_U = 21
-CONFORM_SCAFFOLD_V = 9
+# Raised from 21x9: measured on a 2x2 mis_v3 viewport, the bend (RMS departure
+# of the deformed glyph vertices from their own best-fit plane) goes
+# 0.70 -> 0.92 um, and lowering the proxy smoothing below adds a little more.
+# 33x13 was also tried and does not beat this while costing half again as much
+# per refit, so this is the knee.
+CONFORM_SCAFFOLD_U = 27
+CONFORM_SCAFFOLD_V = 11
 # Laplacian passes over the scaffold, then how much of the remaining bend to
 # keep. Zero passes is maximum conformance; the reference needed 1 because its
 # cells were ~17x larger relative to the label, so a label-sized window spanned
@@ -203,6 +322,7 @@ CONFORM_ALPHA = 1.0
 # height, so this only engages on a genuinely violent surface. Raising it does
 # nothing on its own — the scaffold above is the lever.
 COLOC_MAX_BEND_FRACTION = 0.35
+
 # Rays landing in the gaps between cells are filled from neighbors. Below this
 # hit rate the patch is flattened further rather than trusted.
 COLOC_MIN_HIT_FRACTION = 0.35
@@ -223,7 +343,11 @@ COLOC_SOUP_MARGIN = 14.0
 # pulling it in this far keeps the real shape for the text to follow, and
 # measurably raises the bend (0.58 -> 0.65 um at a 21x9 scaffold).
 COLOC_PROXY_DILATION = 0.25
-COLOC_PROXY_SMOOTH = 30
+# Lowered from 30. Those passes flatten the proxy the text is fitted to, which
+# is the surface detail we want the label to pick up; at the denser scaffold
+# above, dropping them measurably raises the bend (0.83 -> 0.94 um). Not taken
+# to zero: some smoothing is what keeps the glyphs from going jagged.
+COLOC_PROXY_SMOOTH = 10
 # The proxy is only ever sampled at scaffold resolution, so fitting against a
 # tenth of its triangles costs nothing in quality and roughly quarters the
 # refit. Measured: bend is unchanged, refit drops from 163 ms to 35 ms.
@@ -277,6 +401,42 @@ def bounds_diagonal(bounds: Sequence[float]) -> float:
             + (bounds[5] - bounds[4]) ** 2
         )
     )
+
+
+def _principal_axis_endpoints(components) -> np.ndarray:
+    """Two world points spanning each component's long axis, shaped (N, 2, 3).
+
+    The axis is the first principal direction of the component's surface
+    samples; the endpoints are its extremes among those samples. An interaction
+    site is a contact between two populations, so this direction is the
+    interface itself — which is what a label describing it should run along
+    rather than sitting horizontal regardless of the geometry.
+
+    Degenerate components (too few samples, or genuinely round) fall back to
+    two coincident points, which the caller reads as "no preferred direction".
+    """
+    out = np.zeros((len(components), 2, 3), dtype=np.float64)
+    for i, c in enumerate(components):
+        pts = np.asarray(getattr(c, "candidate_points", None), dtype=np.float64)
+        if pts is None or pts.ndim != 2 or len(pts) < 3:
+            out[i, 0] = out[i, 1] = np.asarray(c.center, dtype=np.float64)
+            continue
+        centre = pts.mean(axis=0)
+        rel = pts - centre
+        try:
+            _, sv, vt = np.linalg.svd(rel, full_matrices=False)
+        except np.linalg.LinAlgError:
+            out[i, 0] = out[i, 1] = centre
+            continue
+        # Round enough that any axis would be arbitrary: leave it unoriented
+        # rather than let numerical noise pick a direction that then flickers.
+        if len(sv) < 2 or sv[0] <= 1e-9 or (sv[1] / sv[0]) > AXIS_ROUNDNESS_LIMIT:
+            out[i, 0] = out[i, 1] = centre
+            continue
+        t = rel @ vt[0]
+        out[i, 0] = centre + vt[0] * float(t.min())
+        out[i, 1] = centre + vt[0] * float(t.max())
+    return out
 
 
 def normalize(v: np.ndarray, fallback=(0.0, 0.0, 1.0)) -> np.ndarray:
@@ -450,6 +610,22 @@ class Channel:
     # sites sit right beside colocalizations, so they need a longer leash to
     # get clear of those large blocks.
     max_label_distance_px: float = MAX_LABEL_DISTANCE_PX
+    # Plate behind the text. None means the shared dark plate; interaction
+    # labels override it to white so they read as a different KIND of label
+    # rather than another colour of the same one.
+    background_color: Optional[Tuple[float, float, float]] = None
+    background_opacity: Optional[float] = None
+    # Smallest projected component size, in pixels, that earns a label. 0
+    # disables the gate. Per-cell channels set it so their density follows the
+    # zoom; interaction and colocalization labels are never gated this way —
+    # they name a site, not a blob, and there are only ever a handful.
+    min_screen_px: float = 0.0
+    # Ceiling on how many of this channel's labels may be drawn at once. None
+    # for no limit.
+    max_shown: Optional[int] = None
+    # Screen-space rotation for this channel's labels, in radians, one per
+    # component. None keeps them horizontal.
+    orient_to_data: bool = False
     components: List[Component] = field(default_factory=list)
 
 
@@ -609,15 +785,91 @@ def extract_components(
 # -----------------------------------------------------------------------------
 
 
+def font_search_dirs() -> List[Path]:
+    """Where a named font may live, nearest first."""
+    dirs = [Path(__file__).resolve().parents[4] / "assets" / "fonts"]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:                                   # per-user installs on Windows
+        dirs.append(Path(local) / "Microsoft" / "Windows" / "Fonts")
+    win = os.environ.get("SystemRoot") or "C:\\Windows"
+    dirs.append(Path(win) / "Fonts")
+    dirs += [Path("/usr/share/fonts"), Path("/usr/local/share/fonts"),
+             Path.home() / ".fonts", Path("/Library/Fonts"),
+             Path.home() / "Library" / "Fonts"]
+    return dirs
+
+
+@lru_cache(maxsize=8)
+def _resolve_font_file(name: str) -> Optional[str]:
+    """Absolute path to `name`'s font file, or None if it is not installed.
+
+    Returns only a path that exists. VTK treats a missing font file as "use
+    Arial" without complaining, so handing it an unchecked path turns a missing
+    font into a silently ignored setting.
+    """
+    if not name:
+        return None
+    direct = Path(name).expanduser()
+    if direct.suffix.lower() in (".ttf", ".otf") and direct.is_file():
+        return str(direct)
+
+    key = name.replace(" ", "").replace("-", "").lower()
+    best: Optional[Tuple[int, str]] = None
+    for d in font_search_dirs():
+        try:
+            if not d.is_dir():
+                continue
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for f in entries:
+            if f.suffix.lower() not in (".ttf", ".otf"):
+                continue
+            stem = f.stem.replace(" ", "").replace("-", "").replace("_", "").lower()
+            if not stem.startswith(key):
+                continue
+            # Prefer a bold face, and never an italic one.
+            if "italic" in stem or "oblique" in stem:
+                continue
+            rest = stem[len(key):]
+            rank = next((i for i, w in enumerate(_FONT_WEIGHT_ORDER)
+                         if w and w in rest), len(_FONT_WEIGHT_ORDER) - 1)
+            if best is None or rank < best[0]:
+                best = (rank, str(f))
+    return best[1] if best else None
+
+
+_font_warned = set()
+
+
+def _apply_font(tprop: vtk.vtkTextProperty, name: str):
+    """Point the text property at `name`, or leave VTK's default in place."""
+    path = _resolve_font_file(name)
+    if path:
+        tprop.SetFontFamily(vtk.VTK_FONT_FILE)
+        tprop.SetFontFile(path)
+    if name and name not in _font_warned:
+        _font_warned.add(name)
+        print(f"[labels] font '{name}': "
+              + (f"using {path}" if path else
+                 "not found on this machine — falling back to Arial. Install "
+                 "it, or drop the .ttf in assets/fonts/, or set "
+                 "BIOSET_LABEL_FONT."))
+
+
 def _make_text_property(channel: Channel) -> vtk.vtkTextProperty:
     tprop = vtk.vtkTextProperty()
     tprop.SetFontSize(channel.font_size)
     tprop.SetBold(True)
+    _apply_font(tprop, LABEL_FONT)
     tprop.SetColor(*channel.label_color)
     tprop.SetJustificationToCentered()
     tprop.SetVerticalJustificationToCentered()
-    tprop.SetBackgroundColor(*LABEL_BACKGROUND)
-    tprop.SetBackgroundOpacity(LABEL_BACKGROUND_OPACITY)
+    bg = channel.background_color or LABEL_BACKGROUND
+    opacity = (LABEL_BACKGROUND_OPACITY if channel.background_opacity is None
+               else channel.background_opacity)
+    tprop.SetBackgroundColor(*bg)
+    tprop.SetBackgroundOpacity(opacity)
     tprop.FrameOn()
     tprop.SetFrameColor(*channel.label_color)
     tprop.SetFrameWidth(1)
@@ -745,23 +997,43 @@ class TexturedLabelLayer:
         self._np[base + 2] = (right, top, 0.0)
         self._np[base + 3] = (left, top, 0.0)
 
-    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray):
-        """Vectorized bulk placement for a whole channel."""
+    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray,
+                      angles: Optional[np.ndarray] = None):
+        """Vectorized bulk placement for a whole channel.
+
+        `angles` rotates each quad about its own centre, in radians, so a label
+        can follow the direction of the thing it names instead of sitting
+        stubbornly horizontal. None keeps every quad axis-aligned, which is the
+        cheaper path and what per-cell labels use.
+        """
         if len(indices) == 0:
             return
         base = 4 * np.asarray(indices, dtype=np.int64)
-        left = xs - self._half_w
-        right = xs + self._half_w
-        bottom = ys - self._half_h
-        top = ys + self._half_h
-        self._np[base + 0, 0] = left
-        self._np[base + 0, 1] = bottom
-        self._np[base + 1, 0] = right
-        self._np[base + 1, 1] = bottom
-        self._np[base + 2, 0] = right
-        self._np[base + 2, 1] = top
-        self._np[base + 3, 0] = left
-        self._np[base + 3, 1] = top
+        if angles is None:
+            left = xs - self._half_w
+            right = xs + self._half_w
+            bottom = ys - self._half_h
+            top = ys + self._half_h
+            self._np[base + 0, 0] = left
+            self._np[base + 0, 1] = bottom
+            self._np[base + 1, 0] = right
+            self._np[base + 1, 1] = bottom
+            self._np[base + 2, 0] = right
+            self._np[base + 2, 1] = top
+            self._np[base + 3, 0] = left
+            self._np[base + 3, 1] = top
+        else:
+            # Corner offsets in the label's own frame, in the same order the
+            # texture coordinates were built with, then rotated per label.
+            ox = np.array([-1.0, 1.0, 1.0, -1.0]) * self._half_w
+            oy = np.array([-1.0, -1.0, 1.0, 1.0]) * self._half_h
+            c = np.cos(angles)[:, None]
+            s = np.sin(angles)[:, None]
+            rx = ox[None, :] * c - oy[None, :] * s
+            ry = ox[None, :] * s + oy[None, :] * c
+            for k in range(4):
+                self._np[base + k, 0] = xs + rx[:, k]
+                self._np[base + k, 1] = ys + ry[:, k]
         self._np[np.concatenate([base, base + 1, base + 2, base + 3]), 2] = 0.0
 
     def hide(self, index: int):
@@ -840,7 +1112,11 @@ class MapperLabelLayer:
     def set_position(self, index: int, x: float, y: float):
         self._np[index] = (x, y, 0.0)
 
-    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray):
+    def set_positions(self, indices: np.ndarray, xs: np.ndarray, ys: np.ndarray,
+                      angles=None):
+        # `angles` accepted and ignored: this path draws through VTK's label
+        # mappers, which place upright text and offer no rotation. Taking the
+        # argument keeps it interchangeable with the textured path.
         if len(indices) == 0:
             return
         idx = np.asarray(indices, dtype=np.int64)
@@ -1048,6 +1324,9 @@ class FlagpoleLayout:
 
         # Per-channel static arrays. Built once, reused every frame.
         self._channel_priority: Dict[str, np.ndarray] = {}
+        self._channel_diag: Dict[str, np.ndarray] = {}
+        self._channel_axis: Dict[str, Optional[np.ndarray]] = {}
+        self._channel_min_px: Dict[str, np.ndarray] = {}
         self._channel_indices: Dict[str, np.ndarray] = {}
         self._channel_fallback_angle: Dict[str, np.ndarray] = {}
         self._channel_leash: Dict[str, np.ndarray] = {}
@@ -1073,6 +1352,24 @@ class FlagpoleLayout:
             self._channel_leash[ch.name] = np.full(
                 len(ch.components), float(ch.max_label_distance_px), dtype=np.float64
             )
+            # World diagonal per component, so the solver can work out how big
+            # each one is ON SCREEN for the size gate.
+            self._channel_diag[ch.name] = np.array(
+                [float(getattr(c, "diagonal", 0.0)) for c in ch.components],
+                dtype=np.float64,
+            )
+            self._channel_min_px[ch.name] = np.full(
+                len(ch.components), float(ch.min_screen_px), dtype=np.float64
+            )
+            # Two world points spanning each component's long axis. Projected
+            # every pass, they give the direction the component runs in ON
+            # SCREEN, which is what an oriented label follows. Two points
+            # rather than a per-frame PCA: the axis is a property of the
+            # geometry, only its projection changes with the camera.
+            self._channel_axis[ch.name] = (
+                _principal_axis_endpoints(ch.components)
+                if ch.orient_to_data else None
+            )
             self._channel_fallback_angle[ch.name] = np.array(
                 [
                     (c.component_id * 2.399963229728653) % (2.0 * math.pi)
@@ -1095,12 +1392,49 @@ class FlagpoleLayout:
         self.last_layout_ms = 0.0
         self.shown_count = 0
         self.hidden_count = 0
+        # Window size the current label positions belong to. None until solved.
+        self.solved_size: Optional[Tuple[int, int]] = None
 
     def set_channel_visible(self, name: str, visible: bool):
         for store in (self.label_layers, self.leader_layers):
             layer = store.get(name)
             if layer is not None:
                 layer.actor.SetVisibility(bool(visible))
+
+    def set_channel_color(self, name: str, color) -> Optional[Tuple]:
+        """Redraw one channel's labels in a new colour.
+
+        The colour is baked into a rasterized texture at build time — one
+        image per channel, reused by every label — so it cannot be tweaked in
+        place. The string has to be re-rendered, which means a new layer and a
+        new actor.
+
+        Returns (old_actor, new_actor) so the caller can keep whatever prop
+        bookkeeping it does in step; None when the channel is unknown or the
+        colour is already what was asked for.
+        """
+        ch = next((c for c in self.channels if c.name == name), None)
+        layer = self.label_layers.get(name)
+        if ch is None or layer is None:
+            return None
+        color = tuple(float(v) for v in color)
+        if tuple(float(v) for v in ch.label_color) == color:
+            return None
+
+        old_actor = layer.actor
+        visible = bool(old_actor.GetVisibility())
+        ch.label_color = color
+        dpi = (int(self.render_window.GetDPI())
+               if self.render_window.GetDPI() > 0 else 72)
+        new_layer = make_label_layer(self.renderer, ch, dpi)
+        new_layer.actor.SetVisibility(visible)
+        self.renderer.RemoveViewProp(old_actor)
+        self.label_layers[name] = new_layer
+        # Positions live in the layer that was just thrown away, so the labels
+        # are nowhere until the next solve. Force one rather than leaving the
+        # channel blank until the camera happens to move.
+        self.update(force=True)
+        return old_actor, new_layer.actor
 
     def refresh_active(self):
         """Rebuild the per-component active mask after suppression changes."""
@@ -1343,6 +1677,78 @@ class FlagpoleLayout:
 
         return x, y
 
+    def _screen_angles(self, ch, selector, names, width, height):
+        """Screen-space tilt for this channel's labels, or None to stay level.
+
+        The component's long axis is projected and its screen direction taken
+        directly, so the label follows the geometry as the camera turns. Folded
+        into (-90, 90] so text never reads upside down, then clamped: a label
+        past MAX_LABEL_TILT_DEG is hard to read and fights the horizontal
+        layout around it.
+        """
+        axis = self._channel_axis.get(ch.name)
+        if axis is None or not len(axis):
+            return None
+        # `selector` indexes the surviving labels; map back to this channel's
+        # own component order to pick the right axis rows.
+        own = np.nonzero(names == ch.name)[0]
+        rank = np.searchsorted(own, np.nonzero(selector)[0])
+        ends = axis[rank]
+        p0x, p0y, _z0, ok0 = self._project(ends[:, 0, :], width, height)
+        p1x, p1y, _z1, ok1 = self._project(ends[:, 1, :], width, height)
+        dx, dy = p1x - p0x, p1y - p0y
+        length = np.hypot(dx, dy)
+        ang = np.arctan2(dy, dx)
+        # Fold into (-90, 90]: a label at 170 deg is the same line as one at
+        # -10 deg, but only one of them is readable.
+        ang = (ang + 0.5 * math.pi) % math.pi - 0.5 * math.pi
+        # Scale the full +/-90 range into +/-MAX rather than clipping, so
+        # labels stay distinguishable instead of stacking on the limit.
+        ang = ang * (MAX_LABEL_TILT_DEG / 90.0)
+        # Too short to have a direction on screen, or an endpoint behind the
+        # camera: leave those level rather than orienting them to noise.
+        ang[(length < 1.0) | ~(ok0 & ok1)] = 0.0
+        return ang
+
+    def _world_per_pixel(self, depth: np.ndarray, height: int) -> np.ndarray:
+        """World units spanned by one pixel, per component, at its own depth.
+
+        Under perspective this grows with distance, which is precisely why the
+        size gate follows the zoom: the same component covers more pixels as
+        the camera comes in. Under parallel projection it is constant.
+        """
+        cam = self.renderer.GetActiveCamera()
+        h = max(int(height), 1)
+        if cam.GetParallelProjection():
+            return np.full(len(depth), 2.0 * cam.GetParallelScale() / h)
+        half = math.radians(0.5 * float(cam.GetViewAngle()))
+        return 2.0 * np.maximum(depth, 1e-6) * math.tan(half) / h
+
+    @staticmethod
+    def _apply_channel_caps(keep, names, caps, screen_px):
+        """Trim each channel to its own ceiling, keeping the biggest on screen.
+
+        Runs after collision resolution so the cap counts labels that would
+        actually be DRAWN, not candidates — capping earlier would spend the
+        allowance on labels the solver then discards anyway.
+
+        Ranked by projected size rather than by the solver's priority so the
+        survivors are the components a viewer would pick out themselves.
+        """
+        if len(keep) == 0:
+            return keep
+        out = keep.copy()
+        for name in np.unique(names):
+            sel = np.nonzero((names == name) & out)[0]
+            if len(sel) == 0:
+                continue
+            cap = int(caps[sel[0]])
+            if cap < 0 or len(sel) <= cap:
+                continue
+            order = sel[np.argsort(-screen_px[sel])]
+            out[order[cap:]] = False
+        return out
+
     @staticmethod
     def _select_visible(x, y, w, h, priority):
         """Greedy acceptance by priority using one precomputed overlap matrix."""
@@ -1402,6 +1808,11 @@ class FlagpoleLayout:
         width, height = self.render_window.GetSize()
         if width < 80 or height < 80:
             return
+        # Every position below is in DISPLAY PIXELS, so a solve is only valid
+        # for the window size it was computed against. Recorded so the caller
+        # can notice the window changed underneath it and re-solve — see
+        # LabelSceneManager.resolve_if_resized.
+        self.solved_size = (width, height)
 
         camera = self.renderer.GetActiveCamera()
         camera_pos = np.asarray(camera.GetPosition(), dtype=np.float64)
@@ -1422,6 +1833,9 @@ class FlagpoleLayout:
         priority_chunks = []
         width_chunks = []
         height_chunks = []
+        diag_chunks = []
+        min_px_chunks = []
+        cap_chunks = []
         angle_chunks = []
         active_chunks = []
         leash_chunks = []
@@ -1441,6 +1855,11 @@ class FlagpoleLayout:
             channel_of.append(np.full(count, ch.name, dtype=object))
             label_index_chunks.append(self._channel_indices[ch.name])
             priority_chunks.append(self._channel_priority[ch.name])
+            diag_chunks.append(self._channel_diag[ch.name])
+            min_px_chunks.append(self._channel_min_px[ch.name])
+            cap_chunks.append(np.full(
+                count, -1 if ch.max_shown is None else int(ch.max_shown),
+                dtype=np.int64))
             width_chunks.append(np.full(count, layer.width, dtype=np.float64))
             height_chunks.append(np.full(count, layer.height, dtype=np.float64))
             angle_chunks.append(self._channel_fallback_angle[ch.name])
@@ -1457,17 +1876,36 @@ class FlagpoleLayout:
         names = np.concatenate(channel_of, axis=0)
         label_indices = np.concatenate(label_index_chunks, axis=0)
         priority = np.concatenate(priority_chunks, axis=0)
+        diag = np.concatenate(diag_chunks, axis=0)
+        min_px = np.concatenate(min_px_chunks, axis=0)
+        caps = np.concatenate(cap_chunks, axis=0)
         w = np.concatenate(width_chunks, axis=0)
         h = np.concatenate(height_chunks, axis=0)
         angles = np.concatenate(angle_chunks, axis=0)
         active = np.concatenate(active_chunks, axis=0)
         leash = np.concatenate(leash_chunks, axis=0)
 
-        ax, ay, _depth, in_front = self._project(world, width, height)
+        ax, ay, _ndc_z, in_front = self._project(world, width, height)
+
+        # How big is each component ON SCREEN? A per-cell label is only worth
+        # drawing once the thing it names is big enough to be worth naming, and
+        # gating on that is what makes label density follow the zoom by itself
+        # rather than from a hand-tuned schedule.
+        #
+        # Depth along the view axis, NOT the third value _project returns —
+        # that one is normalized device z, which lives in [-1, 1] and would
+        # make every component look enormous, passing the gate always.
+        camera_dir = normalize(
+            np.asarray(camera.GetDirectionOfProjection()), (0.0, 0.0, -1.0))
+        depth = (world - camera_pos[None, :]) @ camera_dir
+        screen_px = diag / np.maximum(
+            self._world_per_pixel(depth, height), 1e-9)
+        big_enough = (min_px <= 0.0) | (screen_px >= min_px)
 
         on_screen = (
             active
             & in_front
+            & big_enough
             & (ax >= -allowance_x)
             & (ax <= width + allowance_x)
             & (ay >= -allowance_y)
@@ -1487,6 +1925,8 @@ class FlagpoleLayout:
 
         ax = ax[keep_idx]
         ay = ay[keep_idx]
+        screen_px = screen_px[keep_idx]
+        caps = caps[keep_idx]
         names = names[keep_idx]
         label_indices = label_indices[keep_idx]
         priority = priority[keep_idx]
@@ -1505,6 +1945,7 @@ class FlagpoleLayout:
 
         keep = self._select_visible(x, y, w, h, priority)
         keep &= ~self._blocked_by_obstacle(x, y, w, h)
+        keep = self._apply_channel_caps(keep, names, caps, screen_px)
         ex, ey = self._leader_endpoints(x, y, w, h, ax, ay)
         keep &= ~self._leader_blocked(ax, ay, ex, ey)
 
@@ -1513,7 +1954,9 @@ class FlagpoleLayout:
             if not selector.any():
                 continue
             idx = label_indices[selector]
-            self.label_layers[ch.name].set_positions(idx, x[selector], y[selector])
+            angles = self._screen_angles(ch, selector, names, width, height)
+            self.label_layers[ch.name].set_positions(
+                idx, x[selector], y[selector], angles)
             self.leader_layers[ch.name].set_segments(
                 idx, ax[selector], ay[selector], ex[selector], ey[selector]
             )
@@ -2129,7 +2572,8 @@ class ConformingLabelLayer:
     def __init__(self, renderer: vtk.vtkRenderer, count: int, text: str,
                  color, font_size: int, dpi: int,
                  wrap_aspect: float = COLOC_WRAP_ASPECT,
-                 line_spacing: float = COLOC_LINE_SPACING):
+                 line_spacing: float = COLOC_LINE_SPACING,
+                 overlay_renderer: Optional[vtk.vtkRenderer] = None):
         self.count = count
         self.text = text
         self.nu = CONFORM_SCAFFOLD_U
@@ -2195,7 +2639,18 @@ class ConformingLabelLayer:
         prop.SetDiffuse(0.0)
         prop.BackfaceCullingOff()
         prop.SetOpacity(1.0)
-        renderer.AddActor(self.actor)
+        # Drawn by the OVERLAY renderer when there is one. These patches sit
+        # on a surface inside the tissue, and in the main renderer the volume
+        # ray caster composites everything in front of them — which is most of
+        # the block — so the text came out washed into the volume. The overlay
+        # is a later layer sharing the same camera, so registration is
+        # identical and the labels simply survive.
+        #
+        # Nothing is lost by skipping the depth test against the meshes: the
+        # conformer already slides each patch forward past every surface point
+        # it sampled (see COLOC_LIFT_FRACTION and _occluder_depth), so mesh
+        # occlusion is resolved analytically rather than by the depth buffer.
+        (overlay_renderer or renderer).AddActor(self.actor)
 
         self._np = vtk_to_numpy(self.points.GetData())
         self.hide_all()
@@ -2254,8 +2709,10 @@ class ColocConformer:
         text: str = "colocalization",
         wrap_aspect: float = COLOC_WRAP_ASPECT,
         line_spacing: float = COLOC_LINE_SPACING,
+        overlay_renderer: Optional[vtk.vtkRenderer] = None,
     ):
         self.renderer = renderer
+        self.overlay_renderer = overlay_renderer
         self.render_window = render_window
         self.sites = sites
         self.soup = soup
@@ -2263,6 +2720,7 @@ class ColocConformer:
         self.layer = ConformingLabelLayer(
             renderer, len(sites), text, COLOC_LABEL_COLOR, COLOC_FONT_SIZE, dpi,
             wrap_aspect=wrap_aspect, line_spacing=line_spacing,
+            overlay_renderer=overlay_renderer,
         )
         if len(self.layer.lines) > 1:
             print(f"[coloc] label wrapped to {len(self.layer.lines)} lines: "
@@ -2294,12 +2752,19 @@ class ColocConformer:
 
     def _current_view(self):
         cam = self.renderer.GetActiveCamera()
+        pos = np.asarray(cam.GetPosition(), dtype=np.float64)
+        focal = np.asarray(cam.GetFocalPoint(), dtype=np.float64)
         return (
-            np.asarray(cam.GetPosition(), dtype=np.float64),
+            pos,
             normalize(np.asarray(cam.GetDirectionOfProjection()), (0, 0, -1)),
             normalize(np.asarray(cam.GetViewUp()), (0, 1, 0)),
             float(cam.GetParallelScale()),
             tuple(self.render_window.GetSize()),
+            # Distance to the focal point. Under PERSPECTIVE projection this is
+            # the only quantity a dolly zoom changes: the parallel scale is a
+            # constant, and the view/up directions do not rotate. Without it in
+            # the tuple, a zoom could not be detected at all.
+            float(np.linalg.norm(pos - focal)),
         )
 
     def _camera_unchanged(self) -> bool:
@@ -2310,7 +2775,7 @@ class ColocConformer:
         The recorded state is written by update(), so a forced refit arms the
         guard too rather than leaving the next call to redo the same work.
         """
-        pos, view, up, scale, size = self._current_view()
+        pos, view, up, scale, size, dist = self._current_view()
         last = self._last_view
         if last is None or last[4] != size:
             return False
@@ -2320,8 +2785,23 @@ class ColocConformer:
         tol = math.cos(math.radians(REFIT_MIN_CAMERA_CHANGE_DEG))
         if float(np.dot(last[1], view)) < tol or float(np.dot(last[2], up)) < tol:
             return False
+
+        # A dolly zoom moves the camera along its own axis without rotating it
+        # and without touching the parallel scale, so under perspective the
+        # focal distance is the ONLY thing that registers it. Label size is
+        # derived from this distance (see `_world_per_pixel` and
+        # COLOC_ZOOM_COMPENSATION), so ignoring it left the text at a stale
+        # size on stale geometry — visibly out of register with the surface.
+        if abs(dist - last[5]) > 1e-3 * max(dist, 1e-6):
+            return False
+
+        # Tolerance scales with distance to the FOCAL POINT, not with distance
+        # from the world origin. Origin-relative was 2-6x too loose here, and
+        # worst zoomed in — the camera could move ~2 um, a third of a nucleus,
+        # and still count as unchanged. `_pose_moved` in ui/callbacks.py has
+        # always measured it this way.
         moved = float(np.linalg.norm(pos - last[0]))
-        span = max(float(np.linalg.norm(pos)), 1.0)
+        span = max(dist, 1e-6)
         return moved <= 0.002 * span
 
     def _world_per_pixel(self, distance: float) -> float:
@@ -2428,6 +2908,16 @@ class ColocConformer:
             span = max(site.prism[1] - site.prism[0], site.prism[3] - site.prism[2])
 
             # Scaffold, laid out camera-facing in the plane through the seed.
+            #
+            # Tilting these axes toward the surface's own tangent plane was
+            # tried, to make the conformance more visible. It does not work on
+            # this geometry: these are blobby isosurfaces, and the angle between
+            # a surface normal and the view axis measures a median of 73 deg
+            # (only 5% of triangles lie within 30 deg of facing the camera).
+            # Text laid flat on a surface that steep is edge-on and unreadable,
+            # so any alignment strong enough to see is too strong to read.
+            # Camera-facing is the right choice here; bend is the lever that
+            # actually conveys the surface, and the scaffold density sets it.
             pts = (
                 site.seed[None, None, :]
                 + (self._uu * w_world)[..., None] * right[None, None, :]

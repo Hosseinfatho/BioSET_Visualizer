@@ -273,6 +273,11 @@ class ContourRenderer:
         self._max_value = 0.0
         self._spacing = (1.0, 1.0)
         self._level = 0
+        # Manual hierarchy level, or None to follow the camera. In manual mode
+        # the level — not the viewport — drives the detail ramp; see
+        # `_viewport_width_um`.
+        self._manual_level: Optional[int] = None
+        self._manual_dirty = False
         self._last_value = 0.0
         self._last_pct = 0.0
         self._last_roi = None
@@ -285,6 +290,7 @@ class ContourRenderer:
         """World-Z of the two volume faces the contours are drawn against."""
         self._volume_z = (float(z_lo), float(z_hi))
 
+    @property
     def line_count(self) -> int:
         return self._n_lines
 
@@ -360,6 +366,7 @@ class ContourRenderer:
         cell_world = self._cell_size_vox * sx
 
         width_um = self._viewport_width_um(roi_vox)
+        self._manual_dirty = False
         if not self._ensure_smoothed(width_um):
             return False
 
@@ -419,13 +426,50 @@ class ContourRenderer:
         return self._active
 
     def _viewport_width_um(self, roi_vox) -> float:
-        """Physical width of the view. The ramp's only input."""
+        """Physical width feeding the detail ramp — the ramp's only input.
+
+        In MANUAL mode the selected hierarchy level supplies it instead of the
+        camera. The contour field itself stays at level 0 whatever is chosen
+        (one field at every zoom, or separate boundaries merge across an LOD
+        switch — different aggregations are different functions), so without
+        this the manual level had no effect on contour mode at all: the level
+        picked the grid heatmap's cell size and nothing else, and the contours
+        went on following the camera as if the control were not there.
+
+        Mapping the level onto the ramp's own anchors is what gives it teeth:
+        the finest level asks for the tight end of the ramp (selective, more
+        nested lines), the coarsest for the wide end (permissive, one broad
+        boundary), geometrically interpolated between.
+        """
         sx, _ = self._spacing
+        if self._manual_level is not None:
+            w_wide = self.config.critical_ramp_wide[0]
+            w_tight = self.config.critical_ramp_tight[0]
+            top = max(1, self.manual_level_count - 1)
+            t = min(1.0, max(0.0, float(self._manual_level) / top))
+            return float(w_tight * (w_wide / w_tight) ** t)
         if roi_vox is None:
             if self._raw is None:
                 return self.config.critical_ramp_wide[0]
             return self._raw.shape[1] * self._cell_size_vox * sx
         return max(1e-6, (roi_vox[1] - roi_vox[0]) * sx)
+
+    # How many hierarchy levels the manual selector offers, for mapping a level
+    # onto the ramp. Matches analysis.constants.DEFAULT_CELL_SIZES_VOX.
+    manual_level_count = 4
+
+    def set_manual_level(self, level: Optional[int]) -> None:
+        """Pin the detail ramp to a hierarchy level, or None to follow the camera.
+
+        Marks the contour dirty so the next poll re-cuts it: the viewport has
+        not moved, so the usual "has the view changed enough" test would say no
+        and the new level would never reach the screen.
+        """
+        new = None if level is None else int(level)
+        if new == self._manual_level:
+            return
+        self._manual_level = new
+        self._manual_dirty = True
 
     def _percentile(self, width_um: float, n_cells: int) -> float:
         """Criticality for this viewport: higher (more selective) the tighter
@@ -660,7 +704,13 @@ class ContourRenderer:
         visibly breathe. Require the viewport to have moved or resized by a
         real fraction of its own extent first.
         """
-        if self._smoothed is None or roi_vox is None:
+        if self._smoothed is None:
+            return False
+        # A manual level change moves no pixels, so the viewport test below
+        # would never fire for it.
+        if self._manual_dirty:
+            return True
+        if roi_vox is None:
             return False
         if self._last_roi is None:
             return True

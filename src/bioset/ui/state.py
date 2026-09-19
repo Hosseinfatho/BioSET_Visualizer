@@ -565,6 +565,8 @@ def register_state_change_handlers(state, ctrl):
         is_auto = heatmap_auto_level == "auto"
         if hasattr(ctrl, 'set_heatmap_lod_auto_mode'):
             ctrl.set_heatmap_lod_auto_mode(is_auto)
+        if hasattr(ctrl, 'sync_contour_manual_level'):
+            ctrl.sync_contour_manual_level()
         # Switching to manual: immediately re-query at the current level
         if not is_auto and hasattr(ctrl, 'update_heatmap'):
             ctrl.update_heatmap()
@@ -582,6 +584,10 @@ def register_state_change_handlers(state, ctrl):
             ctrl.update_heatmap_combinations()
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
+        # Contour mode keeps its field at level 0, so the level only reaches it
+        # through the detail ramp — and only if we say so here.
+        if hasattr(ctrl, 'sync_contour_manual_level'):
+            ctrl.sync_contour_manual_level()
 
     @state.change("upset_data")
     def on_upset_data_change(upset_data, **kwargs):
@@ -633,12 +639,21 @@ def register_state_change_handlers(state, ctrl):
         state.dilation_filter_options = []
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
+        # The mode change repopulates the selection with this mode's keys; push
+        # that through to the viewport curves too, or Local scope keeps showing
+        # the other mode's curves.
+        if hasattr(ctrl, 'refilter_viewport_dilation'):
+            ctrl.refilter_viewport_dilation()
 
     @state.change("dilation_selected_channels")
     def on_dilation_selected_channels_change(dilation_selected_channels, **kwargs):
         print(f"[state] Dilation selected channels changed: {len(dilation_selected_channels)} channels")
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
+        # update_dilation_data rebuilds the GLOBAL array only; Local scope reads
+        # dilation_data_viewport, which needs the same selection applied.
+        if hasattr(ctrl, 'refilter_viewport_dilation'):
+            ctrl.refilter_viewport_dilation()
 
     def _refresh_all_upset_scopes():
         """Rebuild every array the UpSet can read.
@@ -684,6 +699,11 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Bar selected channels changed: {len(bar_selected_channels)} channels")
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        # update_bar_data rebuilds the GLOBAL arrays only; Local scope reads
+        # bar_data_viewport / bar_data_viewport_selected, which need the same
+        # selection applied.
+        if hasattr(ctrl, 'refilter_viewport_bar'):
+            ctrl.refilter_viewport_bar()
 
     def _filter_channels(channels, search_term):
         if not search_term:
@@ -714,6 +734,17 @@ def register_state_change_handlers(state, ctrl):
                 _analysis_stale["bar"] = False
         if hasattr(ctrl, 'sync_viewport_plots_enabled'):
             ctrl.sync_viewport_plots_enabled()
+
+    @state.change("bookmark_dataset_id")
+    def on_bookmark_dataset_id_change(bookmark_dataset_id, **kwargs):
+        """Repopulate the panel whenever the open dataset changes.
+
+        The refresh used to run only when the panel was OPENED, so switching
+        datasets with it already open left the previous dataset's categories and
+        thumbnails on screen — and Clear Data left them there too.
+        """
+        if hasattr(ctrl, "bookmark_reload_for_dataset"):
+            ctrl.bookmark_reload_for_dataset()
 
     @state.change("bookmark_open")
     def on_bookmark_open_change(bookmark_open, **kwargs):

@@ -1,0 +1,170 @@
+{
+  "id": "80e7a9e2-31a8-4b6d-a633-cd082921efa6",
+  "title": "Exhausted CD8 and CD3E T cells in tumor mass",
+  "category": "Tumor",
+  "created": "2026-09-08T23:14:30Z",
+  "updated": "2026-09-08T23:14:48Z",
+  "notes": "A MART1-dominant melanocytic tumor region with scattered CD8a+PD1+ T cells at the periphery and within the mass. CD8a and PD1 show strong measured co-localization (IoU 0.66), indicating an exhausted cytotoxic T cell phenotype. The tumor compartment (MART1, ~12.9% coverage) vastly outweighs the immune infiltrate, and CD8a further co-localizes with CD103 (IoU 0.71), suggesting a tissue-resident memory exhausted phenotype embedded in a melanoma-rich microenvironment.",
+  "description": "A MART1-dominant melanocytic tumor region with scattered CD8a+PD1+ T cells at the periphery and within the mass. CD8a and PD1 show strong measured co-localization (IoU 0.66), indicating an exhausted cytotoxic T cell phenotype. The tumor compartment (MART1, ~12.9% coverage) vastly outweighs the immune infiltrate, and CD8a further co-localizes with CD103 (IoU 0.71), suggesting a tissue-resident memory exhausted phenotype embedded in a melanoma-rich microenvironment.",
+  "camera": {
+    "position": [
+      1427.417065261314,
+      81.22651378228274,
+      172.25289725215916
+    ],
+    "focalPoint": [
+      1435.46589308868,
+      75.97061445782157,
+      15.957023238883854
+    ],
+    "viewUp": [
+      0.029971253094664908,
+      0.9990367311255093,
+      -0.03205204907635366
+    ]
+  },
+  "channels": [
+    {
+      "id": 3,
+      "name": "MART1",
+      "color": "#FF0000",
+      "range": [
+        0.0,
+        100.0
+      ]
+    },
+    {
+      "id": 35,
+      "name": "CD8a",
+      "color": "#00FF00",
+      "range": [
+        100.0,
+        100.0
+      ]
+    },
+    {
+      "id": 39,
+      "name": "PD1",
+      "color": "#FFFFFF",
+      "range": [
+        100.0,
+        100.0
+      ]
+    }
+  ],
+  "active_channels": [
+    35,
+    39,
+    3
+  ],
+  "background": "#000000",
+  "viewport": {
+    "width": 2002,
+    "height": 1156
+  },
+  "comments": [],
+  "views": [
+    {
+      "camera": {
+        "position": [
+          1427.417065261314,
+          81.22651378228274,
+          172.25289725215916
+        ],
+        "focalPoint": [
+          1435.46589308868,
+          75.97061445782157,
+          15.957023238883854
+        ],
+        "viewUp": [
+          0.029971253094664908,
+          0.9990367311255093,
+          -0.03205204907635366
+        ]
+      },
+      "notes": "A MART1-dominant melanocytic tumor region with scattered CD8a+PD1+ T cells at the periphery and within the mass. CD8a and PD1 show strong measured co-localization (IoU 0.66), indicating an exhausted cytotoxic T cell phenotype. The tumor compartment (MART1, ~12.9% coverage) vastly outweighs the immune infiltrate, and CD8a further co-localizes with CD103 (IoU 0.71), suggesting a tissue-resident memory exhausted phenotype embedded in a melanoma-rich microenvironment.",
+      "comments": [],
+      "channels": [
+        {
+          "id": 3,
+          "name": "MART1",
+          "color": "#FF0000",
+          "range": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "id": 35,
+          "name": "CD8a",
+          "color": "#00FF00",
+          "range": [
+            100.0,
+            100.0
+          ]
+        },
+        {
+          "id": 39,
+          "name": "PD1",
+          "color": "#FFFFFF",
+          "range": [
+            100.0,
+            100.0
+          ]
+        }
+      ],
+      "active_channels": [
+        35,
+        39,
+        3
+      ],
+      "background": "#000000",
+      "viewport": {
+        "width": 2002,
+        "height": 1156
+      },
+      "optional_LOD": {
+        "component": 1,
+        "roi": {
+          "x0": 4736,
+          "x1": 5454,
+          "y0": 0,
+          "y1": 512
+        }
+      }
+    }
+  ],
+  "chat_history_enabled": true,
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Label: CD3E, CD8a, MART1"
+    },
+    {
+      "role": "assistant",
+      "content": "{\n  \"labels\": {\n    \"CD3E\": [\n      \"pan\\u2013T cell\"\n    ],\n    \"CD3E+CD8a\": [\n      \"cytotoxic T lymphocyte\"\n    ],\n    \"CD3E+CD8a/MART1\": [\n      \"cytotoxic T cell\\u2013melanoma front\"\n    ],\n    \"CD3E/MART1\": [\n      \"T cell\\u2013tumor interface\"\n    ],\n    \"CD8a\": [\n      \"cytotoxic T cell\"\n    ],\n    \"CD8a+MART1\": [\n      \"T cell\\u2013tumor infiltrate\"\n    ],\n    \"MART1\": [\n      \"melanoma tumor mass\"\n    ]\n  },\n  \"overall\": [\n    \"exhausted CTL\\u2013melanoma microenvironment\"\n  ]\n}"
+    },
+    {
+      "role": "assistant",
+      "content": "Labels: 38/288 callouts shown across 5 channel(s), 2/2 surface labels shown, 11 actors, viewport 2002x1156, 3779 ms."
+    },
+    {
+      "role": "user",
+      "content": "Suggest bookmark text"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    }
+  ],
+  "chat_history_updated": "2026-09-08T23:14:48Z",
+  "optional_LOD": {
+    "component": 1,
+    "roi": {
+      "x0": 4736,
+      "x1": 5454,
+      "y0": 0,
+      "y1": 512
+    }
+  }
+}
