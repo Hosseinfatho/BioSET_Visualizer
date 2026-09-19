@@ -315,6 +315,7 @@ def init_state(state):
     state.setdefault("biomni_dataset", "melanoma CyCIF")
     state.setdefault("biomni_file_description", "")
     state.setdefault("biomni_upload_success", False)
+    state.setdefault("biomni_init_error", "")
 
     # Report Settings
     state.setdefault("export_general", True)

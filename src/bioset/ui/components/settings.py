@@ -174,6 +174,15 @@ def settings_section(state, ctrl):
                         block=True,
                         small=True,
                         loading=("chatbot_loading",),
+                        disabled=("chatbot_loading",),
+                    )
+                with vuetify.VListItem(
+                        v_show=("biomni_init_error", False),
+                        class_="nav-item nav-item--nested px-4 pb-2",
+                ):
+                    html.Span(
+                        "{{ biomni_init_error }}",
+                        style="font-size: 0.7rem; color: #ff8a80; white-space: normal; word-break: break-word;",
                     )
 
                 # File Upload section (only shown after initialization)

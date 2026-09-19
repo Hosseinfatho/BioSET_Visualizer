@@ -18,8 +18,25 @@ import requests
 _DEFAULT_BASE_URL = "http://localhost:5000"
 _DEFAULT_LLM = "claude-sonnet-4-6"
 _DEFAULT_MODE = "minimal"
+# First Biomni /init can download datasets and take several minutes.
+_INIT_TIMEOUT_S = int(os.environ.get("BIOSET_BIOMNI_INIT_TIMEOUT", "600"))
 
 _MODELS_FILE = Path(__file__).parent / "models.txt"
+
+
+def resolve_biomni_base_url(port: int | str | None = None) -> str:
+    """Resolve Biomni server URL.
+
+    Priority:
+    1. ``BIOSET_BIOMNI_URL`` / ``BIOMNI_URL`` (needed from Docker → sibling/host)
+    2. ``http://localhost:{port}`` (local / same-network process)
+    """
+    for key in ("BIOSET_BIOMNI_URL", "BIOMNI_URL"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            return raw.rstrip("/")
+    p = int(port) if port not in (None, "") else 5000
+    return f"http://localhost:{p}"
 
 
 def load_models() -> tuple[list[str], str, str]:
@@ -83,7 +100,23 @@ class BiomniLocalClient:
             payload["api_key"] = api_key
 
         print(f"[biomni] Initialising server at {self.base_url} (llm={llm}, db_llm={db_llm}, mode={mode})")
-        resp = requests.post(f"{self.base_url}/init", json=payload, timeout=60)
+        try:
+            resp = requests.post(
+                f"{self.base_url}/init",
+                json=payload,
+                timeout=_INIT_TIMEOUT_S,
+            )
+        except requests.exceptions.ConnectionError as e:
+            raise RuntimeError(
+                f"Cannot reach Biomni at {self.base_url}. "
+                "On Arcade start the biomni container on the same Docker network "
+                "(http://biomni:5000) and set BIOSET_BIOMNI_URL."
+            ) from e
+        except requests.exceptions.Timeout as e:
+            raise RuntimeError(
+                f"Biomni /init timed out after {_INIT_TIMEOUT_S}s at {self.base_url}. "
+                "First run can take several minutes while datasets download."
+            ) from e
         data = _check_response(resp)
         if data.get("status") != "ok":
             raise RuntimeError(f"Server init failed: {data.get('message', data)}")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import hashlib
 import os
@@ -1826,42 +1827,74 @@ def register_callbacks(ctrl, state, view, streamer=None):
     _refs["biomni_client"] = None
 
     def _get_biomni_client():
-        """Get or create the local Biomni client."""
-        url = f"http://localhost:{state.biomni_port}"
+        """Get or create the Biomni HTTP client (URL may point at a Docker sibling)."""
+        from bioset.llm.biomni import resolve_biomni_base_url
 
-        if _refs["biomni_client"] is None:
-            _refs["biomni_client"] = BiomniLocalClient(base_url=url)
+        url = resolve_biomni_base_url(getattr(state, "biomni_port", 5000))
 
-        if _refs["biomni_client"].base_url != url:
+        if _refs["biomni_client"] is None or _refs["biomni_client"].base_url != url:
+            print(f"[callbacks] Biomni client → {url}")
             _refs["biomni_client"] = BiomniLocalClient(base_url=url)
 
         return _refs["biomni_client"]
 
     def chatbot_login():
-        """Initialise the Biomni agent on the local server."""
-        print(f"[callbacks] Biomni init requested with llm={state.biomni_model}, db_llm={state.biomni_db_model}, mode={state.biomni_mode}")
+        """Initialise Biomni off the UI thread so the button stays responsive."""
+        if getattr(state, "chatbot_loading", False):
+            return
+        print(
+            f"[callbacks] Biomni init requested with llm={state.biomni_model}, "
+            f"db_llm={state.biomni_db_model}, mode={state.biomni_mode}"
+        )
         state.chatbot_loading = True
+        state.biomni_init_error = ""
+        try:
+            state.flush()
+        except Exception:
+            pass
+
+        llm = state.biomni_model
+        db_llm = state.biomni_db_model
+        mode = state.biomni_mode
+        dataset = state.biomni_dataset
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        async def _run():
+            try:
+                client = _get_biomni_client()
+
+                def _init():
+                    return client.init(
+                        llm=llm,
+                        db_llm=db_llm,
+                        mode=mode,
+                        dataset=dataset,
+                        api_key=api_key,
+                    )
+
+                await asyncio.to_thread(_init)
+                state.chatbot_authenticated = True
+                state.biomni_init_error = ""
+                state.chatbot_messages = []
+                print("[callbacks] Biomni initialised successfully")
+            except Exception as e:
+                error_msg = f"Initialisation failed: {e}"
+                print(f"[callbacks] {error_msg}")
+                state.chatbot_authenticated = False
+                state.biomni_init_error = error_msg
+                state.chatbot_messages = [{"role": "error", "content": error_msg}]
+            finally:
+                state.chatbot_loading = False
+                try:
+                    state.flush()
+                except Exception:
+                    pass
 
         try:
-            client = _get_biomni_client()
-            client.init(
-                llm=state.biomni_model,
-                db_llm=state.biomni_db_model,
-                mode=state.biomni_mode,
-                dataset=state.biomni_dataset,
-                api_key=os.getenv("ANTHROPIC_API_KEY"),
-            )
-            state.chatbot_authenticated = True
-            state.chatbot_messages = []
-            print("[callbacks] Biomni initialised successfully")
-
-        except Exception as e:
-            error_msg = f"Initialisation failed: {e}"
-            print(f"[callbacks] {error_msg}")
-            state.chatbot_authenticated = False
-            state.chatbot_messages = [{"role": "error", "content": error_msg}]
-        finally:
-            state.chatbot_loading = False
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+        loop.create_task(_run())
 
     _refs["biomni_pending_file"] = None  # temp path of file waiting to be uploaded
 
