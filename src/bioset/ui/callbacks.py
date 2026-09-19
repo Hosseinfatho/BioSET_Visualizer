@@ -1229,6 +1229,22 @@ def register_callbacks(ctrl, state, view, streamer=None):
                 for pt in curve:
                     print(f"  {pt['dilation']:>10.1f}  {pt['count']:>12}  {pt['iou']:>10.6f}  {pt.get('overlap_coeff', 0):>10.6f}")
 
+    def _bar_selection(loader):
+        """Channels ticked in the BAR dialog, restricted to ones that exist.
+
+        Same three-way meaning as `_upset_selection`: None when everything is
+        ticked (no restriction worth pushing), [] when nothing is — which must
+        render an empty plot rather than the unfiltered one.
+        """
+        sel = list(getattr(state, "bar_selected_channels", None) or [])
+        known = set(loader.metadata.channels if loader.metadata else [])
+        sel = [c for c in sel if c in known]
+        if not sel:
+            return []
+        if len(sel) >= len(known):
+            return None
+        return sel
+
     def _upset_selection(loader):
         """Channels ticked in the UpSet dialog, restricted to ones that exist.
 
@@ -1553,11 +1569,60 @@ def register_callbacks(ctrl, state, view, streamer=None):
             if loader and loader.is_loaded:
                 vp.update_min_channels(_combo_size(loader))
                 vp.update_selected_channels(_upset_selection(loader))
+                # The bar has its own dialog; without this the viewport bar
+                # arrays were gated by the UpSet selection instead.
+                vp.update_bar_selected_channels(_bar_selection(loader))
+            # The dilation dialog filters the global curves; the viewport ones
+            # must go through the same selection or the dialog is inert in
+            # Local scope. The selection is already scoped to the current view
+            # mode, since its options ARE that mode's keys.
+            vp.update_dilation_selection(
+                list(getattr(state, "dilation_selected_channels", []) or []))
 
             # Trigger immediate computation with current viewport
             ranges = _compute_current_tile_ranges()
             if ranges:
                 vp.on_camera_moved(ranges[0], ranges[1])
+
+    def refilter_viewport_bar():
+        """Re-apply the bar dialog to the cached viewport rows.
+
+        Cheap on purpose, like the dilation one: a display filter should not
+        re-run the viewport query.
+        """
+        vp = _refs.get("viewport_plots")
+        loader = _refs.get("analysis_loader")
+        if vp is None or not hasattr(vp, "update_bar_selected_channels"):
+            return
+        if loader is not None and loader.is_loaded:
+            vp.update_bar_selected_channels(_bar_selection(loader))
+        if vp.apply_bar_filter(state):
+            v = _refs.get("view")
+            if v:
+                try:
+                    v.update()
+                except Exception:
+                    pass
+
+    def refilter_viewport_dilation():
+        """Re-apply the dilation dialog to the cached viewport curves.
+
+        Cheap on purpose: ticking a box must not re-run the viewport query,
+        which is the expensive part and would also make the plot flicker
+        through a recompute for a pure display filter.
+        """
+        vp = _refs.get("viewport_plots")
+        if vp is None or not hasattr(vp, "update_dilation_selection"):
+            return
+        vp.update_dilation_selection(
+            list(getattr(state, "dilation_selected_channels", []) or []))
+        if vp.apply_dilation_filter(state):
+            v = _refs.get("view")
+            if v:
+                try:
+                    v.update()
+                except Exception:
+                    pass
 
     def reset_camera():
         """Reset camera to initial position (from when data was first loaded). Use after opening a Bookmark to return to default view."""
@@ -2862,6 +2927,8 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.sync_contour_manual_level = sync_contour_manual_level
     ctrl.set_viewport_plots = set_viewport_plots
     ctrl.sync_viewport_plots_enabled = sync_viewport_plots_enabled
+    ctrl.refilter_viewport_dilation = refilter_viewport_dilation
+    ctrl.refilter_viewport_bar = refilter_viewport_bar
     ctrl.trigger("clear_analysis")(clear_analysis)
     ctrl.generate_pdf_report = generate_pdf_report
     ctrl.set_renderer = set_renderer

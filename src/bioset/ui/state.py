@@ -639,12 +639,21 @@ def register_state_change_handlers(state, ctrl):
         state.dilation_filter_options = []
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
+        # The mode change repopulates the selection with this mode's keys; push
+        # that through to the viewport curves too, or Local scope keeps showing
+        # the other mode's curves.
+        if hasattr(ctrl, 'refilter_viewport_dilation'):
+            ctrl.refilter_viewport_dilation()
 
     @state.change("dilation_selected_channels")
     def on_dilation_selected_channels_change(dilation_selected_channels, **kwargs):
         print(f"[state] Dilation selected channels changed: {len(dilation_selected_channels)} channels")
         if hasattr(ctrl, 'update_dilation_data'):
             ctrl.update_dilation_data()
+        # update_dilation_data rebuilds the GLOBAL array only; Local scope reads
+        # dilation_data_viewport, which needs the same selection applied.
+        if hasattr(ctrl, 'refilter_viewport_dilation'):
+            ctrl.refilter_viewport_dilation()
 
     def _refresh_all_upset_scopes():
         """Rebuild every array the UpSet can read.
@@ -690,6 +699,11 @@ def register_state_change_handlers(state, ctrl):
         print(f"[state] Bar selected channels changed: {len(bar_selected_channels)} channels")
         if hasattr(ctrl, 'update_bar_data'):
             ctrl.update_bar_data()
+        # update_bar_data rebuilds the GLOBAL arrays only; Local scope reads
+        # bar_data_viewport / bar_data_viewport_selected, which need the same
+        # selection applied.
+        if hasattr(ctrl, 'refilter_viewport_bar'):
+            ctrl.refilter_viewport_bar()
 
     def _filter_channels(channels, search_term):
         if not search_term:

@@ -37,10 +37,32 @@ def viewer(ctrl, render_window):
             vuetify.Template("<hover-tracker />")
             ctrl.view_update = view.update
             # 2D NOV lens: drag to move via Trame v_on (no custom JS); +/- for size.
-            # Overlay: pointer-events auto when lens visible so lens can receive clicks (script needs this to start drag)
+            #
+            # The overlay is CLICK-THROUGH by default, and that is load-bearing.
+            # It spans the whole viewport at z-index 50, so while it accepts
+            # pointer events it swallows every click in the app — including the
+            # NOV popup's close button, which sits below it at z-index 5. Making
+            # it `auto` whenever the lens was visible meant a popped-out lens
+            # could not be dismissed until it had been dragged once, because the
+            # drag's mouseup writes `pointerEvents = "none"` inline and that
+            # inline value then beats the binding.
+            #
+            # Nothing is lost by defaulting to none: every interactive child
+            # (.nov-rect-lens, .nov-rect-controls, the size handle) sets
+            # `pointer-events: auto` itself, and a child that opts in still
+            # receives events under a `none` parent. `window.novStartDrag` raises
+            # the overlay to `auto` for the duration of a drag — that is what
+            # keeps the camera from rotating underneath the lens — and drops it
+            # back on release.
+            #
+            # Kept CONSTANT rather than bound to nov_show_rect so toggling the
+            # lens cannot re-patch the style and clobber what the drag script
+            # last wrote.
             _overlay_style = (
-                "'position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; pointer-events: ' + (nov_show_rect ? 'auto' : 'none')",
-                "position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; pointer-events: auto;",
+                "'position: absolute; top: 0; left: 0; right: 0; bottom: 0; "
+                "z-index: 50; pointer-events: none'",
+                "position: absolute; top: 0; left: 0; right: 0; bottom: 0; "
+                "z-index: 50; pointer-events: none;",
             )
             # Immediate DOM capture so overlay gets mousemove/mouseup without waiting for state sync
             _mousedown = (
