@@ -76,12 +76,44 @@ def _check_response(resp: "requests.Response") -> dict:
     return resp.json()
 
 
+def _is_missing_route(resp: "requests.Response") -> bool:
+    """True when the Flask wrapper has no handler for this path."""
+    if resp.status_code != 404:
+        return False
+    body = (resp.text or "").lower()
+    return "<!doctype html>" in body or "not found" in body or not body.strip()
+
+
 class BiomniLocalClient:
     """HTTP client for the local Biomni Flask server."""
 
     def __init__(self, base_url: str = _DEFAULT_BASE_URL):
         self.base_url = base_url.rstrip("/")
         self.initialized = False
+
+    def _post_or_query(
+        self,
+        path: str,
+        payload: dict,
+        *,
+        fallback_question: str,
+        markers: Optional[list[str]] = None,
+        channel_stats: Optional[dict] = None,
+        mode: str = _DEFAULT_MODE,
+        image: Optional[str] = None,
+    ) -> dict:
+        """POST `path`; older Arcade wrappers only have /query, so 404 falls back."""
+        resp = requests.post(f"{self.base_url}{path}", json=payload, timeout=300)
+        if _is_missing_route(resp):
+            print(f"[biomni] {path} missing on server; falling back to /query")
+            return self.query(
+                markers or payload.get("markers") or [],
+                fallback_question,
+                channel_stats if channel_stats is not None else payload.get("channel_stats"),
+                mode=mode,
+                image=image if image is not None else payload.get("image"),
+            )
+        return _check_response(resp)
 
     def init(
         self,
@@ -236,8 +268,22 @@ class BiomniLocalClient:
             payload["image"] = image
 
         print(f"[biomni] POST /suggest  markers={len(markers)}  image={bool(image)}")
-        resp = requests.post(f"{self.base_url}/suggest", json=payload, timeout=300)
-        return _check_response(resp)
+        result = self._post_or_query(
+            "/suggest",
+            payload,
+            fallback_question=(
+                "Suggest additional CyCIF channels to add alongside the current "
+                "markers. Reply as JSON: {\"suggestions\": [{\"channel\": \"\", "
+                "\"reason\": \"\", \"priority\": \"high|medium|low\"}]}"
+            ),
+            markers=markers,
+            channel_stats=channel_stats,
+            mode=mode,
+            image=image,
+        )
+        if "suggestions" not in result and result.get("answer"):
+            result = {"suggestions": [], "answer": result.get("answer")}
+        return result
 
     def explain(
         self,
@@ -270,8 +316,15 @@ class BiomniLocalClient:
             payload["image"] = image
 
         print(f"[biomni] POST /explain  markers={len(markers)}  image={bool(image)}")
-        resp = requests.post(f"{self.base_url}/explain", json=payload, timeout=300)
-        return _check_response(resp)
+        return self._post_or_query(
+            "/explain",
+            payload,
+            fallback_question="Explain what is in this view.",
+            markers=markers,
+            channel_stats=channel_stats,
+            mode=mode,
+            image=image,
+        )
 
     def plot(
         self,
@@ -296,8 +349,21 @@ class BiomniLocalClient:
             payload["markers"] = markers
 
         print(f"[biomni] POST /plot  type={plot_payload.get('type')}  view_mode={plot_payload.get('view_mode')}")
-        resp = requests.post(f"{self.base_url}/plot", json=payload, timeout=300)
-        return _check_response(resp)
+        kind = plot_payload.get("type") or "plot"
+        visible = plot_payload.get("visible_data") or []
+        preview = visible[:12]
+        question = (
+            f"Explain this {kind} plot. Scope={plot_payload.get('scope_mode')}, "
+            f"channels={plot_payload.get('active_channels')}. "
+            f"Visible rows: {preview}"
+        )
+        return self._post_or_query(
+            "/plot",
+            payload,
+            fallback_question=question,
+            markers=markers,
+            mode=mode,
+        )
 
     def suggest_bookmark(
         self,
@@ -326,5 +392,24 @@ class BiomniLocalClient:
             payload["channel_stats"] = channel_stats
 
         print(f"[biomni] POST /bookmark  markers={len(markers)}  image={bool(image)}")
-        resp = requests.post(f"{self.base_url}/bookmark", json=payload, timeout=300)
-        return _check_response(resp)
+        result = self._post_or_query(
+            "/bookmark",
+            payload,
+            fallback_question=(
+                "Suggest bookmark text for this view. Reply as JSON: "
+                "{\"title\": \"\", \"category\": \"\", \"description\": \"\"}"
+            ),
+            markers=markers,
+            channel_stats=channel_stats,
+            mode=mode,
+            image=image,
+        )
+        if not any(result.get(k) for k in ("title", "category", "description")):
+            answer = (result.get("answer") or "").strip()
+            if answer:
+                result = {
+                    "title": answer.split("\n", 1)[0][:80],
+                    "category": result.get("category") or "Uncategorized",
+                    "description": answer,
+                }
+        return result
