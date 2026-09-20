@@ -107,3 +107,40 @@ def find_dataset_preset(name: str) -> DatasetPreset | None:
         if preset.name == name:
             return preset
     return None
+
+
+def _env_flag(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def default_source_from_env() -> dict:
+    """Optional Arcade/Docker defaults from environment.
+
+    BIOSET_AUTOLOAD=1 loads zarr + analysis when a worker starts.
+    Paths (container): BIOSET_ZARR_URL, BIOSET_ANALYSIS_DIR, BIOSET_METADATA_URL.
+    """
+    zarr = (
+        (os.environ.get("BIOSET_ZARR_URL") or os.environ.get("BIOSET_ZARR_LOCAL") or "")
+        .strip()
+    )
+    analysis = (
+        (os.environ.get("BIOSET_ANALYSIS_DIR") or os.environ.get("BIOSET_DEFAULT_ANALYSIS") or "")
+        .strip()
+    )
+    metadata = (os.environ.get("BIOSET_METADATA_URL") or "").strip()
+    preset = (os.environ.get("BIOSET_AUTOLOAD_PRESET") or "").strip()
+    if preset:
+        found = find_dataset_preset(preset)
+        if found is not None:
+            zarr = zarr or found.zarr_url
+            analysis = analysis or found.analysis_dir
+            if found.separate_metadata:
+                metadata = metadata or found.metadata_url
+    return {
+        "zarr_url": zarr,
+        "analysis_dir": analysis,
+        "metadata_url": metadata,
+        "separate_metadata": _env_flag("BIOSET_METADATA_SEPARATE") or bool(metadata),
+        "autoload": _env_flag("BIOSET_AUTOLOAD"),
+        "preset": preset or "MIS",
+    }

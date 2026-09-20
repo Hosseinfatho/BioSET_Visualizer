@@ -2911,6 +2911,25 @@ def register_callbacks(ctrl, state, view, streamer=None):
         except Exception as e:
             print(f"[callbacks] Error generating report: {e}")
 
+    def autoload_default_sources():
+        """Load zarr + analysis once per worker when BIOSET_AUTOLOAD=1."""
+        from bioset.datasets import default_source_from_env
+
+        cfg = default_source_from_env()
+        if not cfg["autoload"]:
+            return
+        if getattr(state, "data_loaded", False) and getattr(state, "analysis_loaded", False):
+            return
+        print(f"[callbacks] Autoload MIS: zarr={state.zarr_url!r} analysis={state.analysis_dir!r}")
+        if not getattr(state, "data_loaded", False):
+            load_data()
+        if (state.analysis_dir or "").strip() and not getattr(state, "analysis_loaded", False):
+            analysis_path = Path(state.analysis_dir)
+            if not analysis_path.exists():
+                print(f"[callbacks] Autoload skipped analysis; missing {analysis_path}")
+                return
+            load_analysis_path()
+
     # Bind to controller
     ctrl.set_streamer = set_streamer
     ctrl.set_heatmap = set_heatmap
@@ -2918,6 +2937,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
     ctrl.load_data = load_data
     ctrl.clear_data = clear_data
     ctrl.load_analysis_path = load_analysis_path
+    ctrl.autoload_default_sources = autoload_default_sources
     ctrl.update_heatmap = update_heatmap
     ctrl.update_heatmap_combinations = update_heatmap_combinations
     ctrl.print_dilation_curve = print_dilation_curve

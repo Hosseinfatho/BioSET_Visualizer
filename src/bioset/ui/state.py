@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bioset.datasets import find_dataset_preset, load_dataset_presets
+from bioset.datasets import default_source_from_env, find_dataset_preset, load_dataset_presets
 
 # TODO: import from config.py
 DEFAULT_CHANNEL_COLORS = (
@@ -34,15 +34,24 @@ def init_state(state):
     # Data sources
     # Named presets from datasets.json. Only the names are shared with the
     # client; the paths are looked up server-side when one is picked.
+    _src = default_source_from_env()
+    _default_zarr = (
+        _src["zarr_url"]
+        or "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0"
+    )
+    _default_meta = (
+        _src["metadata_url"]
+        or "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml"
+    )
     state.setdefault("dataset_presets", [p.name for p in load_dataset_presets()])
-    state.setdefault("dataset_preset", None)
-    state.setdefault("zarr_url", "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/0")
-    state.setdefault("metadata_url", "https://lsp-public-data.s3.amazonaws.com/biomedvis-challenge-2025/Dataset1-LSP13626-melanoma-in-situ/OME/METADATA.ome.xml")
+    state.setdefault("dataset_preset", _src["preset"] if _src["autoload"] else None)
+    state.setdefault("zarr_url", _default_zarr)
+    state.setdefault("metadata_url", _default_meta)
     state.setdefault("data_loading", False)
     state.setdefault("data_loaded", False)
     # Separate-metadata field is collapsed by default; metadata baked into the
     # zarr store is preferred and the URL is only a fallback.
-    state.setdefault("metadata_open", False)
+    state.setdefault("metadata_open", bool(_src["separate_metadata"] and _src["autoload"]))
     state.setdefault("metadata_source", "")  # "embedded" | "external" once loaded
     state.setdefault("size_unit", "µm")
     
@@ -175,7 +184,7 @@ def init_state(state):
     # analysis results loading (server-side path to colocalization.zarr + tally/)
     state.setdefault("analysis_loaded", False)
     state.setdefault("analysis_loading", False)
-    state.setdefault("analysis_dir", "")  # Server-side results directory path
+    state.setdefault("analysis_dir", _src["analysis_dir"])  # Server-side results directory path
     state.setdefault("analysis_file_name", "")  # Basename of analysis_dir
 
     # Analysis metadata (from the results store)

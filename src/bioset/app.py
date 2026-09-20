@@ -202,6 +202,11 @@ def run_app(*, idle_timeout: int | None = None):
         def _start_check_loop(**_):
             asyncio.create_task(_check_loaded_data_loop())
             asyncio.create_task(_nov_animation_loop())
+            if hasattr(ctrl, "autoload_default_sources"):
+                try:
+                    ctrl.autoload_default_sources()
+                except Exception as e:
+                    print(f"[bioset] Autoload failed: {e}", file=sys.__stderr__)
 
 
     if scene.streamer is not None:
