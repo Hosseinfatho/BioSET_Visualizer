@@ -104,6 +104,7 @@ class FieldStore:
         self.root = zarr.open(str(zarr_path), mode="r")
         # The radius mapping falls back to meta.json, which sits beside the store.
         self.grid = GridInfo.from_attrs(self.root.attrs, self.zarr_path.parent)
+        self._require_field_arrays()
         self._edt_cache_bytes = int(edt_cache_bytes)
         self._lock = threading.Lock()
         self._edt_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
@@ -112,6 +113,20 @@ class FieldStore:
         self._cumhist_cache: Dict[tuple, np.ndarray] = {}
         self._occ_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
         self._occ_levels_ok: Optional[bool] = None
+
+    def _require_field_arrays(self) -> None:
+        """Fail fast when colocalization.zarr is only an empty group stub."""
+        missing = []
+        for group, level in (("edt", "0"), ("occ", "0")):
+            try:
+                _ = self.root[group][level].shape
+            except Exception:
+                missing.append(f"{group}/{level}")
+        if missing:
+            raise FileNotFoundError(
+                f"{self.zarr_path} is missing heatmap arrays ({', '.join(missing)}). "
+                "Copy the complete store (Preprocessing/mis_full/colocalization.zarr)."
+            )
 
     @property
     def channel_names(self) -> list:

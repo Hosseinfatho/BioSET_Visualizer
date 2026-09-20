@@ -710,13 +710,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
             state.bar_selected_channels = [ch for ch in state.analysis_channels]
             state.dilation_selected_channels = [ch for ch in state.analysis_channels]
 
+            state.analysis_error = ""
             state.analysis_loaded = True
             state.right_drawer_open = True
 
             print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
                   f"detents={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
 
-            update_heatmap()
+            if not (state.active_channels or []):
+                analysis_names = set(state.analysis_channels or [])
+                n = min(int(getattr(state, "default_num_channels", 3) or 3),
+                        len(state.channels or []))
+                picked = []
+                for ch in (state.channels or []):
+                    if not analysis_names or ch["name"] in analysis_names:
+                        picked.append(ch["id"])
+                    if len(picked) >= max(n, 1):
+                        break
+                if picked:
+                    print(f"[callbacks] Auto-activating channels {picked} for heatmap")
+                    state.active_channels = picked
+
             update_heatmap_combinations()
             update_upset_data()
             update_bar_data()
@@ -730,6 +744,7 @@ def register_callbacks(ctrl, state, view, streamer=None):
             import traceback
             traceback.print_exc()
             state.analysis_loaded = False
+            state.analysis_error = str(e)
         finally:
             state.analysis_loading = False
 

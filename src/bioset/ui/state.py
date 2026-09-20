@@ -184,6 +184,7 @@ def init_state(state):
     # analysis results loading (server-side path to colocalization.zarr + tally/)
     state.setdefault("analysis_loaded", False)
     state.setdefault("analysis_loading", False)
+    state.setdefault("analysis_error", "")
     state.setdefault("analysis_dir", _src["analysis_dir"])  # Server-side results directory path
     state.setdefault("analysis_file_name", "")  # Basename of analysis_dir
 

@@ -183,6 +183,8 @@ def data_sources_section(state, ctrl):
                             with html.Div(v_if="analysis_loaded", class_="text-caption success--text"):
                                 vuetify.VIcon("mdi-check-circle-outline", x_small=True, class_="mr-1")
                                 html.Span("{{ analysis_file_name }}",classes="text-truncate text-center", style="font-size: 10px; color: #9e9e9e;")
+                            with html.Div(v_if="analysis_error", class_="text-caption error--text pa-1"):
+                                html.Span("{{ analysis_error }}")
                             
                             with vuetify.VCard(
                                     classes="text-center pa-1",
