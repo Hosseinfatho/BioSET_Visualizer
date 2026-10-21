@@ -4,7 +4,14 @@ from bioset.datasets import default_source_from_env, find_dataset_preset, load_d
 
 # TODO: import from config.py
 DEFAULT_CHANNEL_COLORS = (
-    "#FFFFFF", # White
+    "#FF0000",  # red — default channel 0
+    "#00FF00",  # green — default channel 1
+    "#FFFF00",  # yellow — default channel 2
+    "#FFFFFF",
+    "#00FFFF",
+    "#FF00FF",
+    "#808080",
+    "#0000FF",
 )
 
 # Swatches for VColorPicker 

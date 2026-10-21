@@ -287,12 +287,12 @@ class VolumeConfig:
     # caching
     cache_enabled: bool = True
     cache_dir: Path = Path.home() / ".cache" / "bioset_zarr_cache"
-    cache_size_gb: float = 8.0
+    cache_size_gb: float = 64.0
     # In-memory decoded-chunk LRU budgets (RAM). Fine full-Z tiles are large, so
     # too small a budget thrashes (re-decoding tiles every settle). Tune up on a
     # workstation with spare RAM; down on a memory-constrained box.
-    chunk_cache_gb: float = 6.0
-    lowres_cache_gb: float = 0.5
+    chunk_cache_gb: float = 64.0
+    lowres_cache_gb: float = 8.0
 
     # Globus HTTPS streaming (for `globus://<path>` or *.gaccess.io URLs).
     # Collection/host differ per collection; token file caches the refresh token.
@@ -345,4 +345,8 @@ def default_config() -> VolumeConfig:
             "BIOSET_GLOBUS_HTTPS_BASE", "https://m-b2c38a.183192.b160.gaccess.io"),
         globus_token_file=os.environ.get(
             "BIOSET_GLOBUS_TOKEN_FILE", "~/.bioset/globus_token.json"),
+        cache_dir=Path(os.environ.get("BIOSET_ZARR_CACHE") or str(Path.home() / ".cache" / "bioset_zarr_cache")),
+        cache_size_gb=float(os.environ.get("BIOSET_ZARR_CACHE_GB") or 64.0),
+        chunk_cache_gb=float(os.environ.get("BIOSET_CHUNK_CACHE_GB") or 64.0),
+        lowres_cache_gb=float(os.environ.get("BIOSET_LOWRES_CACHE_GB") or 8.0),
     )

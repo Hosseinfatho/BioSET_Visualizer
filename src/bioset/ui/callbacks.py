@@ -376,14 +376,15 @@ def register_callbacks(ctrl, state, view, streamer=None):
             ]
             
             state.channels = channels
-            state.active_channels = []
+            n_default = min(int(getattr(state, "default_num_channels", 3) or 3),
+                            len(channels))
             # visible_channel_ids must be a list of channel IDs (the list UI does
             # visible_channel_ids.includes(ch.id)). Slicing covers both cases:
             # fewer channels than the default shows them all. (The old code
             # assigned the channel *dicts* when there were fewer than the default,
             # so a single-channel store rendered an empty list.)
-            state.visible_channel_ids = [
-                ch["id"] for ch in channels[:state.default_num_channels]]
+            state.visible_channel_ids = [ch["id"] for ch in channels[:n_default]]
+            state.active_channels = [ch["id"] for ch in channels[:n_default]]
             state.data_loaded = True
             # Per-dataset folder for bookmark recordings, so opening VGP1 shows
             # VGP1's bookmarks and not the ones saved against MIS.
@@ -712,29 +713,27 @@ def register_callbacks(ctrl, state, view, streamer=None):
 
             state.analysis_error = ""
             state.analysis_loaded = True
-            state.right_drawer_open = True
+            # Keep the plots drawer closed on load. Opening it here rebuilds
+            # UpSet/bar/dilation for all channels and makes the first zoom hitch.
+            state.right_drawer_open = False
 
             print(f"[callbacks] Analysis loaded: {len(metadata.channels)} channels, "
                   f"detents={metadata.dilation_amounts}, levels={state.analysis_hierarchy_levels}")
 
             if not (state.active_channels or []):
-                analysis_names = set(state.analysis_channels or [])
                 n = min(int(getattr(state, "default_num_channels", 3) or 3),
                         len(state.channels or []))
-                picked = []
-                for ch in (state.channels or []):
-                    if not analysis_names or ch["name"] in analysis_names:
-                        picked.append(ch["id"])
-                    if len(picked) >= max(n, 1):
-                        break
-                if picked:
-                    print(f"[callbacks] Auto-activating channels {picked} for heatmap")
-                    state.active_channels = picked
+                if n:
+                    state.active_channels = [ch["id"] for ch in state.channels[:n]]
+                    print(f"[callbacks] Auto-activating channels {state.active_channels}")
 
-            update_heatmap_combinations()
-            update_upset_data()
-            update_bar_data()
-            update_dilation_data()
+            if state.right_drawer_open:
+                update_heatmap_combinations()
+                update_upset_data()
+                update_bar_data()
+                update_dilation_data()
+            else:
+                print("[callbacks] Analysis ready")
 
             if _refs["view"]:
                 _refs["view"].update()

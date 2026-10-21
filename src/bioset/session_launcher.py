@@ -110,6 +110,7 @@ class WorkerSession:
     log_file: object = None
     created_at: float = field(default_factory=time.time)
     html_ready: bool = False
+    ws_count: int = 0
 
     def alive(self) -> bool:
         return self.proc.poll() is None
@@ -297,50 +298,54 @@ def _attach_cookie(response: web.StreamResponse, sid: str) -> None:
 
 
 async def _proxy_websocket(request: web.Request, session: WorkerSession) -> web.WebSocketResponse:
+    session.ws_count += 1
     client_ws = web.WebSocketResponse(max_msg_size=50_000_000, heartbeat=30)
-    await client_ws.prepare(request)
-    timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
-    async with aiohttp.ClientSession(timeout=timeout) as http:
-        async with http.ws_connect(
-            f"ws://127.0.0.1:{session.port}/ws",
-            max_msg_size=50_000_000,
-            heartbeat=30,
-        ) as upstream:
+    try:
+        await client_ws.prepare(request)
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.ws_connect(
+                f"ws://127.0.0.1:{session.port}/ws",
+                max_msg_size=50_000_000,
+                heartbeat=30,
+            ) as upstream:
 
-            async def client_to_worker():
-                async for msg in client_ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await upstream.send_str(msg.data)
-                    elif msg.type == aiohttp.WSMsgType.BINARY:
-                        await upstream.send_bytes(msg.data)
-                    elif msg.type in (
-                        aiohttp.WSMsgType.CLOSE,
-                        aiohttp.WSMsgType.CLOSING,
-                        aiohttp.WSMsgType.ERROR,
-                    ):
-                        break
+                async def client_to_worker():
+                    async for msg in client_ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await upstream.send_str(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await upstream.send_bytes(msg.data)
+                        elif msg.type in (
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSING,
+                            aiohttp.WSMsgType.ERROR,
+                        ):
+                            break
 
-            async def worker_to_client():
-                async for msg in upstream:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await client_ws.send_str(msg.data)
-                    elif msg.type == aiohttp.WSMsgType.BINARY:
-                        await client_ws.send_bytes(msg.data)
-                    elif msg.type in (
-                        aiohttp.WSMsgType.CLOSE,
-                        aiohttp.WSMsgType.CLOSING,
-                        aiohttp.WSMsgType.ERROR,
-                    ):
-                        break
+                async def worker_to_client():
+                    async for msg in upstream:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await client_ws.send_str(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await client_ws.send_bytes(msg.data)
+                        elif msg.type in (
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSING,
+                            aiohttp.WSMsgType.ERROR,
+                        ):
+                            break
 
-            try:
-                await asyncio.gather(client_to_worker(), worker_to_client())
-            except (aiohttp.ClientError, ConnectionResetError, asyncio.CancelledError):
-                pass
-            finally:
-                if not client_ws.closed:
-                    await client_ws.close()
-    return client_ws
+                try:
+                    await asyncio.gather(client_to_worker(), worker_to_client())
+                except (aiohttp.ClientError, ConnectionResetError, asyncio.CancelledError):
+                    pass
+                finally:
+                    if not client_ws.closed:
+                        await client_ws.close()
+        return client_ws
+    finally:
+        session.ws_count = max(0, session.ws_count - 1)
 
 
 async def _proxy_http(
@@ -382,7 +387,10 @@ def create_app(hub: SessionHub) -> web.Application:
                 if existing is not None and not existing.html_ready:
                     target = existing
                 else:
-                    if existing is not None:
+                    # Same-browser windows share one cookie. Only retire the
+                    # cookie's worker when it has no live viewer (refresh);
+                    # a still-connected tab must keep its own process.
+                    if existing is not None and existing.ws_count <= 0:
                         hub.drop(cookie_sid)
                     target = await hub.spawn()
             elif existing is not None:
